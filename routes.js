@@ -72,6 +72,65 @@ router.post('/payout', requireInternalApiKey, async (req, res) => {
   }
 });
 
+// GET /api/payout/verify?reference=XYZ&provider=korapay
+// Task 42 Part ii (handover.md): wires verifyPayout() (built, not yet
+// reachable by anything outside this repo) into an actual route —
+// closes half of the "no way to learn a processing payout's true
+// final outcome" gap; the webhook-handler half remains separately
+// open. GET + query params, mirroring /verify's own shape exactly
+// (this is the payout-side counterpart to that collection-side
+// route) — not POST, since this only reads a transaction's state,
+// never changes anything.
+//
+// requireInternalApiKey, same as /payout itself: this reveals payout
+// destination/amount/status details, the same sensitivity class as
+// initiating one — no reason for a weaker gate on the read side than
+// the write side already has.
+//
+// providerName defaults to ROUTING_RULES.payout (korapay), matching
+// /payout's own default-provider pattern exactly, NOT hardcoded to
+// 'korapay' directly — if a future provider is ever added as more
+// than a stub (Task 43's own architecture note), this route doesn't
+// need to change to support it, same as /payout doesn't.
+//
+// Guards against calling a nonexistent method on a provider that
+// hasn't implemented payout verification yet (today, everything
+// except Korapay — Paystack/Payscribe/JuicyWay per Task 43's own
+// "stub until fully integrated" rule) with a clear 501, rather than
+// letting `provider.verifyPayout is not a function` reach the client
+// as an unhandled crash.
+router.get('/payout/verify', requireInternalApiKey, async (req, res) => {
+  try {
+    const { reference, provider: providerParam } = req.query;
+
+    if (!reference || typeof reference !== 'string') {
+      const err = new Error(`'reference' query param is required and must be a non-empty string (received: ${JSON.stringify(reference)})`);
+      err.statusCode = 400;
+      throw err;
+    }
+
+    const providerName = providerParam || ROUTING_RULES.payout;
+    const provider = getProvider(providerName);
+
+    if (typeof provider.verifyPayout !== 'function') {
+      const err = new Error(`Payout verification is not implemented for provider '${providerName}'`);
+      err.statusCode = 501;
+      throw err;
+    }
+
+    const result = await provider.verifyPayout(reference);
+
+    log(`Payout verification success via ${providerName}: ${formatPayload(result)}`);
+    res.json({ status: 'success', provider: providerName, data: result });
+  } catch (error) {
+    log(`Payout verification error: ${error.message}`, 'error');
+    res.status(error.statusCode || 500).json({
+      status: 'error',
+      message: clientSafeMessage(error, 'Payout verification failed'),
+    });
+  }
+});
+
 // GET /banks — returns Korapay's supported bank list for a currency.
 // Query: ?currency=NGN (defaults to NGN)
 router.get('/banks', async (req, res) => {

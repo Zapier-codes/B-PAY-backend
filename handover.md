@@ -3,6 +3,30 @@
 > **▶ START HERE — read this box only, then go straight to work. Skip
 > everything else below unless you get stuck.**
 >
+> **Newest note (2026-09-04, latest of all) — Task 42's "Part ii"
+> built: `GET /api/payout/verify` now wires `verifyPayout()` into an
+> actual, reachable route.** `requireInternalApiKey`-gated (same as
+> `/payout`), query-param shape mirrors `/verify` exactly, provider
+> defaults to `ROUTING_RULES.payout` (korapay) same as `/payout`'s own
+> default, guards against a provider lacking `verifyPayout` with a
+> clear 501. `node --check` clean; 6-case functional test all passing.
+> **Still open: the webhook-handler half of the original gap (no way
+> to be PUSHED a payout's outcome, only to poll for it now), and Part
+> b-b (`/verify`/`/banks`'s own auth-extension question)** — both
+> independent, pick either next. Full write-up under Task 42's own
+> "missing verification call" section.
+>
+> **Newest note (2026-09-04, latest of all) — Task 43 corrected: the
+> "Bpay app" fork/upstream is confirmed real, correct casing is
+> `Zapier-codes/B-PAY` / `Edges-Enterprise/B-PAY` (not lowercase
+> `bpay`), and real work has already happened there (Task 67's
+> security fixes) independent of this repo.** Confirmed directly via
+> `git ls-remote` against both URLs. Full correction in Task 43's own
+> entry. **This doesn't change anything about this repo's own open
+> threads below** — moving on to Part ii (wire `verifyPayout()` into
+> an actual route) as the next genuinely unblocked, self-contained
+> task.
+>
 > **Newest note (2026-09-03, latest of all) — Part c-b's remaining
 > operational risk resolved: `INTERNAL_API_KEY` confirmed set on
 > Render, matching Mavins-web's `BPAY_INTERNAL_API_KEY`.** Project
@@ -361,7 +385,7 @@ repos" block immediately below exists specifically so a session that
 starts in any one of the three repos can discover the other two exist
 and jump on its own.
 
-### Sibling repos (keep this block, or an equivalent, consistent across all three repos' own `handover.md` files)
+### Sibling repos (keep this block, or an equivalent, consistent across every repo's own `handover.md`/campaign-doc file — now four repos, not three, see the new `B-PAY` entry added this session)
 - **`B-Pay-backend`** (this repo) —
   `https://github.com/Zapier-codes/B-Pay-backend` — fork of
   `https://github.com/Phoenix-Boss/B-PAY-backend`; changes go through
@@ -381,13 +405,27 @@ and jump on its own.
   through this file omitted the push step and used the GitHub-repo
   casing for the local folder; both are now fixed here and in
   Mavins-web's own copy of this block.)
-- **`Velune`** — `https://github.com/Zapier-codes/Velune` — no
-  `handover.md` exists there yet as of this note. This repo's own Task
-  22 (see "Cross-repo continuation" below) is an investigation-only
-  task whose job is to create Velune's first `handover.md` — whoever
-  does that should copy this same "Sibling repos" block (with Velune's
-  own push mechanics filled in once known) into the new file, so a
-  session that starts in Velune can find its way back to the other two.
+- **`Velune`** — `https://github.com/Zapier-codes/Velune` — NOT a
+  fork, direct push to `main`. Has its own `HANDOVER_CAMPAIGN.md` (this
+  bullet's earlier claim that no handover file existed there yet is
+  stale — corrected here, not left standing).
+- **`B-PAY`** — `https://github.com/Zapier-codes/B-PAY` — **new this
+  session, all future sessions should clone this repo** — fork of
+  `https://github.com/Edges-Enterprise/B-PAY` (both confirmed real via
+  direct `git ls-remote`, correct casing is all-caps `B-PAY`, not
+  lowercase `bpay` as an earlier note in this file guessed before
+  either URL had been checked). This is the "Bpay app" — a React
+  Native/Expo wallet/banking app, the actual end-user-facing product
+  this backend (`B-Pay-backend`) is meant to serve as the sole payment/
+  payout source of truth for (see Task 43's own architecture note,
+  above/below depending on where this file's grown to by the time you
+  read this). **Product owner's own instruction, this session: clone
+  it so the bank/payment integration between this backend and that app
+  can actually be completed** — not yet begun as of this note; whoever
+  picks that up should start by reading this repo's Task 43 in full.
+  Same fork→PR mechanics as this repo's own relationship to
+  `Phoenix-Boss/B-PAY-backend` — push to `Zapier-codes/B-PAY`, PR to
+  `Edges-Enterprise/B-PAY`, not the other direction.
 
 ---
 
@@ -2757,6 +2795,10 @@ silently assumed out of scope:**
 
 ### The missing verification call — part i (2026-09-02) [x] (i only, ii not built)
 
+**Part ii built this session (2026-09-04) — see this section's own
+"Part ii" entry further down for the full write-up; header/status
+here now reflects both parts done.**
+
 **Split into i/ii per direct instruction ("split into a and b... add
 i and ii, do only i") — this is a separate split from Task 42's own
 Part a/b/c lettering above, since this gap was never itself lettered,
@@ -2798,11 +2840,33 @@ resolve without throwing (confirming the deliberate divergence from
 `processPayout()` above), while an API-level rejection and an
 HTTP-level failure both throw correctly.
 
-**Part ii, NOT built this session:** wiring `verifyPayout()` into an
-actual route (`GET /payout/:reference/verify` or similar — naming not
-decided) so callers outside this repo can actually reach it. The
-webhook-handler half of the original gap also remains fully open,
-independent of this split.
+**Part ii — wiring `verifyPayout()` into an actual route [x] Done
+(2026-09-04).** New `GET /api/payout/verify?reference=X&provider=Y`,
+gated by `requireInternalApiKey` (same auth requirement as `/payout`
+itself — reading a payout's destination/amount/status is the same
+sensitivity class as initiating one, no reason for a weaker gate on
+the read side). Mirrors `/verify`'s own query-param shape exactly
+(this is that route's payout-side counterpart), not `/payout`'s POST
+shape, since this only reads state and changes nothing.
+`providerName` defaults to `ROUTING_RULES.payout` (korapay), same
+default-provider pattern `/payout` itself already uses — not
+hardcoded to `'korapay'` directly, so this route doesn't need to
+change if a future provider is ever fully integrated (Task 43's own
+architecture note: new providers start as stubs, Korapay stays
+primary). Guards against calling `verifyPayout` on a provider that
+hasn't implemented it (today, everything except Korapay) with a clear
+`501` rather than an unhandled `TypeError` reaching the client.
+
+**Verified:** `node --check` on `routes.js`. A standalone functional
+test, 6 cases (valid reference/default provider, an explicit provider
+lacking `verifyPayout` → 501, missing reference → 400, empty-string
+reference → 400, non-string reference → 400, valid reference with
+explicit `provider=korapay`) — all 6 correct.
+
+**Still fully open, unchanged by this part:** the webhook-handler half
+of the original gap (no way to be pushed a payout's outcome, only to
+poll for it now) remains unbuilt. Part b-b (`/verify`/`/banks`'s own
+auth-extension question) also remains open, independent of this.
 
 ### Part b — is extending `requireInternalApiKey` to `/pay`/`/verify`/`/banks` even appropriate? [ ] (split into a/b — a fully resolved via i/ii, b not started)
 
@@ -2957,7 +3021,30 @@ applies in spirit — an actual live gap, not a documentation one.
 
 ---
 
-## Task 43 — Fork Edges-Enterprise/bpay + PR workflow; "Bpay app" architecture direction [ ]
+## Task 43 — Fork Edges-Enterprise/bpay + PR workflow; "Bpay app" architecture direction [x] (fork confirmed to already exist; real work has since started there — see correction below)
+
+**Correction (2026-09-04) — the repo names in this task's own body
+below are wrong casing, and its "not yet done" list is now stale.**
+Confirmed directly via `git ls-remote` against both URLs (not
+assumed): the real names are **`Zapier-codes/B-PAY`** (the fork) and
+**`Edges-Enterprise/B-PAY`** (the upstream) — all-caps `B-PAY`, not
+lowercase `bpay` as guessed below. Both exist and are live (`git
+ls-remote` returned real `HEAD`/`refs/heads/main` for each). **The
+fork already has real work on it, done by another session, unrelated
+to this repo's own Task 42/43** — `Zapier-codes/B-PAY`'s own git log
+shows `Task 67`: three security findings fixed (a hardcoded Lizzysub
+API token, a live Payscribe secret key hardcoded in client-side
+TypeScript, an undefined-`supabase`-client bug in `resolve_tag/
+index.ts`), committed as `712825f`, plus an earlier CI build swap
+(`0ac6bc7`). **Not yet done, still accurate:** opening the actual PR
+from `Zapier-codes/B-PAY` to `Edges-Enterprise/B-PAY` (manual GitHub
+action, no session has authenticated GitHub access to create it), and
+rotating the two exposed live secrets (compromised regardless of the
+code fix, since they were already in git history). The rest of this
+task's original body (architectural direction: this backend as the
+Bpay app's only payment source of truth, Korapay-primary-provider
+constraint, stub-not-half-built for new providers) is unaffected by
+this correction and still stands as written below.
 
 **Documentation only, per explicit instruction — no code, no repo
 clone, no exploration this session.** The product owner gave real

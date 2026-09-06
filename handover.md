@@ -3,7 +3,39 @@
 > **▶ START HERE — read this box only, then go straight to work. Skip
 > everything else below unless you get stuck.**
 >
-> **Newest note (2026-09-06, latest of all) — Task 0's a-8: PaymentPoint
+> **Newest note (2026-09-06, latest of all) — Task 0's a-9: Prestmit
+> full API-discovery/audit pass done (doc-research only, no code —
+> `providers/prestmit.js` does not exist yet).** Resolves both halves
+> of a-9: **existence confirmed, with a name correction** — the real
+> provider is **Prestmit** (with a "t"), a Lagos-based gift-card/crypto
+> off-ramp platform, with real docs at `documentation.prestmit.io`,
+> found via this session's own web search. **The headline finding,
+> ahead of any implementation detail: Prestmit is not a bank/card
+> payment processor like this repo's other nine providers — it's a
+> gift-card trading platform with no "charge a customer" endpoint at
+> all.** This is a real, open scope question for the product owner
+> (was Prestmit's inclusion in Task 0's provider list intentional, or
+> a mix-up with a different provider?), not something this session
+> could resolve alone. **Also confirmed, regardless of how that
+> question resolves:** three of Prestmit's own doc sources disagree
+> with each other on the base URL/host (same class of problem already
+> on record for Remita, a-6); authentication signs the outbound
+> *request itself* with `HMAC-SHA256(API_KEY + ":" + JSON.stringify(body))`
+> — a genuinely different shape from every other provider in this
+> file, none of which sign outbound requests, only inbound webhooks;
+> and **Prestmit's own official webhook-verification sample has the
+> identical "hash the re-serialized body instead of raw bytes" bug
+> already flagged in Xixapay's (a-7) and PaymentPoint's (a-8) own
+> samples — a third independent confirmation across three unrelated
+> providers.** Full writeup under "Confirmed research findings"
+> (search "Prestmit — FULL API discovery pass"); Task 0's a-9 bullet
+> has the short version. **Still `a-1-i-X`** is the active task for
+> the Task 0 track — this was a doc-only exception for a-9, same as
+> Task 8/a-4/a-7/a-8 before it, not a change to which `X` node is
+> active. Patch for this session covers `handover.md` only — no
+> provider code added or changed.
+>
+> **Newest note (2026-09-06, previous) — Task 0's a-8: PaymentPoint
 > FULL API discovery/audit pass done (doc-research only, no code —
 > `providers/paymentpoint.js` does not exist yet). Supersedes this
 > same session's own earlier "webhook-only" pass** — the product owner
@@ -3121,6 +3153,228 @@ this session's earlier webhook-only pass)*
   and if so what it's scoped to, is unconfirmed — a question for the
   product owner, not something this audit can resolve from docs alone.
 
+**Prestmit — FULL API discovery pass, audited 2026-09-06 (new —
+resolves a-9, both the existence question and the discovery pass
+itself; `providers/prestmit.js` does not exist yet, doc-research
+only).** Per the Discovery Convention, a-9's first job was confirming
+existence — **confirmed, with a name correction**: the real provider
+is spelled **Prestmit** (not "Presmit" as Task 0 originally listed
+it), a Lagos-based, Nigeria/Ghana-facing gift-card and crypto
+off-ramp platform founded 2019, with real developer docs at
+`documentation.prestmit.io` (GitBook-style, own `llms.txt` index, own
+Postman workspace referenced from within the docs). Source: this
+session's own web search (not product-owner-supplied, unlike a-8).
+Pages fetched directly this pass: `llms.txt` (full index), API Keys &
+Authentication, Managing Webhooks, IP Whitelisting, Payouts & Wallet
+Details, and the Service Availability API-reference page (read for
+its embedded OpenAPI spec, which turned out to matter — see below).
+**Not fetched in per-page depth this pass, by deliberate scope
+choice, not oversight:** the ~25 remaining gift-card buy/sell/lookup/
+bank-account endpoints listed in `llms.txt` — see the scope-mismatch
+finding immediately below for why this pass stopped at
+authentication/webhooks/payouts/wallet rather than going endpoint-by-
+endpoint through the full gift-card-trading surface; the full index
+is preserved in `llms.txt` for whichever future session needs a
+specific one of those endpoints.
+
+*THE finding of this pass, stated first because it changes what "a-9
+Prestmit" even means for this repo's orchestration layer: Prestmit is
+not a bank/card payment processor*
+- Every one of this repo's other nine providers (Korapay, Paystack,
+  JuicyWay, Payscribe, DodoPayments, Flutterwave, Remita, Xixapay,
+  PaymentPoint) exposes some form of "charge a customer" / "collect a
+  payin" / "send a payout to a bank account" primitive that this
+  repo's `processPayment()` orchestration is built around. **Prestmit
+  has no such endpoint.** Its API's actual primitives are: create a
+  gift-card **sell** trade (customer hands Prestmit a gift card,
+  Prestmit pays the customer out), create a gift-card **buy** trade
+  (customer pays Prestmit, Prestmit fulfills a gift-card code), and
+  separately, wallet withdrawals/payouts of Prestmit's *own* partner
+  balance to a bank account (not a customer-facing payout — see
+  Payouts & Wallet Details below). None of these map cleanly onto
+  "initiate a payment" the way Korapay/Paystack/PaymentPoint's
+  `processPayment`-shaped endpoints do.
+- **This is a real, unresolved scope question for the product owner,
+  not an implementation detail this session can decide alone:** was
+  Prestmit's inclusion in Task 0's provider list intentional (e.g.
+  this platform means to offer gift-card liquidation as one more
+  "payment method," alongside bank transfer/card/etc.), or was it a
+  mix-up with a different, more conventional bank/card provider with a
+  similar-sounding name? Either answer is plausible; guessing wrong
+  wastes real implementation effort in either direction, so this stays
+  open rather than assumed either way.
+
+*Environment & authentication — CONFIRMED, but with a real, blocking
+inconsistency: three different base-URL sources disagree with each
+other*
+- **Source 1 (API Keys & Authentication guide, prose):** Sandbox
+  `https://dev-api.prestmit.io/partners/v1`, Live
+  `https://api.prestmit.io/partners/v1`.
+- **Source 2 (Service Availability reference page's embedded OpenAPI
+  `servers` block):** `https://dev-api.prestmit.io` (host only, with
+  `/partners/v1/...` then appended per-path) — consistent with Source
+  1's sandbox host, at least.
+- **Source 3 (that exact same OpenAPI document's own `info.description`
+  prose, a few lines away from Source 2 in the identical file):**
+  Staging `https://dev-2025.prestmit.io/api/partners/v1`, Production
+  `https://prestmit.com/api/partners/v1` — **a completely different
+  pair of hosts from both Source 1 and Source 2**, confirmed by direct
+  inspection of the same fetched document, not a transcription error
+  by this pass. This is the same class of "multiple primary sources
+  disagree on the base URL" problem already on record for Remita
+  (a-6) — get the current, actually-correct values from the product
+  owner's own onboarding/sandbox-registration email (`sales@prestmit.com`
+  per the Authentication guide) rather than picking one of the three
+  and hoping.
+- Auth itself, independent of which host is correct, is confirmed
+  consistently: **HMAC-SHA256 over `API_KEY + ":" + JSON.stringify(body)`**,
+  keyed with a separate `API_SECRET`, producing a 64-character hex
+  digest sent as an `API-Hash` header, alongside a plain `API-KEY`
+  header (not `Authorization: Bearer`, unlike every other provider in
+  this file). **This is a genuinely different authentication shape
+  from every one of this repo's other nine providers** — none of them
+  sign the outbound *request* itself; they all authenticate with a
+  static Bearer/API-key header and only apply HMAC signing to inbound
+  *webhooks*. A future `providers/prestmit.js` would need new
+  per-request signing logic this repo doesn't have anywhere yet, not
+  a fit for the existing `getProviderKey()` pattern at all.
+- One documented quirk worth carrying forward: the doc explicitly
+  states any `attachments` field must be **stripped from the body
+  before hashing** (attachments aren't included in the signed
+  payload) — a real, easy-to-miss detail for any endpoint that accepts
+  file uploads (e.g. the gift-card sell-trade creation endpoint, which
+  takes `attachments[]`).
+- The OpenAPI spec's own `securitySchemes` block only declares the
+  plain `API-KEY` header (`type: apiKey, in: header, name: API-KEY`)
+  and says nothing about the `API-Hash` HMAC requirement described in
+  the prose Authentication guide — a real internal inconsistency
+  between Prestmit's own machine-readable spec and its own written
+  guide, on top of the base-URL disagreement above.
+- **Confirmed, unlike Xixapay/PaymentPoint: a genuine, distinct
+  sandbox environment does exist** (Source 1's `dev-api.prestmit.io`),
+  though which of the three base-URL sources is authoritative for it
+  remains the open item above.
+
+*Webhooks — CONFIRMED, structurally the closest fit to this repo's
+existing webhook-forwarding pattern, but event set is entirely
+gift-card/wallet shaped, not payment shaped*
+- Registered per-API-key via Prestmit's own console (one webhook URL
+  per API key, HTTPS only), not passed as a request parameter.
+- **Confirmed event set**, all gift-card-trade or wallet-withdrawal
+  shaped, **none of them a generic "payment received" event**:
+  `giftcard-trade.sell.approved`, `giftcard-trade.sell.rejected`,
+  `giftcard-trade.buy.approved`, `giftcard-trade.buy.rejected`,
+  `withdrawal-request.approved`, `withdrawal-request.rejected`,
+  `withdrawal-request.cedis.approved`, `withdrawal-request.cedis.rejected`.
+  Payload shape: `{ data: {...event-specific fields...}, event:
+  "withdrawal-request.rejected", accountID: 58 }` — an `event`-typed
+  envelope, closer in spirit to Task 0/b-3's own normalized-event
+  design goal than most of this repo's other providers' raw payloads,
+  though the event *names* here don't map onto b-3's fixed
+  `payment.*`/`payout.*`/`refund.*` set at all — another consequence
+  of the scope-mismatch finding above.
+- Signature: **`x-prestmit-signature`** header, **HMAC-SHA256 over the
+  raw body, base64-encoded** — the encoding is a real, confirmed
+  difference from every other provider in this file (Korapay/Paystack/
+  PaymentPoint all hex-encode; Prestmit base64-encodes), so a shared
+  HMAC-verification helper covering all of this repo's providers would
+  need an encoding parameter, not just a shared algorithm.
+- **A real bug confirmed in Prestmit's own official webhook-
+  verification sample — do not copy as-is, and note this is now the
+  third provider in this file with the identical class of bug:** the
+  sample's `verifyWebhookSignature(payload, signature, secret)`
+  computes `crypto.createHmac("sha256", secret).update(JSON.stringify(payload))` —
+  hashing the **re-serialized, already-parsed** payload object rather
+  than the original raw request bytes. The doc's own later "Checklist
+  for Secure Verification" section directly contradicts this same
+  page's own code sample — it explicitly says "Always verify the raw
+  body, not the parsed one" and "capture the raw request body before
+  it's parsed" — so Prestmit's own documentation disagrees with
+  itself, not just with this repo's standards. This is the identical
+  bug class already flagged in Xixapay's (a-7) and PaymentPoint's
+  (a-8) own official Node samples — a third independent confirmation
+  that copying a provider's own sample code verbatim is not a safe
+  default for this repo, across three unrelated providers now.
+- The doc's own second sample (a standalone `testWithdrawalWebhook.js`
+  test script) gets this right — it hashes `JSON.stringify(webhookData)`
+  built locally before sending, which is consistent because in that
+  script the sender and hasher share the exact same object; it isn't a
+  counterexample to the bug above, it just doesn't demonstrate the
+  parse-then-rehash failure mode since it never round-trips through a
+  server's body parser.
+
+*Payouts & Wallet — CONFIRMED, but this is Prestmit's own partner-
+balance withdrawal, not a customer-facing payout primitive*
+- `POST /wallet/fiat/create-withdrawal`, `GET
+  /wallet/fiat/withdrawal-history`, `GET
+  /wallet/fiat/withdrawal-history/{id}/receipt`, `GET
+  /wallet/fiat/details` — all operate on **the partner's own prefunded
+  wallet balance** (`NAIRA` or `CEDIS`), requiring a saved bank
+  account, an account PIN, and conditionally a 2FA code. This is
+  structurally similar to PaymentPoint/Xixapay's own wallet-billing
+  model for verification lookups (a-8), not a payout-on-behalf-of-a-
+  third-party primitive like Korapay/Paystack's `/payout`.
+- **A real, confirmed field-naming inconsistency on this exact page:**
+  the request-parameter table documents camelCase field names
+  (`bankAccountId`, `currentAccountPIN`, `2fa_code`), but the page's
+  own example request body directly below that table uses snake_case
+  instead (`bank_account_id`, `current_account_pin`, `two_fa_code`) —
+  two different naming conventions for what's presented as the same
+  request, on the same page. Don't trust either version literally
+  without a real sandbox call to confirm which one the API actually
+  accepts.
+- `amount` here is documented as **"in minor units"** — the opposite
+  convention from PaymentPoint's webhook `amount_paid` (a-8, base
+  units) — a real, provider-specific unit difference to get right if
+  this repo's `toSubUnit()`/`fromSubUnit()` helpers are ever extended
+  to cover Prestmit, not something to assume matches any other
+  provider already in this file.
+- Response's top-level `success` field is a **boolean** (`true`), not
+  the string `"success"` seen in PaymentPoint's (a-8) and the OpenAPI
+  General-endpoints examples elsewhere in Prestmit's own docs — yet
+  another example, within this same provider's own documentation, of
+  the boolean-vs-string `status`/`success` inconsistency already on
+  record as a cross-provider pattern for Xixapay (a-7).
+
+*Rate limiting — CONFIRMED to exist, numeric value unconfirmed
+(example-only)*
+- The Service Availability reference page's OpenAPI response schema
+  includes example `X-RateLimit-Limit: 100` / `X-RateLimit-Remaining: 99`
+  headers — a real rate-limiting mechanism exists, but the `100` is
+  shown only as a schema example value, not stated anywhere in prose
+  as the actual, current, enforced limit. Treat as "a limit exists,
+  exact number unconfirmed," the same posture already applied to
+  Xixapay's undocumented rate limit.
+
+*IP Whitelisting — CONFIRMED, an optional security feature none of
+this repo's other nine providers document*
+- Per-API-key IP allowlisting, configured in Prestmit's own console,
+  optional but recommended for production. Requests from a non-
+  whitelisted IP are rejected (exact HTTP status not stated on this
+  page). Worth flagging for the product owner's own deployment
+  posture regardless of the scope-mismatch question above — this
+  repo's outbound requests would originate from wherever it's
+  deployed (Render, per `render.yaml`), a stable enough origin to
+  whitelist if Prestmit integration proceeds.
+
+*Not covered by this pass — real open items, not yet resolved*
+- **The scope-mismatch question above is the primary blocker** — no
+  further Prestmit implementation work should proceed until the
+  product owner confirms whether gift-card trading was actually meant
+  to be part of this platform's provider list.
+- The three-way base-URL conflict is not resolved — needs the product
+  owner's own onboarding materials, not a guess between the three
+  documented options.
+- No sandbox-vs-live behavioral differences are documented (e.g.
+  whether test-mode trades/withdrawals fire the same webhook events).
+- The ~25 gift-card buy/sell/lookup/bank-account endpoints listed in
+  `llms.txt` were not individually audited this pass — deliberate
+  scope choice, not an oversight; a future session doing gift-card-
+  specific implementation work should read those pages directly rather
+  than assume this entry covers them.
+- Whether IP-whitelisting rejection returns 401, 403, or something
+  else is not stated on the IP Whitelisting page itself.
+
 ---
 
 ## Project owner decisions (recorded verbatim from the owner — resolves previously open questions; read before touching reference/idempotency or anything wallet-related)
@@ -5898,8 +6152,47 @@ already applied to Korapay/Paystack/Juicyway/Payscribe.
   /api/liveness/check` — **must branch on the nested `is_live` field,
   not the top-level `status`**, since a failed liveness check still
   returns HTTP 200 with `"status":"success"`).
-- **a-9. Presmit** — same caveat as Xixapay: existence and real docs
-  not yet confirmed this session.
+- **a-9. Presmit** — **discovery/audit done (2026-09-06, doc-only, no
+  code yet)**, per the Discovery Convention above (found via this
+  session's own web search — no product-owner-supplied doc needed
+  this time). **Existence confirmed, with a name correction:** the
+  real provider is **Prestmit** (with a "t"), not "Presmit" —
+  `documentation.prestmit.io`, a real, structured GitBook-style docs
+  site with its own `llms.txt` index. Full audit is in the "Confirmed
+  research findings" section (search "Prestmit — FULL API discovery
+  pass"). **The single biggest finding, flagged before anything
+  else: Prestmit is not a bank/card payment processor like this
+  repo's other nine providers — it's a gift-card and crypto off-ramp
+  trading platform.** Its API has no "charge a customer"/"initiate a
+  payin" endpoint at all; the closest analogs are "create a gift-card
+  sell/buy trade" and "create a wallet withdrawal." Before any
+  provider code is written, the product owner needs to confirm
+  whether Task 0's inclusion of Prestmit in the payment-provider list
+  was intentional (e.g. gift-card liquidation as one more "payment
+  method" this platform offers) or a mix-up with a different,
+  bank/card-based provider — this is a real scope question, not an
+  implementation detail. **Real items also queued there, blocking
+  implementation regardless of how the scope question resolves:**
+  (1) **three mutually inconsistent base-URL sources found in
+  Prestmit's own docs** — the Authentication guide states one
+  sandbox/live pair, the OpenAPI spec's `servers` block states a
+  second, and that same OpenAPI spec's own prose description states a
+  *third* — a real, confirmed conflict, same class of problem already
+  on record for Remita (a-6), not something to guess at; (2) auth is
+  **HMAC-SHA256 over `API_KEY + ":" + JSON.stringify(body)`**, keyed
+  with a separate `API_SECRET`, sent as an `API-Hash` header alongside
+  a plain `API-KEY` header — a genuinely different signing shape from
+  every one of this repo's other nine providers (none of which sign
+  the *request*, only inbound webhooks); (3) webhook signature
+  verification — `x-prestmit-signature` header, HMAC-SHA256 over the
+  raw body, base64-encoded (not hex, unlike every other provider in
+  this file) — and **Prestmit's own official webhook-verification
+  sample has the identical bug already flagged for Xixapay and
+  PaymentPoint**: it hashes `JSON.stringify(payload)` (the
+  re-serialized parsed body) instead of the original raw bytes — a
+  third independent confirmation across three different providers
+  that provider-supplied Node samples are not safe to copy as-is in
+  this repo.
 - **a-10. `telcos.opik.net`** — not started. Even though the product
   owner owns this endpoint, whoever builds against it still needs its
   actual request/response contract, auth scheme, and a real answer on

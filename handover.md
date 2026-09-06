@@ -3,7 +3,38 @@
 > **▶ START HERE — read this box only, then go straight to work. Skip
 > everything else below unless you get stuck.**
 >
-> **Newest note (2026-09-06, latest of all) — Task 0's a-4:
+> **Newest note (2026-09-06, latest of all) — Task 8b resolved:
+> JuicyWay full API-discovery/audit pass done (doc-research only, no
+> code changed — `providers/juicyway.js` is untouched by this
+> session).** Same doc-only precedent as the Paystack and DodoPayments
+> passes below. **Four real, confirmed bugs found (not fixed here,
+> queued as Tasks 45a–45d), plus one unresolved documented ambiguity
+> (Task 45e):** (1) the payment-initialization endpoint path is wrong
+> — code calls `/v1/charges`, which doesn't exist; the real path is
+> `POST /payment-sessions`; (2) the `Authorization` header wrongly
+> sends `Bearer {key}` — JuicyWay's docs are explicit the header is
+> the raw key with no prefix, so every real call today would 401; (3)
+> the request payload is missing most of JuicyWay's required nested
+> fields (`customer` sub-object, `payment_method`, `order`,
+> `description`) — this is a bigger fix than a literal edit, since it
+> changes this repo's own `processPayment(data)` contract; (4) the
+> error-message extraction reads `responseData.message`, but
+> JuicyWay's real envelope nests it at `responseData.error.message` —
+> every failure today silently falls back to a generic hardcoded
+> string instead of JuicyWay's own specific message. **Unresolved:**
+> JuicyWay's own docs give three different, mutually-inconsistent
+> currency lists across three pages — do not add `juicyway` to
+> `CONFIRMED_PROVIDER_CURRENCIES` from any one of them; resolve with a
+> live sandbox test instead. Full writeup under "Confirmed research
+> findings" (search "JuicyWay — FULL API discovery pass"); Task 0's
+> `a-3` bullet has the short version. **Still `a-1-i-X`** is the
+> active task for the Task 0 track — this was a doc-only exception for
+> a-3's audit, same as Task 8 was for a-2 and this session's earlier
+> DodoPayments pass was for a-4, not a change to which `X` node is
+> active. Patch for this session covers `handover.md` only — no
+> provider code added or changed.
+>
+> **Newest note (2026-09-06, previous) — Task 0's a-4:
 > DodoPayments full API-discovery/audit pass done (doc-research only,
 > no code — `providers/dodopayments.js` does not exist yet).** Same
 > doc-only precedent as Task 8's Paystack pass below. Covers
@@ -1786,7 +1817,177 @@ one).
   above should re-fetch the live sidebar rather than trusting
   `llms.txt` alone to enumerate what exists.
 
-**JuicyWay**
+**JuicyWay — FULL API discovery pass, re-audited 2026-09-06 (supersedes
+the endpoint-path/auth/payload/error material below; the webhook
+section below this one is unchanged/re-confirmed, not superseded —
+nothing was dropped, only expanded).** This pass resolves Task 8b,
+which had sat open since Task 15 flagged the endpoint path as
+genuinely unverified. Every source below was fetched directly this
+session from docs.juicyway.com (via its `.md`-suffixed pages —
+confirmed again this session that the bare paths often don't resolve
+standalone, go through the page's own `.md` URL or `llms.txt`'s index)
+— Home, Payment Initialization overview, Card Payment Initialization,
+Authentication, Errors, Fetch Payment, List Payments. **Four real,
+confirmed bugs came out of this pass, none fixed here since this is a
+doc-research pass per the Discovery Convention** — each queued as its
+own task below (Tasks 45a–45d), plus one real unresolved ambiguity
+(Task 45e) that blocks adding JuicyWay to `CONFIRMED_PROVIDER_CURRENCIES`
+until resolved, not just an omission the way it's listed today.
+
+*Endpoint path — CONFIRMED WRONG, this is a real bug, not a
+docs-mismatch curiosity*
+- The real endpoint, per docs.juicyway.com/payments/initialize-payment/cards.md,
+  is **`POST /payment-sessions`** — not `/v1/charges`, which is what
+  `providers/juicyway.js#processPayment` has called since this file
+  was first written (the `⚠️ Verify exact endpoint path in Juicyway
+  docs` comment has sat on this exact line since Task 5). `/v1/charges`
+  does not appear anywhere in JuicyWay's documented API surface — it
+  looks like a Paystack-shaped path copied across providers rather
+  than anything JuicyWay itself ever documented.
+- The verify/fetch endpoint is **`GET /payments/{id}`**
+  (docs.juicyway.com/payment-transactions/fetch-payment.md) — not
+  `/v1/charges/${reference}`, which `verifyTransaction` currently
+  calls. This is wrong on both the path *and* the identifier: see the
+  "Reference vs. ID" finding below — `{id}` here is JuicyWay's own
+  UUID for the payment, not the merchant-supplied `reference` this
+  repo currently passes into that URL slot.
+
+*Authorization header — CONFIRMED WRONG, a real bug*
+- docs.juicyway.com/authentication.md states explicitly: **"Authorization
+  headers should be in the following format: `Authorization: API_KEY`"**
+  — the raw key, with no scheme prefix. Every code sample across the
+  docs (cURL, Node.js, Python) confirms this: `'Authorization': '
+  YOUR_API_KEY'`, never `Bearer YOUR_API_KEY`. `providers/juicyway.js`
+  currently sends `'Authorization': \`Bearer ${this.apiKey}\`` in both
+  `processPayment` and `verifyTransaction` — this is a **confirmed,
+  concrete bug**: every real API call this repo makes to JuicyWay
+  today would fail authentication with a 401, not because the key is
+  wrong but because the header format is. This directly resolves
+  Task 44's previously-unverified "auth-header-prefix... claims
+  unverified" note — now verified, and verified wrong.
+
+*Request payload shape — CONFIRMED INCOMPLETE, a real bug*
+- The documented required body for `POST /payment-sessions` is a
+  **deeply nested** object: top-level `amount`, `currency`,
+  `description` (≤200 chars), `reference` (≤50 chars), `payment_method:
+  { type: "card" }`, `order: { identifier, items: [{ name, type:
+  "digital"|"physical" }] }`, and a `customer` object requiring
+  `email`, `first_name`, `last_name`, `phone_number` (E.164),
+  `billing_address` (object), `type` (`business`|`individual`), and
+  `ip_address` (IPv4) — all marked `required` in the docs.
+  `providers/juicyway.js#processPayment` currently sends a **flat**
+  `{ amount, email, reference, currency }` — missing `description`,
+  `payment_method`, `order`, and the entire nested `customer` object
+  (only `email` survives, and not even nested correctly). Combined
+  with the endpoint-path and auth-header bugs above, a real call as
+  currently coded would fail even if those two were fixed in
+  isolation — this repo's caller-facing `processPayment(data)`
+  contract would need real rework (accepting/requiring the extra
+  fields) before this endpoint could work at all, not just a URL and
+  header fix. This directly resolves the other half of Task 44's
+  previously-unverified "payload-completeness claims unverified" note
+  — now verified, and verified incomplete.
+
+*Response shape & the reference-vs-ID distinction — new finding, not
+previously documented*
+- A successful `POST /payment-sessions` call returns `{ data: {
+  status, auth_type, expires_at, links, message, payment: { id,
+  amount, currency, status, customer, order, payment_method,
+  reference, date, description, mode, cancellation_reason } } }` —
+  note the **payment's own JuicyWay-assigned `id`** (a UUID) lives at
+  `data.payment.id`, separate from and different in shape from the
+  merchant-supplied `reference` this repo generates via
+  `generateReference('juicyway')`, which JuicyWay echoes back
+  unchanged at `data.payment.reference`.
+- **Real architectural finding:** `GET /payments/{id}` (Fetch Payment)
+  takes JuicyWay's own `id`, not the merchant's `reference` — and
+  List Payments' documented query filters (`status`, `before`,
+  `after`, `limit`, `created_after`, `created_before`) include **no
+  filter-by-`reference` option**. So there is no documented way to
+  look a payment up by the merchant-generated reference alone — a
+  caller must capture and persist `data.payment.id` from the
+  initialize response and use *that* for any later verify call. This
+  repo's `verifyTransaction(reference)` signature currently assumes
+  reference-based lookup works (matching Paystack/Korapay's own
+  reference-based verify calls) — for JuicyWay specifically, that
+  assumption doesn't hold against the documented API, a real,
+  provider-specific difference worth designing around deliberately
+  rather than discovering at runtime.
+
+*Error response format — CONFIRMED WRONG, a real bug, same class as
+Paystack's Task 8c finding but with a different failure mode*
+- Confirmed at docs.juicyway.com/errors.md: every JuicyWay error is
+  `{ error: { code, message, type, details } }` (validation errors
+  additionally carry an `errors: [{ field, message }]` array instead
+  of/alongside `details`). The message a caller should show a user
+  lives at **`error.message`**, nested — not top-level.
+  `providers/juicyway.js` currently does
+  `responseData.message || 'Juicyway payment failed'` (and the
+  equivalent in `verifyTransaction`) — `responseData.message` is
+  `undefined` for every real JuicyWay error response, since the real
+  field is `responseData.error.message`. **Unlike Paystack's Task 8c
+  bug (which surfaces a technically-true-but-misleading success
+  message), this bug silently swallows JuicyWay's real, specific
+  error text on every single failure** and always falls back to the
+  generic hardcoded string instead — worse for debugging and for
+  end-user-facing error messages alike, since JuicyWay's own
+  documented messages (e.g. "Amount must be at least 100000",
+  "Currency must be one of: NGN, USD, CAD") are exactly the kind of
+  specific, safe-to-surface text Task 13's precedent already treats
+  as fine to show users for other providers.
+- HTTP status codes confirmed: 200, 201, 204, 400, 401, 403, 404, 422,
+  429, 500 — plus a **402** for card declines specifically (documented
+  separately on the Card Payment Initialization page, not the general
+  Errors page: `card_declined` with reasons like insufficient funds,
+  suspicious activity, expired card) — a status code Paystack/Korapay
+  don't use this way in this repo's existing integrations, worth
+  handling explicitly rather than falling into a generic
+  catch-all-non-2xx branch if user-facing decline messaging matters.
+- Rate limits are **documented per-endpoint, not account-wide**:
+  Fetch Payment is 100 req/min per key; List Payments is 1,000 req/hour
+  with a 100 req/min burst cap and max 100 records/page. No rate limit
+  was documented specifically for `POST /payment-sessions` itself in
+  the pages fetched this session. `429` responses use the same
+  `{ error: { code: "rate_limit_exceeded", message, type,
+  retry_after } }` envelope, with a `retry_after` (seconds) field —
+  distinct from Paystack's header-based rate-limit signaling.
+
+*Currencies — a real, three-way documented inconsistency, not a
+missing-entry problem like Paystack's XOF finding*
+- **Three different currency lists appear across JuicyWay's own primary
+  docs, none of which fully agree:**
+  1. `payments/overview.md`'s "Supported Currencies" section lists
+     only **NGN, CAD**.
+  2. `payments/initialize-payment.md` and
+     `payments/initialize-payment/cards.md`'s own `currency` parameter
+     docs both list **NGN, USD, CAD, USDT, USDC**.
+  3. The very same cards.md page's own **422 error example** says
+     *"Currency must be one of: NGN, USD, CAD"* — excluding the two
+     stablecoins the parameter docs just said were supported, on the
+     same page.
+- **Not resolved here.** No entry has been added to
+  `CONFIRMED_PROVIDER_CURRENCIES.juicyway` this pass — `getAmountFormat`
+  already throws for `juicyway`/`payscribe` today specifically to avoid
+  a silent wrong guess on real money, and this three-way conflict is
+  exactly the situation that guard exists for. Whichever session
+  eventually implements JuicyWay for real should resolve this against
+  a live sandbox call (attempt a USDT/USDC session and see whether it's
+  accepted or 422s) rather than picking one of the three documented
+  answers — same spirit as the DodoPayments currency-conflict finding
+  above, applied to a same-provider three-way conflict instead of a
+  two-source one.
+- Separately, minimum-amount documentation for cards is also
+  internally inconsistent on the very same cards.md page: the
+  parameter docs say "Minimum: 100" (in minor units — i.e. ~1.00 in
+  major-unit terms) but the page's own 400 error example says *"Amount
+  must be at least 100000"* — a thousand-fold difference. Also
+  unresolved here, flagged for the same live-sandbox-check treatment
+  as the currency conflict, not guessed at.
+
+**JuicyWay — base URL, and webhook scheme previously confirmed
+2026-08-27, unchanged and re-confirmed relevant this session (not
+re-verified line-by-line, no new source fetched for this part —
+nothing above touches webhooks):**
 - Real, current docs: **https://docs.juicyway.com** (confirmed to
   exist and be current). There's also **https://docs.spendjuice.org**,
   which appears to be a *different, newer* product surface from the
@@ -1798,10 +1999,10 @@ one).
   directly, this base URL was already correct.
 - The existing `providers/juicyway.js` has an explicit
   `⚠️ Verify exact endpoint path in Juicyway docs` comment on the
-  `/v1/charges` call — this is still unverified (out of scope for
-  Task 5, which was webhooks-only; a future task should confirm the
-  payment-initialization endpoint path the same way Task 7 does for
-  Korapay).
+  `/v1/charges` call — **now resolved by this session's full audit
+  above**: the path is confirmed wrong (`/payment-sessions` is
+  correct), see the "Endpoint path" finding above rather than treating
+  this as still-open.
 - Webhook scheme: **confirmed directly** against
   docs.juicyway.com/webhooks.md (fetched 2026-08-27, via
   docs.juicyway.com/llms.txt's page index — the `/webhooks` path alone
@@ -2411,27 +2612,111 @@ already-fully-confirmed change with no ambiguity to resolve. Left
 unchecked/undone here anyway, per this session's scope being
 doc-only, not because it's blocked.
 
-### Task 8b — Juicyway: verify the payment-initialization endpoint path [ ]
-**Added by Task 15's audit pass** (see that task's note) — `providers/juicyway.js`
-has carried an explicit `⚠️ Verify exact endpoint path in Juicyway docs`
-comment on its `/v1/charges` call since Task 5 (which was webhooks-only
-in scope), and the "Confirmed research findings" section has flagged
-this as unverified since then too — but nothing had actually turned it
-into a queued task until now, so it was sitting unresolved and
-untracked. Same shape of work as Task 7 (Korapay) and Task 8
-(Paystack): open docs.juicyway.com (via its `.md` suffix / `llms.txt`
-page index — see the JuicyWay findings section above for why the bare
-`/webhooks` path itself 404s, likely the same trick needed for the
-charges endpoint) and confirm the real payment-initialization path,
-required/optional fields, and response shape against the primary
-source, then fix `providers/juicyway.js` if `/v1/charges` turns out to
-be wrong (same class of fix Task 7 made for Korapay's paths).
-**On hold — see "Current focus: Korapay only" above**, same reasoning
-as Task 8: we're waiting on JuicyWay API keys regardless, so even a
-confirmed-correct path can't be exercised end-to-end yet. Doc research
-alone doesn't need a key, but per the current focus narrowing, skip
-this entirely for now rather than partially doing it — matches how
-Task 8 itself is being held.
+### Task 8b — Juicyway: verify the payment-initialization endpoint path [x] (doc-only; confirmed WRONG, not fixed here)
+**Resolved this session (2026-09-06) by a full API-discovery pass —
+see "Confirmed research findings" above ("JuicyWay — FULL API
+discovery pass").** The endpoint path is **confirmed wrong**:
+`/v1/charges` doesn't exist in JuicyWay's documented API; the real
+endpoint is `POST /payment-sessions`. This pass went well beyond just
+the endpoint path (same "turned into a full audit" pattern as Task 8's
+Paystack pass) and found three more real, confirmed bugs plus one
+unresolved documented ambiguity — none fixed here, since this remains
+a doc-research pass per the Discovery Convention. Each is queued as
+its own task immediately below (**Tasks 45a–45e**) rather than fixed
+under this task's own now-narrower scope.
+
+### Task 45a — Fix JuicyWay's endpoint path and Authorization header format [ ]
+**Added by Task 8b's full audit pass (2026-09-06), doc-research only.**
+Two confirmed bugs, fixed together since neither alone gets a real
+call to succeed: (1) `providers/juicyway.js#processPayment` calls
+`POST ${baseUrl}/v1/charges` — change to `POST ${baseUrl}/payment-sessions`.
+`verifyTransaction` calls `GET ${baseUrl}/v1/charges/${reference}` —
+change to `GET ${baseUrl}/payments/{id}` (note: takes JuicyWay's own
+`id`, not the merchant `reference` — see Task 45d, this may need to
+land together with or after that task, not independently). (2) Both
+methods send `'Authorization': \`Bearer ${this.apiKey}\`` — remove the
+`Bearer ` prefix entirely; docs.juicyway.com/authentication.md is
+explicit that the header is the raw key with no scheme prefix. Not
+blocked on API keys for writing the fix (this is a pure string/path
+change, confirmed against docs), but end-to-end confirmation still
+needs real JuicyWay sandbox keys, same as every other JuicyWay task.
+
+### Task 45b — Fix JuicyWay's request payload shape (missing required nested fields) [ ]
+**Added by Task 8b's full audit pass (2026-09-06), doc-research only.**
+`providers/juicyway.js#processPayment` currently builds `{ amount,
+email, reference, currency }` — the documented required body is `{
+amount, currency, description, reference, payment_method: { type:
+"card" }, order: { identifier, items: [{ name, type }] }, customer: {
+email, first_name, last_name, phone_number, billing_address, type,
+ip_address } }`. This is a bigger change than Task 45a: it changes
+this repo's own `processPayment(data)` contract, since callers
+(`routes.js`) would need to supply first/last name, phone, billing
+address, customer type, IP address, an order identifier/items array,
+and a description — none of which Paystack/Korapay's simpler
+`{ amount, email, reference, currency }` shape requires today.
+Whoever picks this up needs to decide whether `routes.js`'s existing
+`/api/pay`-style request body grows JuicyWay-specific optional fields,
+or whether JuicyWay processing gets its own route/validation path —
+a real design decision, not just a payload literal to edit.
+**Blocked on that design decision plus JuicyWay sandbox keys for
+end-to-end confirmation.**
+
+### Task 45c — Fix JuicyWay's error-message extraction (reads the wrong field, always falls back to a generic string) [ ]
+**Added by Task 8b's full audit pass (2026-09-06), doc-research only.**
+`providers/juicyway.js` reads `responseData.message` in both
+`processPayment` and `verifyTransaction` — JuicyWay's real error
+envelope is `{ error: { code, message, type, details } }`, so the
+real message lives at `responseData.error?.message`. As currently
+coded, `responseData.message` is `undefined` for every real JuicyWay
+error, so the hardcoded fallback string (`'Juicyway payment failed'` /
+`'Juicyway verification failed'`) fires on every single failure,
+discarding JuicyWay's own specific, documented-safe-to-surface message
+(e.g. "Amount must be at least 100000") every time. **Fix:** change
+both to `responseData.error?.message || 'Juicyway ... failed'`. Not
+blocked on API keys to write (the shape is confirmed from docs), but
+real-error confirmation needs a live failing call. Also worth deciding
+alongside this fix, not blocking it: whether to also surface
+`responseData.error?.code` for programmatic branching (same open
+question Task 8's Paystack audit raised for `type`/`code` there, and
+DodoPayments' audit raised again for its own `code` field) or a 402
+card-decline branch specifically (JuicyWay documents `card_declined`
+as its own status code, distinct from generic 4xx).
+
+### Task 45d — Design and implement JuicyWay's reference-vs-ID verify flow [ ]
+**Added by Task 8b's full audit pass (2026-09-06), doc-research only.**
+Real architectural gap, not a one-line fix: JuicyWay's `GET
+/payments/{id}` (Fetch Payment) takes JuicyWay's own UUID
+(`data.payment.id` from the initialize response), and List Payments'
+documented filters don't include lookup-by-merchant-reference. This
+repo's `verifyTransaction(reference)` signature assumes
+reference-based lookup works, matching how Paystack/Korapay's own
+verify calls work — that assumption is confirmed false for JuicyWay
+specifically. Whoever implements this needs to decide how the
+JuicyWay-issued `id` gets from the `processPayment` response through
+to whatever later calls `verifyTransaction` — e.g. `processPayment`
+returning `id` alongside its existing response so the caller can pass
+it back in, versus some other propagation path — before Task 45a's
+verify-endpoint fix can be meaningfully exercised end-to-end. Depends
+on this design decision landing before (or together with) Task 45a's
+verify-path change.
+
+### Task 45e — Resolve JuicyWay's three-way currency-list conflict before adding it to `CONFIRMED_PROVIDER_CURRENCIES` [ ]
+**Added by Task 8b's full audit pass (2026-09-06), doc-research only.**
+JuicyWay's own docs give three different answers for supported
+currencies across three pages (NGN+CAD only; NGN/USD/CAD/USDT/USDC;
+NGN/USD/CAD in one page's own error example) — see the "Currencies"
+finding in the audit above for the exact sources. **Do not add a
+`juicyway` entry to `CONFIRMED_PROVIDER_CURRENCIES` based on any one
+of these three lists** — `getAmountFormat` already throws for
+`juicyway` today specifically to prevent a silent wrong guess on real
+money, and this conflict is exactly the situation that guard exists
+for. Resolve by testing a real sandbox call (e.g. attempt a session in
+USDT and see whether it's accepted or 422s) once JuicyWay sandbox keys
+are available, not by picking whichever of the three documented
+answers seems most authoritative. The same page's minimum-amount
+figures also disagree by a factor of 1,000 ("Minimum: 100" vs. "Amount
+must be at least 100000") — resolve both together, same sandbox test
+can likely answer both.
 
 ### Task 9 — Expand currency/amount-unit handling per real provider capabilities [ ]
 Depends on Tasks 3–8 having established real per-provider currency
@@ -4181,14 +4466,17 @@ unanswered here:
   for `/pay`/`/payout`.
 
 **Juicyway — partially built; specific issues flagged by mavins-web,
-not all independently confirmed this session:**
+now independently confirmed by a later session's audit (2026-09-06,
+see Task 8b / "Confirmed research findings"):**
 - Direct read of `providers/juicyway.js` (this repo's current
   `origin/main`, this session): `processPayment()` posts to
   `${this.baseUrl}/v1/charges` with `Authorization: Bearer
   ${this.apiKey}`. The code itself already carries a `⚠️ Verify exact
   endpoint path in Juicyway docs` comment at that line — so the
   endpoint-path uncertainty mavins-web flagged is real and was already
-  self-acknowledged in this repo, not new information.
+  self-acknowledged in this repo, not new information. **Update
+  (2026-09-06): confirmed wrong** — the real path is
+  `POST /payment-sessions`, not `/v1/charges`. See Task 45a.
 - mavins-web's Task 71 (relaying an earlier, now-lost write-up) claims
   two further concrete bugs: a wrong auth header prefix and an
   incomplete request payload, said to be cross-checked at the time
@@ -4196,13 +4484,23 @@ not all independently confirmed this session:**
   **This session had no access to that reference doc and could not
   independently verify either claim** — treat both as credible but
   unconfirmed until someone re-checks against Juicyway's actual
-  current docs directly.
+  current docs directly. **Update (2026-09-06): both now independently
+  confirmed true**, this time directly against docs.juicyway.com
+  itself rather than the lost reference doc — the `Bearer ` prefix is
+  wrong (docs.juicyway.com/authentication.md is explicit the header is
+  the raw key), and the payload is missing most of the documented
+  required nested fields (`customer`, `payment_method`, `order`,
+  `description`). See Tasks 45a and 45b. mavins-web's claims turned out
+  to be accurate even without access to whatever reference doc backed
+  them originally.
 - By contrast, `verifyWebhookSignature()` in the same file (business-
   ID-keyed HMAC, alphabetized-key stable stringify, uppercase hex
   digest, all explained in detailed inline comments citing
   docs.juicyway.com) reads as fully built and deliberately careful —
   no source flags this part as broken; don't redo it without a
-  specific new reason to doubt it.
+  specific new reason to doubt it. **Still true as of the 2026-09-06
+  audit** — that pass re-confirmed relevance but found no new webhook
+  issues, see the "Confirmed research findings" JuicyWay section.
 
 **Korapay-vs-Juicyway scoping** — still open per mavins-web: exactly
 what should Juicyway cover that Korapay doesn't already? Not answered
@@ -4394,10 +4692,22 @@ already applied to Korapay/Paystack/Juicyway/Payscribe.
     implicit dependency on persisted state.
     - **a-1-i-X** *(active — start here)*
 - **a-2. Paystack** — already integrated. Same no-DB audit as a-1.
-- **a-3. Juicyway** — already integrated; Task 44's open bugs
-  (endpoint path confirmed uncertain in-code; auth-header-prefix and
-  payload-completeness claims unverified) must close before this
-  provider is trustworthy inside an orchestration layer.
+- **a-3. Juicyway** — already integrated, but **now confirmed broken,
+  not just "unverified"**: Task 8b's full audit pass (2026-09-06)
+  turned the previously-unverified endpoint-path/auth-header/payload
+  claims into four confirmed real bugs plus one unresolved documented
+  currency conflict — endpoint path wrong (`/v1/charges` doesn't
+  exist; real path is `/payment-sessions`), `Authorization` header
+  wrongly includes a `Bearer ` prefix JuicyWay's docs explicitly say
+  not to send, the request payload is missing most of JuicyWay's
+  required nested fields, and the error-message extraction reads a
+  field that doesn't exist in JuicyWay's real error envelope (always
+  falls back to a generic string). See Tasks 45a–45e for the
+  individual fixes and the still-unresolved currency ambiguity — all
+  four confirmed bugs must close, and Task 45e's currency conflict
+  must resolve, before this provider is trustworthy inside an
+  orchestration layer, same bar Task 44 already set, now with actual
+  confirmed findings backing it instead of unverified claims.
 - **a-4. DodoPayments** — **discovery/audit done (2026-09-06,
   doc-only, no code yet)**, per the Discovery Convention above. Full
   audit is in the "Confirmed research findings" section (search for

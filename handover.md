@@ -3,7 +3,38 @@
 > **▶ START HERE — read this box only, then go straight to work. Skip
 > everything else below unless you get stuck.**
 >
-> **Newest note (2026-09-06, latest of all) — Task 8: Paystack full
+> **Newest note (2026-09-06, latest of all) — Task 0's a-4:
+> DodoPayments full API-discovery/audit pass done (doc-research only,
+> no code — `providers/dodopayments.js` does not exist yet).** Same
+> doc-only precedent as Task 8's Paystack pass below. Covers
+> authentication, Checkout Sessions (the recommended integration
+> surface — the older `/payments` endpoint is DodoPayments' own
+> documented deprecation), the error envelope, dual-window rate
+> limits, and the webhook signature scheme (Standard Webhooks spec —
+> three headers, HMAC-SHA256, base64, structurally different from
+> every other provider this repo integrates). Full writeup under
+> "Confirmed research findings" (search "DodoPayments — FULL API
+> discovery pass"); a-4's own entry under Task 0 has the short
+> version. **One real open item, not resolved, flagged for whichever
+> session writes the actual provider code:** two DodoPayments primary
+> sources disagree on which currencies can be a product's base
+> currency (one says USD/INR only; another lists several more as
+> "native settlement currencies") — resolve against a live/test
+> Dashboard before adding anything to
+> `CONFIRMED_PROVIDER_CURRENCIES.dodopayments`, don't guess from
+> conflicting docs. **Also this session:** corrected the product
+> owner's own local Termux checkout path in the "Patch Handoff
+> Convention" section below (`~/B-PAY-backend`, not
+> `~/B-Pay-backend` — the product owner's own local directory name,
+> case-sensitive on that filesystem; the GitHub repo itself is still
+> `B-Pay-backend`, unaffected, confirmed by every session's own clone
+> output). **Still `a-1-i-X`** is the active task for the Task 0
+> track — this was a doc-only exception for a-4, same as Task 8 was
+> for a-2, not a change to which `X` node is active. Patch for this
+> session covers `handover.md` only — no provider code added or
+> changed.
+>
+> **Newest note (2026-09-06, previous) — Task 8: Paystack full
 > API-discovery/audit pass done (doc-research only, per the existing
 > "Current focus: Korapay only" exception for doc-only work).** Every
 > Transaction-API endpoint, the six-currency support table, the error
@@ -1090,6 +1121,258 @@ this file*
   verifies the signature (401 on failure/missing), logs
   `charge.success` transactions, and logs-only for every other event
   type (no persistence layer exists yet — see Task 12).
+
+**DodoPayments — FULL API discovery pass, audited 2026-09-06 (new —
+this is a-4's first-ever discovery pass; no prior DodoPayments entry
+existed to supersede).** This is a **documentation-only pass** per
+Task 0's Discovery Convention: no code was written, `providers/`
+has no `dodopayments.js` yet, and none of this repo's route/helper
+files reference DodoPayments in any way. Every source below was
+fetched directly this session from docs.dodopayments.com (API
+Reference: Introduction/Authentication/Rate Limits/Error Codes,
+the Checkout Sessions and Payments endpoint pages, the Webhooks
+guide, the Adaptive Currency / per-currency pages) plus the
+`dodopayments/dodo-docs` and `dodopayments/dodopayments-node`
+GitHub repos for SDK-level confirmation. This is a **Merchant of
+Record** platform (Dodo becomes the seller of record, unlike
+Korapay/Paystack/Juicyway/Payscribe which are payment processors
+only) — flagged up front because it changes the compliance shape of
+routing through it, not just the API shape: tax collection/remittance
+and being the legal seller are Dodo's job, not this platform's, for
+any transaction routed there. This audit covers Authentication,
+Checkout Sessions (the primary/recommended integration surface),
+the legacy Payments API, currencies/settlement, the error envelope,
+rate limits, and the webhook signature scheme. It does **not** cover
+Subscriptions, Products, Customers, Discounts, Refunds, Disputes,
+License Keys, Usage-Based Billing/Meters, Credit-Based Billing,
+Balance Ledger, Brands, Payouts, or the Customer Portal — those are
+real, separate DodoPayments resource families with their own doc
+sections, listed here as a known, explicit exclusion (this platform's
+current no-DB, payin/payout-routing-only scope per Task 0 doesn't
+need most of them yet; if a future task needs Refunds or Disputes
+for payout reconciliation, that needs its own real discovery pass,
+not an assumption borrowed from this one).
+
+*Environment & authentication*
+- Base URLs: **`https://test.dodopayments.com`** (test mode) and
+  **`https://live.dodopayments.com`** (live mode) — confirmed at
+  docs.dodopayments.com/api-reference/introduction. Unlike
+  Paystack/Korapay (one host, key-pair determines mode),
+  DodoPayments uses **two separate hosts** — this repo's existing
+  `getProviderBaseUrl(provider)` pattern in `utils/helpers.js` (one
+  `development`/`production` URL pair per provider) already
+  supports this shape directly: `development: 'https://test.dodopayments.com'`,
+  `production: 'https://live.dodopayments.com'` — no structural change
+  needed to that function, just a new entry once implementation
+  starts. The official Node SDK also takes an explicit
+  `environment: 'test_mode' | 'live_mode'` constructor option
+  (defaults to `live_mode`) as a second way to select the host —
+  this repo would use the base-URL-by-`NODE_ENV` approach already
+  established for other providers instead, for consistency.
+- Auth: `Authorization: Bearer {API_KEY}` on every request — same
+  Bearer scheme as Paystack/Korapay/Juicyway. Two key modes exist at
+  generation time (Dashboard → Developer → API Keys): a **write**
+  key (full read/write) and a **read-only** key (fetch-only, cannot
+  create/modify) — worth knowing for least-privilege key issuance
+  once this goes to the product owner for real credentials, but not
+  a code-shape difference (this repo already stores one secret key
+  per provider).
+
+*Checkout Sessions — `POST /checkout-sessions` (recommended
+integration surface)*
+- **This is the endpoint to build against, not the legacy Payments
+  API below.** Confirmed at
+  docs.dodopayments.com/api-reference/checkout-sessions/create: the
+  older `POST /payments` endpoint is explicitly marked
+  **"Deprecated API"** in its own doc page, with DodoPayments'
+  own docs recommending Checkout Sessions instead for both
+  one-time payments and subscriptions.
+- Required body: `product_cart` (array of `{ product_id, quantity }`
+  — `product_id` comes from a product already created in the
+  DodoPayments dashboard, not something this repo generates itself,
+  a real structural difference from Paystack/Korapay where the
+  amount is passed directly in the initialize call). This is a
+  **product-catalog-driven** model, not an arbitrary-amount-per-call
+  model — relevant to Task 0's business-model note about this
+  platform's own per-transaction pricing sitting on top of whatever
+  the provider charges: a DodoPayments integration would need
+  products pre-provisioned in the DodoPayments dashboard (or
+  provisioned via its Products API, not yet audited) rather than
+  just passing an amount through, unlike every other provider this
+  repo talks to today.
+- Common optional fields confirmed to exist (not required, but real
+  and documented): `customer` (`{ email, name }` or `{ customer_id }`
+  for a returning customer), `return_url`, `billing_address`,
+  `billing_currency`, `discount_code`, `metadata`, `confirm` (process
+  immediately using a saved `payment_method_id`, skipping the hosted
+  page — session validity drops from 24h to 15 minutes when
+  `confirm: true` is used), `subscription_data` (trial periods,
+  on-demand/mandate-only flows), `allowed_payment_method_types`,
+  `force_3ds`, `show_saved_payment_methods`, `feature_flags`
+  (e.g. `redirect_immediately` to skip the success page).
+- Response shape **confirmed**: `{ session_id, checkout_url,
+  client_secret, payment_id, publishable_key }` — `client_secret`
+  and `publishable_key` are only populated when `confirm: true`
+  created a PaymentIntent at session-creation time, `null`
+  otherwise. A companion `GET /checkout-sessions/{id}` (status
+  retrieval) and a `POST /checkout-sessions/preview` (calculate
+  pricing/tax/totals without creating a real session) both exist,
+  documented but not detailed further here since neither is core to
+  a first integration pass.
+- After payment, the customer is redirected to `return_url` with
+  query params including the payment/subscription ID, status,
+  customer email, and (for license-key products) the license key
+  itself — this repo would need its own `return_url` handler if it
+  goes this route, same general shape as Paystack's redirect-based
+  `authorization_url` flow.
+
+*Legacy Payments API — `POST /payments` (deprecated, documented here
+only because it's the closer conceptual analog to Paystack's
+`/transaction/initialize` this repo already knows)*
+- Confirmed **"Deprecated API"** per its own OpenAPI-sourced doc
+  page (docs.dodopayments.com/api-reference/payments/post-payments) —
+  DodoPayments' own docs say "We recommend using Checkout Sessions
+  instead." Not recommended as this repo's integration target; noted
+  for completeness only, not as a real candidate for `providers/dodopayments.js`.
+- `GET /payments/{payment_id}` (**Get Payment Detail** — retrieve a
+  specific payment, the closest analog to Paystack's
+  `verifyTransaction`) and `GET /payments` (**List Payments**,
+  paginated) both confirmed to exist and are **not** marked
+  deprecated — these remain the way to check a payment's status
+  after the fact regardless of whether Checkout Sessions or the
+  legacy endpoint created it.
+
+*Currencies & settlement — real, unresolved discrepancy between two
+DodoPayments primary sources, flagged rather than guessed at*
+- One primary source (the Error Codes reference,
+  `UNSUPPORTED_CURRENCY` entry) states: **"currently supported
+  products are only USD and INR"** for product/addon base pricing,
+  and that `billing_currency` may only be `USD` or `INR`.
+- A different primary source (DodoPayments' own per-currency
+  marketing/docs pages, e.g. `dodopayments.com/currency/eur`,
+  `/currency/usd`, `/currency/inr`) describes **EUR, USD, INR, GBP**
+  (and others with dedicated pages) as **"native settlement
+  currencies"** — meaning a business can apparently price and settle
+  directly in more than just USD/INR with **zero** Adaptive Currency
+  conversion fee, distinct from the 80+ currencies Adaptive Currency
+  can *display and convert* at checkout (2–4% fee, borne by customer
+  by default) for a business whose base/settlement currency is one
+  of the native ones.
+- **This repo does not resolve this discrepancy** — it's flagged as
+  a real open question for whichever session first writes
+  `providers/dodopayments.js`: confirm current product-creation
+  currency options directly against a live (even test-mode) Dashboard
+  or a fresh API call before assuming either source is stale or
+  wrong. Given this platform's own `CONFIRMED_PROVIDER_CURRENCIES`
+  convention exists specifically to avoid guessing at a provider's
+  currency support (see the Paystack XOF finding above for what
+  guessing from secondary sources costs), this is exactly the kind
+  of ambiguity that convention exists to catch — no entry has been
+  added to `CONFIRMED_PROVIDER_CURRENCIES.dodopayments` this pass,
+  and none should be added until this is resolved with a primary
+  source that isn't self-contradictory.
+- Minimum transaction amounts are **currency-specific, not a single
+  base-unit rule** (unlike Paystack/Korapay's flat ×100/×1 rules):
+  $0.50 USD, €0.50 EUR, ₹5 INR, 1000.00 CLP, 100.00 BDT, etc., each
+  documented on that currency's own page — a future
+  `getAmountFormat('dodopayments', ...)` branch would need a
+  per-currency minimum table, not just a unit/multiplier pair.
+
+*Error response format — newly documented here*
+- Confirmed at docs.dodopayments.com/api-reference/introduction and
+  the (non-English-only-available at fetch time, but content
+  language-independent) Error Codes reference: every error response
+  is `{ code, message }` — e.g. `{ "code": "UNSUPPORTED_COUNTRY",
+  "message": "Country AI currently not supported" }`. No `type` field
+  and no nested `meta` object the way Paystack has — flatter than
+  Paystack's envelope. Standard HTTP status codes used: 400, 401,
+  403, 404, 409, 410, 413, 422, 429, 500. `code` is a **stable,
+  machine-readable string** (e.g. `CHECKOUT_SESSION_CONSUMED`,
+  `PRODUCT_CART_EMTPY` — sic, DodoPayments' own docs note this is a
+  deliberate/kept typo matching the API's actual value, not a docs
+  error), grouped by API area (Payments & Checkout, Refunds,
+  Subscriptions, Products/Brands, Discounts, License Keys,
+  Usage-Based Billing, Credit-Based Billing, Wallet, Currency/Tax/
+  Region, Validation, General/System) — a real, useful surface for
+  programmatic branching that this repo's existing
+  `throw providerError(...)` pattern (which only ever surfaces a
+  message string for Paystack/Korapay) would need to decide whether
+  to preserve or flatten, same open question Task 8's Paystack audit
+  raised for `type`/`code` there.
+- Distinct from **card-decline reasons** (a separate "Transaction
+  Failures" doc page, not audited this pass — DodoPayments' own docs
+  explicitly separate "API and business logic errors" from
+  "card decline reasons like `INSUFFICIENT_FUNDS` or `CARD_DECLINED`
+  returned when a payment fails").
+
+*Rate limits — newly documented here*
+- Confirmed at docs.dodopayments.com/api-reference/introduction: a
+  **dual-window** system (burst + sustained), tiered by business
+  account, **not a single flat number** the way Paystack documents
+  per-endpoint limits:
+
+  | Tier | Burst (per second) | Sustained (per minute) |
+  |---|---|---|
+  | Unauthenticated (by IP) | 20 | 100 |
+  | Tier 0 (default) | 40 | 240 |
+  | Tier 1 | 100 | 1,000 |
+  | Tier 2 | 500 | 5,000 |
+
+  `429` responses use the same `{ code: "TOO_MANY_REQUESTS", message }`
+  envelope as any other error, plus `X-RateLimit-Limit`/
+  `-Remaining`/`-Reset` headers. Official SDKs (Node/Go/PHP/C#/Java)
+  all auto-retry `429`, `408`, `409`, and `>=500` twice by default
+  with exponential backoff — this repo has no retry/backoff handling
+  for any provider today (same gap already noted for Paystack), so
+  this isn't a DodoPayments-specific deficiency, just consistent with
+  the existing pattern.
+
+*Webhook signature — newly documented here*
+- DodoPayments follows the **Standard Webhooks specification**
+  (the same open spec Svix co-created) — a **materially different
+  scheme from every provider this repo already integrates**:
+  Paystack and Korapay both use a single HMAC hex-digest header
+  (`x-paystack-signature`, Korapay's equivalent); DodoPayments
+  instead sends **three headers** — `webhook-id`, `webhook-timestamp`,
+  `webhook-signature` — and the signed content is the
+  **concatenation** `${webhook-id}.${webhook-timestamp}.${raw-body}`
+  joined with literal `.` characters, HMAC-SHA256'd with the webhook
+  secret (issued in `whsec_...` format, a distinct secret from the
+  API key) and **base64-encoded** (not hex), then prefixed with a
+  version tag (e.g. `v1,`) — confirmed against
+  docs.dodopayments.com/developer-resources/webhooks and
+  DodoPayments' own official Express.js example using the
+  `standardwebhooks` npm package's `Webhook.verify()` helper.
+- **Real implementation implication, flagged for whichever session
+  builds this:** this scheme is timestamp-aware by design (Standard
+  Webhooks recommends rejecting anything outside a 300-second
+  tolerance window to block replay attacks) — a real security
+  property Paystack/Korapay's plain HMAC schemes in this repo don't
+  have today. A `providers/dodopayments.js#verifyWebhookSignature`
+  should either use the `standardwebhooks` package directly (as
+  DodoPayments' own docs recommend) rather than hand-rolling the
+  HMAC/base64/timestamp logic, or hand-roll it carefully with the
+  timestamp check included — not a copy-paste of Paystack's
+  `crypto.createHmac('sha512', ...)` pattern, which would be wrong
+  on the hash algorithm (SHA256 not SHA512), the encoding (base64
+  not hex), the signed content (id+timestamp+body, not just body),
+  and the header names, all four at once.
+- Full webhook event-type list (for future reference, not all
+  relevant to this platform's current no-DB payin/payout scope):
+  `payment.succeeded`, `payment.failed`, `payment.processing`,
+  `payment.cancelled`, `refund.succeeded`, `refund.failed`,
+  `dispute.opened`, `dispute.expired`, `dispute.accepted`,
+  `dispute.cancelled`, `dispute.challenged`, `dispute.won`,
+  `dispute.lost`, `subscription.active`, `subscription.renewed`,
+  `subscription.on_hold`, `subscription.cancelled`,
+  `subscription.failed`, `subscription.expired`,
+  `subscription.plan_changed`, `subscription.updated`,
+  `license_key.created`. Idempotency: DodoPayments' own docs
+  recommend using the `webhook-id` header as an idempotency key —
+  directly relevant to Task 0's no-DB constraint, since deduplicating
+  by that header would need to happen without a database if this
+  platform ever needs to guard against duplicate webhook delivery
+  for DodoPayments specifically.
 
 **Korapay — FULL API discovery pass, re-audited 2026-09-06 (supersedes
 all prior Korapay entries below; nothing from the prior audit was
@@ -3986,11 +4269,19 @@ repo's handover.md (including mavins-web's):**
 3. **The product owner reviews and applies it themselves.** Product
    owner's environment is Termux; downloaded patches land in
    `~/storage/downloads/`, and the repo checkout lives at
-   `~/B-Pay-backend`. **The exact commands the product owner runs
-   themselves, after reading the patch — not commands any session
-   runs against this repo:**
+   `~/B-PAY-backend` **(note the exact case — confirmed directly by
+   the product owner, 2026-09-06: this is about the local directory
+   name on their own device, a Linux/Termux filesystem, which is
+   case-sensitive; it is not a claim about the GitHub repo's own
+   name, which remains `B-Pay-backend` as cloned by every session —
+   GitHub repo URLs/clone targets are not case-sensitive the way a
+   local directory name is, so there's no actual conflict here, just
+   two different names for two different things: the remote repo and
+   this one local checkout of it).** **The exact commands the product
+   owner runs themselves, after reading the patch — not commands any
+   session runs against this repo:**
    ```
-   cd ~/B-Pay-backend
+   cd ~/B-PAY-backend
    git am ~/storage/downloads/<patch-file-name>
    git push
    ```
@@ -4107,7 +4398,25 @@ already applied to Korapay/Paystack/Juicyway/Payscribe.
   (endpoint path confirmed uncertain in-code; auth-header-prefix and
   payload-completeness claims unverified) must close before this
   provider is trustworthy inside an orchestration layer.
-- **a-4. DodoPayments** — not started. No code, no docs consulted.
+- **a-4. DodoPayments** — **discovery/audit done (2026-09-06,
+  doc-only, no code yet)**, per the Discovery Convention above. Full
+  audit is in the "Confirmed research findings" section (search for
+  "DodoPayments — FULL API discovery pass"). Real open item queued
+  there rather than resolved: a genuine conflict between two
+  DodoPayments primary sources on which currencies can be a
+  product's base/settlement currency (one says USD/INR only, another
+  lists EUR/GBP/etc. as "native settlement currencies") — resolve
+  against a live Dashboard or fresh API call before writing
+  `providers/dodopayments.js`, don't pick a side from docs alone.
+  Also flagged there: this is a Merchant-of-Record platform (Dodo is
+  the legal seller, not this platform), a product-catalog-driven
+  integration model (needs pre-provisioned `product_id`s, not an
+  arbitrary per-call amount like every other provider here), and a
+  webhook scheme (Standard Webhooks: 3 headers, HMAC-SHA256,
+  base64, `id.timestamp.body`) that is structurally different from
+  Paystack/Korapay's single hex-HMAC-header schemes — implementation
+  should use the `standardwebhooks` package rather than adapting
+  existing signature-verification code.
 - **a-5. Flutterwave** — not started. No code, no docs consulted.
 - **a-6. Remita** — not started. No code, no docs consulted.
 - **a-7. Xixapay** — not started. This session could not confirm

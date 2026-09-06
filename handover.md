@@ -3,7 +3,69 @@
 > **▶ START HERE — read this box only, then go straight to work. Skip
 > everything else below unless you get stuck.**
 >
-> **Newest note (2026-09-06, latest of all) — Task 0's a-7: Xixapay
+> **Newest note (2026-09-06, latest of all) — Task 0's a-8: PaymentPoint
+> FULL API discovery/audit pass done (doc-research only, no code —
+> `providers/paymentpoint.js` does not exist yet). Supersedes this
+> same session's own earlier "webhook-only" pass** — the product owner
+> has now supplied all five remaining pages from PaymentPoint's own
+> nav (Authentication, Errors, Create Virtual Account, Identity
+> Verification, Liveness Check), on top of the Webhook Documentation
+> page already audited, which together account for every page in
+> PaymentPoint's own sidebar — so this is now treated as the full
+> discovery pass, not a partial one. All six source docs were supplied
+> directly by the product owner rather than found via this session's
+> own web search — same accepted exception as the earlier webhook-only
+> note. **What's newly confirmed:** base URL
+> `https://api.paymentpoint.co`; auth is **two simultaneous headers**
+> (`Authorization: Bearer {secret_key}` **and** a separate `api-key`
+> header) — structurally the same two-credential shape already found
+> for Xixapay (which additionally requires a third, a body-level
+> `businessId` — PaymentPoint requires that too, so the real total is
+> three credentials, matching Xixapay's shape almost exactly, not this
+> repo's existing single-Bearer-header `getProviderKey()` pattern);
+> `POST /api/v1/createVirtualAccount` (bank codes for PalmPay/OPay
+> confirmed, response `status` is a string `"success"`, consistent
+> with the webhook payload's own `transaction_status`); two paid
+> verification endpoints not needed for payment orchestration but
+> real product-owner-visible functionality — Identity Verification
+> (`POST /api/identity/verify`, ₦100 NIN / ₦75 BVN, returns biometric
+> photo data) and Liveness Check (`POST /api/liveness/check`, ₦35 per
+> check, **critically returns HTTP 200 with `"status":"success"` even
+> on a failed check** — callers must branch on the nested `is_live`
+> field, not the top-level `status`, or every spoof attempt passes);
+> a standard error-code table. **Two real findings worth flagging up
+> here specifically:** (1) the Authentication and Create Virtual
+> Account pages both display what reads as a **live-looking Bearer
+> token and api-key pair in the documentation itself**, not an
+> obviously-fake placeholder like the `xxx` used elsewhere in
+> PaymentPoint's own docs — flagged as a possible real credential
+> left exposed in public docs; this audit deliberately does **not**
+> reproduce that literal string anywhere in this repo (including this
+> note) to avoid committing a live-looking secret into git history,
+> and the product owner should treat it as compromised and eligible
+> for rotation if it turns out to be real, rather than assume it's a
+> dummy; (2) the Create Virtual Account page's own request-body table
+> lists an example `businessId` that is **byte-for-byte identical to
+> the page's own `api-key` example value** — almost certainly a
+> copy-paste error, since the page's own code sample directly below it
+> uses a differently-shaped `businessId` (`3AB2B22345EF407`) that
+> matches the format used consistently on the Identity Verification
+> and Liveness Check pages — don't copy the table's businessId
+> literally. **Carried over, unchanged, from the webhook-only pass:**
+> PaymentPoint's official Node webhook sample still has the same two
+> confirmed bugs already flagged in Xixapay's sample (re-serializes
+> parsed JSON instead of hashing raw bytes; non-constant-time
+> signature comparison) — do not copy it as-is; no confirmed
+> failed/pending `transaction_status` value; no replay protection in
+> the webhook signature scheme. Full writeup under "Confirmed research
+> findings" (search "PaymentPoint — FULL API discovery pass"); Task
+> 0's a-8 bullet has the short version. **Still `a-1-i-X`** is the
+> active task for the Task 0 track — this remains a doc-only exception
+> for a-8, same as Task 8/a-4/a-7 before it, not a change to which `X`
+> node is active. Patch for this session covers `handover.md` only —
+> no provider code added or changed.
+>
+> **Newest note (2026-09-06, previous) — Task 0's a-7: Xixapay
 > full API-discovery/audit pass done (doc-research only, no code —
 > `providers/xixapay.js` does not exist yet).** Resolves both halves
 > of a-7: **existence is now confirmed** (real provider, real docs at
@@ -2804,6 +2866,261 @@ security-relevant gap flagged rather than glossed over*
   exactly 10 digits and describe payouts as "instant," for whatever
   that's worth as an unverified marketing claim rather than an SLA.
 
+**PaymentPoint — FULL API discovery pass, audited 2026-09-06
+(supersedes the WEBHOOK-ONLY pass earlier this session; resolves a-8;
+`providers/paymentpoint.js` does not exist yet, doc-research only, no
+code written).** Source: the product owner supplied all six pages
+directly (none found via this session's own web search) — saved
+snapshots of PaymentPoint's Authentication, Errors, Webhook
+Documentation, Create Virtual Account, Identity Verification, and
+Liveness Check pages, all under `paymentpoint.gitbook.io/paymentpoint.co`.
+The Webhook Documentation, Authentication, and Errors pages say "Last
+updated 1 year ago" per their own footers; Create Virtual Account,
+Identity Verification, and Liveness Check say "Last updated 3 months
+ago" — treat the literal ages as unverified currency either way, same
+posture already applied to every other provider's docs in this file.
+**Scope confirmed complete, not partial:** these six pages match every
+entry in PaymentPoint's own sidebar nav (Welcome / Let's get started /
+Authentication / Errors / Virtual Account → Create Virtual Account /
+Webhook Documentation / Verification → Identity Verification /
+Liveness Check) — nothing in PaymentPoint's own nav was left unread
+this pass.
+
+*Environment & authentication — CONFIRMED, three simultaneous
+credentials, same shape as Xixapay (a-7 above)*
+- Single base URL: **`https://api.paymentpoint.co`** — no separate
+  sandbox/test-mode host documented anywhere across any of the six
+  pages (same gap already on record for Xixapay; contrast with
+  Paystack/Korapay/DodoPayments, which all have a distinct test host
+  or key pair).
+- Confirmed identically on the Authentication, Create Virtual Account,
+  Identity Verification, and Liveness Check pages: an `Authorization:
+  Bearer {secret_key}` header, a **separate** `api-key` header, **and**
+  a `businessId` field inside the request **body** — three
+  credentials at once, the same structural shape already flagged for
+  Xixapay, and the same misfit for this repo's existing
+  `getProviderKey(provider, type)` `public`/`secret` pair.
+- **A real finding, flagged rather than reproduced:** the
+  Authentication page and the Create Virtual Account page's own
+  request-header tables both display a **specific Bearer token and
+  api-key value**, not an obviously-placeholder string like the `xxx`
+  used elsewhere in PaymentPoint's docs. This audit deliberately does
+  **not** copy that literal value into this repo (including this file)
+  to avoid landing a live-looking secret in git history. Treat it as a
+  possible real credential accidentally left in public documentation;
+  the product owner should confirm and rotate it if so, not assume
+  it's a dummy just because it appears in a docs page.
+- **A second, smaller finding on the same Create Virtual Account
+  page:** its request-body table's example `businessId` value is
+  **identical to that same page's `api-key` example value** —
+  almost certainly a copy-paste error, since the code sample
+  immediately below that table uses a differently-shaped `businessId`
+  (`3AB2B22345EF407`) that matches the format used consistently on the
+  Identity Verification and Liveness Check pages' own code samples.
+  Use the code-sample format, not the table's, if a real `businessId`
+  isn't yet on hand.
+
+*Error codes — CONFIRMED, a standard HTTP-status table, no
+machine-readable error codes documented*
+- 200/201 success; 400 bad request; 401 unauthorized; 403 forbidden;
+  404 not found; 409 conflict (documented specifically as "using the
+  same idempotent key for a previous request" — PaymentPoint has some
+  idempotency-key concept, though no page in this pass documents its
+  request-side mechanics, i.e. which header/field name carries it);
+  429 rate limit (no numeric rate-limit figure given anywhere, same
+  gap already on record for Xixapay); 500/502/503/504 server errors.
+  **Unlike DodoPayments/Xixapay's snake_case error-code taxonomies,
+  PaymentPoint's Errors page gives no stable machine-readable code per
+  error** — only the HTTP status and a human-readable meaning, so
+  error-branching logic in a future `providers/paymentpoint.js` has
+  less to key off than for those other providers.
+
+*Create Virtual Account — CONFIRMED, the closest analog to this repo's
+`processPayment`/account-provisioning flow*
+- `POST /api/v1/createVirtualAccount`. Request body: `email`, `name`,
+  `phoneNumber`, `bankCode` (an **array** of partner bank codes — two
+  confirmed values, `20946` = PalmPay, `20897` = OPay — consistent
+  with the bank names already seen in the webhook payload's own
+  `receiver.bank` field), `businessId`, and optional `idType`
+  (`bvn`/`nin`) + `idNumber` (11 digits, required only when `idType`
+  is set).
+- Response: `{ status: "success", message, customer: {...}, business:
+  {...}, bankAccounts: [{ bankCode, accountNumber, accountName,
+  bankName, Reserved_Account_Id }], errors: [] }` — `status` is a
+  **string**, matching the shape already seen in the Webhook
+  Documentation's own `transaction_status` field, so at least these
+  two PaymentPoint surfaces agree with each other (contrast with
+  Xixapay, whose `status` field is confirmed inconsistent — boolean on
+  some endpoints, string on others).
+- `bankAccounts` is an **array** — a single virtual-account creation
+  call can return more than one funded account (one per requested
+  `bankCode`), which a future integration needs to handle as a list,
+  not a single object.
+
+*Identity Verification — CONFIRMED, paid NIN/BVN lookup, not required
+for payment orchestration but real functionality if ever exposed*
+- `POST /api/identity/verify`. Cost: ₦100/NIN lookup, ₦75/BVN lookup,
+  billed from PaymentPoint's own wallet balance (`402 Insufficient
+  Account Balance` if underfunded — a wallet-prefunding model, not
+  per-request card billing); repeat lookups of the same number within
+  30 days are documented as free (`cost_charged: 0` on a cached hit).
+- Request: `id_type` (`nin`/`bvn`), `id_number` (11 digits),
+  `businessId`. Response returns `personal_details` (name/DOB/gender/
+  nationality, each field `null` if the registry doesn't hold it) and
+  `biometric_data.photo` — a **base64-encoded JPEG with no `data:` URI
+  prefix**. The doc's own text is explicit that this is biometric data
+  and must not be written to logs or persisted beyond KYC-policy
+  need — a real handling constraint for any future implementation, not
+  optional guidance.
+- Timeout guidance stated directly in the doc: set an HTTP timeout of
+  **at least 90 seconds** (registry lookups documented as slow under
+  load) — a client-side timeout followed by a naive retry can bill
+  twice for one verification, since the doc also states a `404` (no
+  record found) is not charged and should never be retried, while a
+  `503` is transient and safe to retry with backoff.
+
+*Liveness Check — CONFIRMED, paid selfie liveness check, ₦35/check,
+one real gotcha in how to read the response*
+- `POST /api/liveness/check`. Request: `image` (base64 selfie, max 2MB
+  decoded, raw base64 only — a `data:image/jpeg;base64,` prefix causes
+  a `422`; `selfie` accepted as an alias), `businessId`.
+- **The one real gotcha, stated directly by the doc itself and worth
+  repeating here because it's easy to get backwards:** a *failed*
+  liveness check still returns **HTTP 200 with `"status":"success"`**
+  — `status` only reflects "the API call itself succeeded," not
+  whether the person passed. The actual verdict is the nested
+  `data.is_live` boolean; a future integration that branches on the
+  top-level `status` field instead of `is_live` would let every spoof
+  attempt (printed photo, screen replay, mask) through silently. Same
+  class of "don't trust the obvious top-level field" caution already
+  on record for PaymentPoint's own webhook `notification_status` vs.
+  `transaction_status` distinction above.
+- Same wallet-billing model as Identity Verification (₦35 charged
+  whether the check passes or fails, `402` if the wallet is
+  underfunded) and the same biometric-data handling instruction (don't
+  log the `image` field).
+
+*Webhook payload — CONFIRMED, a flat JSON body, not envelope-wrapped
+(carried over unchanged from this session's earlier webhook-only
+pass)*
+- Sent as a `POST` to the merchant's own configured URL on a completed
+  payment. Confirmed top-level shape (from the doc's own literal
+  example):
+  ```
+  {
+    notification_status: "payment_successful",
+    transaction_id: "xxx",
+    amount_paid: 100,
+    settlement_amount: 99.5,
+    settlement_fee: 0.5,
+    transaction_status: "success",
+    sender: { name, account_number, bank },
+    receiver: { name, account_number, bank },
+    customer: { name, email, phone, customer_id },
+    description: "...",
+    timestamp: "2024-11-22T13:00:04.256092Z"  // ISO 8601
+  }
+  ```
+- `amount_paid` is in **base currency units** (the example shows `100`
+  for what reads as ₦100, not `10000` kobo) — contrast with this
+  repo's `toSubUnit()`/`fromSubUnit()` helpers in `utils/helpers.js`,
+  which currently only cover a 5-currency map tuned for Paystack's
+  kobo-style subunits; a future `providers/paymentpoint.js` should
+  **not** run PaymentPoint amounts through that conversion unverified
+  — same caution already on record there for Korapay/JuicyWay/
+  Payscribe.
+- `sender.account_number` is explicitly **masked** in the documented
+  example (`"****4290"`) — confirmed as the shape to expect, not an
+  artifact of the one example; do not assume the full account number
+  is recoverable from this field.
+- `notification_status` and `transaction_status` are two distinct
+  fields carrying overlapping-but-not-identical meaning in the one
+  example given (`"payment_successful"` vs `"success"`) — the doc
+  does **not** enumerate the full set of possible values for either
+  field (no failed/pending example shown anywhere on this page), so
+  neither field's full value space is confirmed. This is a real open
+  item for Task 0/b-3's normalized-webhook mapping (`payment.succeeded`
+  / `payment.failed` / `payment.pending`) — there is currently no
+  confirmed documented value to map to `payment.failed` or
+  `payment.pending` for this provider; get one from a real test
+  webhook or ask the product owner before writing that mapping, don't
+  invent a plausible-sounding string.
+- `customer.phone` is documented as nullable (`null` in the example)
+  — a future mapping must not assume it's always present.
+
+*Signature verification — CONFIRMED, single HMAC-SHA256 over the raw
+body, header name is provider-specific (carried over unchanged from
+this session's earlier webhook-only pass)*
+- Header: **`Paymentpoint-Signature`** (confirmed identically in all
+  three of the doc's own PHP/Python/Node examples — PHP reads it as
+  `$_SERVER['HTTP_PAYMENTPOINT_SIGNATURE']`, Python/Django as
+  `request.headers.get('Paymentpoint-Signature')`, Node as
+  `req.headers['paymentpoint-signature']`).
+- Algorithm: `HMAC-SHA256(raw_request_body, secret_key)`, hex-encoded,
+  compared against the header value. This is the **same algorithm and
+  encoding** this repo already uses for Korapay
+  (`providers/korapay.js`, `verifyWebhookSignature`) and structurally
+  close to Paystack's (which uses SHA512 instead) — so, unlike Xixapay
+  above, PaymentPoint's scheme is a reasonable fit for this repo's
+  existing `crypto.createHmac(...).update(...).digest('hex')` pattern
+  with no new shape needed.
+- **A real gap, confirmed by absence, not by a negative statement in
+  the doc:** like Xixapay, PaymentPoint's documented scheme has **no
+  timestamp or nonce component** — a bare `HMAC(body, secret)` with no
+  replay protection. This is a provider-side design limitation to note
+  for this repo's dedupe-key mitigation (Task 0/c-1, already in place
+  as `provider:event:reference` in-memory dedupe), not something a
+  correct implementation of the documented scheme can add on its own.
+- **A real security bug confirmed in PaymentPoint's own official Node
+  sample, do not copy as-is:** the sample recomputes the signature over
+  `JSON.stringify(req.body)` — i.e. the **parsed-then-re-serialized**
+  body via `body-parser`'s `express.json()`-equivalent middleware —
+  rather than the original raw bytes PaymentPoint actually signed.
+  Key ordering, whitespace, and number formatting are not guaranteed
+  to round-trip identically through parse-then-stringify, so this
+  pattern can produce spurious signature mismatches (or, worse, false
+  matches if an attacker can craft a payload that re-serializes to the
+  same bytes as a legitimately-signed one). This repo's existing
+  Korapay/Paystack verifiers already avoid this class of bug by
+  hashing the raw body — the same discipline needs to carry over here;
+  a future `providers/paymentpoint.js` must be wired to read the raw
+  request body (e.g. via `express.raw()` on this specific route, same
+  pattern already needed for Korapay/Paystack) rather than trusting
+  `req.body` post-JSON-parse.
+- **A second issue in the same official Node sample, also do not
+  copy as-is:** the comparison is `if (calculatedSignature ===
+  signature)` — a plain `===` string comparison, not a constant-time
+  comparison. This repo's existing Korapay/Paystack verifiers both use
+  `crypto.timingSafeEqual` (via a length-checked buffer comparison) —
+  the same pattern should be used here rather than PaymentPoint's own
+  sample, to avoid a timing side-channel. **This is the identical pair
+  of bugs already flagged in Xixapay's own official Node sample above**
+  — a second, independent confirmation that "copy the provider's own
+  sample code verbatim" is not a safe default for this repo across
+  providers generally, not a coincidence specific to either one.
+- No mention anywhere on this page of a response-code contract for the
+  webhook receiver (e.g. "respond 200 within N seconds or we retry") —
+  unlike Korapay/Paystack, whose docs this repo already built against,
+  PaymentPoint's webhook page is silent on retry/backoff behavior.
+  Flagged as unknown, not assumed absent.
+
+*Not covered by this pass — real open items, not yet resolved*
+- No sandbox/test-mode behavior is documented anywhere across all six
+  pages — unknown whether test-mode transactions/lookups use the same
+  webhook shape, same header names, and same secret-key pairing as
+  live mode.
+- No confirmed value for a failed or pending `transaction_status` on
+  the webhook — see above; blocks writing Task 0/b-3's
+  PaymentPoint→normalized-event mapping until a real example (or the
+  product owner) supplies one.
+- No documented mechanics for the `409`/idempotent-key conflict
+  response mentioned on the Errors page — which header or field
+  actually carries an idempotency key is not stated on any of the six
+  pages read this pass.
+- Whether the live-looking credential flagged above is in fact real,
+  and if so what it's scoped to, is unconfirmed — a question for the
+  product owner, not something this audit can resolve from docs alone.
+
 ---
 
 ## Project owner decisions (recorded verbatim from the owner — resolves previously open questions; read before touching reference/idempotency or anything wallet-related)
@@ -5537,7 +5854,50 @@ already applied to Korapay/Paystack/Juicyway/Payscribe.
   anywhere — only one base URL exists in every source found, an open
   question for the product owner before assuming test-mode credentials
   behave identically to live ones.
-- **a-8. PaymentPoint** — not started. No code, no docs consulted.
+- **a-8. PaymentPoint** — **FULL discovery/audit done (2026-09-06,
+  doc-only, no code yet)**, per the Discovery Convention above, except
+  every source doc came from the product owner directly rather than
+  this session's own web search — six pages total (Authentication,
+  Errors, Webhook Documentation, Create Virtual Account, Identity
+  Verification, Liveness Check), matching every page in PaymentPoint's
+  own sidebar nav. Full audit is in the "Confirmed research findings"
+  section (search "PaymentPoint — FULL API discovery pass"). **Real
+  items queued there, blocking implementation:** (1) auth needs **two
+  simultaneous headers** (`Authorization: Bearer {secret}` + separate
+  `api-key` header) **plus a body-level `businessId`** — a three-
+  credential shape essentially identical to Xixapay's (a-7 above), not
+  a drop-in fit for this repo's existing single-Bearer-header
+  `getProviderKey()` pattern; (2) webhook signature scheme is
+  `HMAC-SHA256(raw_body, secret)` in a `Paymentpoint-Signature` header
+  — a good fit for this repo's existing Korapay-style verifier
+  pattern, **but** PaymentPoint's own official Node sample has the
+  same two confirmed bugs already flagged in Xixapay's sample
+  (re-serializes parsed JSON instead of using raw bytes; uses `===`
+  instead of a constant-time comparison) — do not copy it as-is; (3)
+  no confirmed documented value exists for a failed/pending
+  `transaction_status`, blocking Task 0/b-3's normalized-webhook
+  mapping for this provider until a real example or the product owner
+  supplies one; (4) no replay protection (no timestamp/nonce) in the
+  webhook signature scheme, same provider-side gap already on record
+  for Xixapay — mitigated by this repo's existing dedupe key (Task
+  0/c-1), not fixable on this repo's side alone; (5) **a live-looking
+  Bearer token + api-key pair is exposed directly in PaymentPoint's own
+  Authentication and Create Virtual Account doc pages** — not
+  reproduced anywhere in this repo; flag for the product owner to
+  confirm whether it's real and rotate it if so; (6) the Create
+  Virtual Account page's own request-body table has a `businessId`
+  example that is a copy-paste duplicate of its `api-key` example —
+  use the differently-shaped `businessId` from that same page's actual
+  code sample instead, and from the Identity Verification/Liveness
+  Check pages, which agree with each other. **Two paid verification
+  endpoints also newly audited, not required for payment orchestration
+  but real product-owner-visible functionality if this platform ever
+  exposes them:** Identity Verification (`POST /api/identity/verify`,
+  NIN/BVN lookup, returns biometric photo data — handle per the doc's
+  own no-logging instruction) and Liveness Check (`POST
+  /api/liveness/check` — **must branch on the nested `is_live` field,
+  not the top-level `status`**, since a failed liveness check still
+  returns HTTP 200 with `"status":"success"`).
 - **a-9. Presmit** — same caveat as Xixapay: existence and real docs
   not yet confirmed this session.
 - **a-10. `telcos.opik.net`** — not started. Even though the product

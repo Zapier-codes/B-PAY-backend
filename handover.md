@@ -3357,17 +3357,23 @@ entirely internal to this repo.
 session:** businesses integrate against this platform's own API and
 see only this platform's own services and per-transaction pricing —
 payins, cards, conversions, payouts, etc. — never the underlying
-provider names. **Pricing: this platform charges 5x whatever the
-underlying provider charges, per transaction, across every service
-type.** This session did not evaluate this commercially or legally —
-flagging one thing worth resolving with a lawyer or compliance
-advisor before this goes live, not blocking it: combining (a) a
-markup at this scale with (b) fully hiding which regulated payment
-provider is actually moving the money is exactly the kind of setup
-that payment regulators and card networks tend to have specific
-rules about (in Nigeria, that's typically the CBN's payment-service-
-provider licensing categories; Visa/Mastercard also have their own
-surcharge-disclosure rules). Worth a real answer before production
+provider names. **Pricing, revised this session (previously 5x):
+this platform charges 3x whatever the underlying provider charges,
+per transaction, across every service type** — product owner's own
+stated reason: to leave headroom for the platform's other running
+costs. This session did not evaluate the multiplier commercially or
+legally, at 3x any more than it did at 5x — flagging one thing still
+worth resolving with a lawyer or compliance advisor before this goes
+live, not blocking it: combining (a) a markup of this kind with (b)
+fully hiding which regulated payment provider is actually moving the
+money is exactly the kind of setup that payment regulators and card
+networks tend to have specific rules about (in Nigeria, that's
+typically the CBN's payment-service-provider licensing categories;
+Visa/Mastercard also have their own surcharge-disclosure rules).
+Lowering the multiplier doesn't on its own resolve that question —
+it's the combination of markup-plus-hidden-provider that regulators
+care about, not the specific number — so this stays a real open item
+for the product owner to get an actual answer on before production
 traffic, same spirit as the no-DB audit-trail question in (c) below.
 
 **Default provider, stated directly by the product owner this
@@ -3451,32 +3457,82 @@ already applied to Korapay/Paystack/Juicyway/Payscribe.
   extend it, or replace it, once (a) is far enough along to know what
   routing actually needs (currency, country, payment method, cost,
   provider uptime)?
-- b-2. **Partially answered by the product owner directly, this
-  session:** a checkout session's internal provider mapping travels
-  via a **reference** — the product owner is a merchant on each
-  underlying provider's own platform and will pull the record for a
-  given reference from that provider's own dashboard directly, then
-  pass it to whichever end user the reference belongs to. **No
-  separate merchant/admin dashboard is being built for this repo** —
-  each provider's native dashboard is the merchant's own record for
-  transactions on that provider, and the reference is the correlating
-  key between "which checkout" and "which provider record." Still
-  open: whether that reference needs to be self-describing (encode
-  which provider handled it, so this repo's own webhook-forwarding
-  logic can route without a lookup) or opaque (product owner resolves
-  it manually every time) — the product owner's description so far
-  covers the manual/opaque case; whether this repo's own internal
-  routing also needs a non-manual answer to this is still undecided.
-- b-3. Decide the canonical outbound shape — whatever consumes this
-  repo's forwarded webhooks (Mavins-web? the new home page? both?)
-  needs one consistent format regardless of which of the ten
-  providers actually handled a given transaction.
+- b-2. **Resolved this session — self-describing, not opaque, and not
+  something the calling business ever supplies or sees.** Given the
+  no-DB constraint (see above), there is nowhere else "which provider
+  actually handled this transaction" can live except the reference
+  string itself — no database row to look it up in, no admin
+  dashboard maintaining that mapping. So the reference this repo
+  generates at checkout time has to carry that fact internally.
+  Concretely: `{TENANT}-{PROVIDER_CODE}-{timestamp}-{random}`, where
+  `PROVIDER_CODE` is a short internal-only code this repo assigns
+  per provider (e.g. `K1` for Korapay, `P1` for Paystack) — never the
+  provider's real name, and never a field the business is asked to
+  pass in at checkout or sees labeled "provider" anywhere in this
+  platform's own API. The business only ever sends the parameters
+  that describe the transaction (amount, currency, country, payment
+  method, etc.); this repo's own routing logic (b-1) picks the
+  provider from those parameters and stamps the code into the
+  reference it hands back — the business never names a provider
+  going in, and never sees one coming out. To the business, this
+  platform is the only provider that exists. `TENANT` keeps Task 41's
+  existing multi-app fanout prefix (e.g. `MAVW`) working unchanged —
+  the two segments answer two different questions ("which downstream
+  app owns this" vs. "which underlying provider handled it") and
+  don't interfere with each other. Old references issued before this
+  scheme existed simply won't parse a provider code back out — that's
+  expected, not a bug, and any code reading the reference should treat
+  a failed parse as "provider unknown," not throw.
+- b-3. **Resolved this session — a normalized envelope, not raw
+  passthrough.** Whatever consumes this repo's forwarded webhooks
+  (Mavins-web, the new home page, or any future business integrating
+  directly) receives one consistent shape regardless of which of the
+  ten providers actually handled the transaction:
+  `{ id, type, reference, amount, currency, status, occurred_at,
+  metadata }`, where `type` is one of a fixed, provider-agnostic set
+  (`payment.succeeded`, `payment.failed`, `payment.pending`,
+  `payout.succeeded`, `payout.failed`, `refund.succeeded`,
+  `refund.failed`) and `status` is one of `succeeded` / `failed` /
+  `pending`. Each provider's raw webhook gets mapped into this shape
+  before anything is forwarded — the raw provider payload itself is
+  never forwarded downstream, even with provider names redacted,
+  because field names and nesting differ enough between providers
+  (Korapay vs. Paystack vs. Juicyway) that the shape alone would
+  fingerprint which one handled it, which is exactly the leak this
+  was meant to close. `metadata` is a pass-through bag for whatever
+  the business itself supplied at checkout (their own order id, etc.)
+  — this repo never invents fields here, only relays what it was
+  given. One per-provider mapping has to be written for each of the
+  ten providers as each is integrated (a) — Paystack/Korapay/Juicyway
+  are already well enough understood from Tasks 3-5 to write theirs
+  now; Payscribe's mapping waits on Task 6 confirming its real event
+  shape first; DodoPayments/Flutterwave/Remita/Xixapay/PaymentPoint/
+  Presmit/telcos.opik.net all wait on their own a-4..a-10 discovery
+  passes before a mapping can be written responsibly.
 
 **c. No-database operational risk** — flagged, not blocking, but
 needs a real, explicit answer before this carries production traffic:
-- c-1. **Idempotency:** every one of these providers can and will
-  redeliver webhooks. With no persistence, how are duplicates
-  detected? Unanswered.
+- c-1. **Resolved this session, with one honest caveat left open.**
+  Dedupe key is `provider:event:reference`, held in an in-memory store
+  — the same pattern Task 41's `webhookGateway.js` already uses for
+  its own event log, generalized here to cover every provider's
+  webhook handler, not just Korapay's. A redelivered webhook with a
+  key already seen is acknowledged 200 but not re-forwarded. **The
+  caveat, stated plainly and not glossed over:** this only dedupes
+  within one running process. It does not survive a restart/redeploy,
+  and if this backend ever runs as more than one instance behind a
+  load balancer, a redelivery landing on a different instance than
+  the original won't be caught — the same limitation `webhookGateway.js`
+  already documents for its own store, now true platform-wide rather
+  than just for the Korapay fanout path. That's a real, still-open
+  decision if and when this runs multi-instance: either pin webhook
+  traffic to a single instance, or move the dedupe store to something
+  that survives a restart and is shared across instances (a small
+  external cache, e.g. Redis — a cache used only for short-lived
+  dedupe keys, not a system of record, so it doesn't reopen the "no
+  database" constraint above). Single-instance today, so not urgent,
+  but worth deciding before scaling instances rather than after a
+  duplicate payout slips through.
 - c-2. **Reconciliation — partially answered (see b-2):** the product
   owner will reconcile manually via each provider's own dashboard,
   correlated by reference, rather than this repo maintaining any

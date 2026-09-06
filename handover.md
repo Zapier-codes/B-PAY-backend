@@ -3,7 +3,52 @@
 > **▶ START HERE — read this box only, then go straight to work. Skip
 > everything else below unless you get stuck.**
 >
-> **Newest note (2026-09-06, latest of all) — Task 0's a-9: Prestmit
+> **Newest note (2026-09-06, latest of all) — Task 46 written: product
+> owner has now directly answered the scope-boundary question Task 45
+> deliberately left open, and answered it with the broader reading.**
+> This backend's own "no-database" constraint (Task 0's opening
+> paragraph) and "no separate merchant/admin dashboard is in scope"
+> line (Task 0/d) are **both explicitly reversed for `B-Pay-backend`
+> itself** — not just for the Reseller/VTU product Task 45 covered.
+> Product owner direction, this session: bring a real database back
+> into this repo so it can run a **full admin dashboard** — admin
+> roles that can enable/disable which countries a given business can
+> transact in, and activate/deactivate individual cards — comparable
+> in function to Korapay's own dashboard, but with a stated advantage
+> this repo already has by virtue of Task 0's own design: because this
+> backend is a **canonical consolidation layer across all ten
+> providers** rather than a single-provider dashboard like Korapay's,
+> one dashboard here can show a business its activity across every
+> underlying provider at once, something no single provider's own
+> dashboard can do. Also decided: add a **Swagger/OpenAPI UI** for
+> this backend's own API (the existing `docs/openapi` material was
+> written for the separate Reseller/VTU product's endpoints, not this
+> backend's `/pay`, `/payout`, `/verify`, `/banks`, webhook routes —
+> those need their own spec). **This is a scope/decision record only,
+> matching this repo's own established pattern (see Task 0 and Task
+> 45's own closing notes) — no schema created, no dashboard code, no
+> Swagger route added, no database provisioned this session.**
+> Genuinely open and flagged for the product owner directly: Postgres
+> vs. another engine, self-hosted vs. Supabase (Task 45's Reseller
+> product already committed to Supabase — sharing one Supabase project
+> across both products is the obvious option but not yet confirmed),
+> and whether "admin" here means the product owner alone or a role
+> multiple people can hold (the same open question Task 45/c already
+> flagged for the Reseller dashboard). **The previously-active task,
+> `a-1-i-X` (confirming `korapay.js` has no implicit persistence
+> dependency, per the no-DB constraint), is now moot for the reason
+> it existed** — that audit was only needed to enforce a constraint
+> this note reverses — but the code itself hasn't changed, so nothing
+> needs to be undone. Full detail under Task 46 below, including a
+> proposed starting schema (businesses/admins/country_permissions/
+> cards) offered the same way Task 45/b offered one for the Reseller
+> product: as a starting point for whichever session actually builds
+> this, not yet confirmed with the product owner at the field level.
+> **Patch for this session covers `handover.md` only** — per this
+> repo's own Patch Handoff Convention (below), handed to the product
+> owner as a `git format-patch` file, not applied or pushed here.
+>
+> **Newest note (2026-09-06, previous) — Task 0's a-9: Prestmit
 > full API-discovery/audit pass done (doc-research only, no code —
 > `providers/prestmit.js` does not exist yet).** Resolves both halves
 > of a-9: **existence confirmed, with a name correction** — the real
@@ -6383,6 +6428,14 @@ NOT to have a database at all.** Its job is limited to (a) initiating
 payments/payouts by internally routing to whichever provider is
 selected, and (b) forwarding webhooks from those providers onward —
 no local persistence of any transaction, session, or customer data.
+**Reversed, 2026-09-06 — see Task 46.** The product owner has since
+decided this repo will carry a database after all, specifically to
+back a full admin dashboard (country permissions per business, card
+activation/deactivation). Left in place here, struck through in
+spirit rather than in the file's history, so any session reading this
+paragraph on its own sees both the original constraint and the fact
+that it no longer holds — go to Task 46 for the current state, not
+this paragraph alone.
 
 **a. Provider integration inventory** — one sub-branch per provider.
 
@@ -6721,8 +6774,11 @@ needs a real, explicit answer before this carries production traffic:
 
 **d. Customer-facing surface** — not started. **Confirmed by the
 product owner: no separate merchant/admin dashboard is in scope** —
-see b-2. What remains in scope: customer-facing surface, plus one
-owner-only admin route.
+see b-2. **Reversed, 2026-09-06 — see Task 46**: the product owner has
+since decided a full merchant/admin dashboard is in scope after all,
+back to being a database-backed feature. What remains in scope,
+unchanged: customer-facing surface, plus one owner-only admin route
+(d-3 below), now joined by the dashboard covered in Task 46.
 - d-1. Dynamic white-label checkout page: no config schema yet
   (branding, which providers/currencies/methods are enabled per
   merchant, etc.).
@@ -6885,5 +6941,128 @@ is unconfirmed, instead of re-deriving scope from a standing start —
 and so the scope-boundary question in this task's own opening note
 gets the product owner's direct answer before any session assumes
 either reading of it.
+
+---
+
+## Task 46 — Product owner reverses the no-database / no-dashboard constraint for `B-Pay-backend` itself; full admin dashboard + Swagger UI decided this session [ ]
+
+**Scope note, read first:** this is the direct answer to the question
+Task 45 explicitly left open ("if the intent was actually to reopen
+Task 0/c-d for `B-Pay-backend` itself, say so directly"). The product
+owner has now said so directly, this session, and picked the broader
+reading: this repo, not just the separate Reseller/VTU product, is
+getting a database and a full dashboard.
+
+**a. The reversal, stated directly by the product owner this
+session.** Task 0's original constraint — no database, no separate
+merchant/admin dashboard, stateless orchestration only — is **no
+longer the design for this repo.** Reason given: the product owner
+wants admin roles that can (1) turn specific countries on or off for
+a specific business, and (2) activate/deactivate individual cards,
+neither of which is possible without somewhere to persist
+business-level and card-level state. Both of Task 0's `c` ("no-
+database operational risk") and `d` ("no separate merchant/admin
+dashboard is in scope") are reopened for this repo specifically — see
+the inline notes now left at Task 0's own constraint paragraph and at
+Task 0/d above.
+
+**b. Dashboard scope, as described by the product owner this
+session:**
+- Businesses log in and see their own activity — same baseline as the
+  Korapay-style dashboard already decided for the separate Reseller
+  product in Task 45/c, so the two can likely share a design
+  vocabulary even though they're different products.
+- **Admin role(s)** — not yet defined how many people can hold this,
+  same open question as Task 45/c flagged for the Reseller dashboard
+  — can:
+  - Enable or disable which countries a given business is permitted
+    to transact in (a per-business allowlist, not a single global
+    country list).
+  - Activate or deactivate individual cards.
+  - (Implied, not yet confirmed directly: see and suspend a business
+    outright, the same capability already decided for the Reseller
+    product's admin view in Task 45/c — worth confirming this is
+    wanted here too rather than assuming it carries over.)
+- **Stated advantage over Korapay's own dashboard, per the product
+  owner:** because this repo is Task 0's canonical, ten-provider
+  consolidation layer rather than a single provider, one dashboard
+  here can surface a business's activity across every underlying
+  provider in one place — something Korapay's own dashboard, scoped
+  to Korapay alone, structurally cannot do. This session did not
+  independently verify Korapay's current dashboard feature set to
+  confirm the comparison; it's recorded here as the product owner's
+  stated rationale, not an audited fact.
+
+**c. Swagger UI, decided this session.** This backend's own API
+(`/pay`, `/payout`, `/verify`, `/banks`, and the per-provider webhook
+routes in `routes.js`/`webhookGateway.js`) gets a Swagger/OpenAPI UI
+for documentation. **Distinct from the existing `docs/openapi`
+material** — that was written this session's earlier work (Task 45a)
+for the separate `telcos.opik.net` Reseller API, a different service
+with a different base URL and endpoint set. This backend needs its
+own spec written from `routes.js`'s real routes, not copied from the
+Reseller spec.
+
+**d. Proposed starting schema — offered as a starting point, not yet
+confirmed with the product owner at the field level, same caveat Task
+45/b already carries for the Reseller product's own schema:**
+- `businesses` — one row per business using this platform (mirrors
+  whatever this repo's own business-onboarding flow turns out to be —
+  not yet designed, since businesses were previously stateless callers
+  of a no-DB API).
+- `admins` — platform-owner-side accounts distinct from `businesses`,
+  since an admin role and a business login are different trust levels
+  (same separation-of-credentials principle Task 45/c already flagged
+  for not conflating a business's dashboard login with its API
+  secret key).
+- `business_country_permissions` — one row per
+  `(business_id, country_code)`, an allowlist an admin toggles rather
+  than a single boolean column, so a business can hold a growing or
+  shrinking set of countries over time without a schema change.
+- `cards` — one row per card known to this platform, with a `status`
+  column (`active`/`deactivated`) an admin can flip; foreign-keyed to
+  whichever `businesses` row the card belongs to.
+
+  Genuinely open, not addressed above: whether `cards` here means
+  cards this platform issues itself or cards this platform has seen
+  in transactions routed through it (a very different data-ownership
+  and compliance posture — PCI scope changes substantially depending
+  on which one this is); Row-Level Security / access-control design
+  once a database engine is chosen; and how existing in-flight
+  integrations (Korapay/Paystack/Juicyway/Payscribe, all built under
+  the no-DB constraint) migrate onto business records that didn't
+  exist when they were written.
+
+**e. Database engine and hosting — not decided this session,**
+flagged directly for the product owner: Task 45's Reseller/VTU product
+already committed to Supabase for its own schema; using the same
+Supabase project for this backend's dashboard tables is the obvious
+option (one place to administer, one set of credentials) but has not
+been confirmed, and there may be reasons to keep the two products on
+separate projects (this backend moves real money across ten payment
+providers; the Reseller product is a VTU/airtime reseller — different
+risk profiles even if both end up on Supabase/Postgres).
+
+**Not yet done, this session, deliberately — documentation and
+decision-recording only,** matching Task 0 and Task 45's own closing
+notes. No database provisioned, no schema migrated, no dashboard code,
+no Swagger route added, no admin-role code. This task exists so the
+next session that picks this up has the full reversal on record, the
+proposed schema as a starting point, and the genuinely-open questions
+(engine choice, admin-role headcount, card data-ownership meaning)
+called out explicitly rather than assumed one way or the other.
+
+**On dumping/migrating a real schema once one exists:** there is
+currently **no live database anywhere in this project** to dump —
+Task 0's constraint meant none was ever provisioned. Once the product
+owner (or a future session) stands one up and the schema above (or a
+confirmed version of it) is actually created in it, the standard way
+to capture that schema for this repo's own migrations directory is a
+schema-only `pg_dump`, run from wherever the database is reachable —
+see the product owner's own Termux environment note under "Patch
+Handoff Convention" below for how commands are run from that device.
+That dump belongs under a new `db/migrations/` (or similar) directory
+in this repo, committed the same way any other change here is — via
+a patch, per the convention immediately below, not applied directly.
 
 ---

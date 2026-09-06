@@ -3,7 +3,39 @@
 > **▶ START HERE — read this box only, then go straight to work. Skip
 > everything else below unless you get stuck.**
 >
-> **Newest note (2026-09-06, latest of all) — Payscribe full
+> **Newest note (2026-09-06, latest of all) — Task 0's a-7: Xixapay
+> full API-discovery/audit pass done (doc-research only, no code —
+> `providers/xixapay.js` does not exist yet).** Resolves both halves
+> of a-7: **existence is now confirmed** (real provider, real docs at
+> `documentation.xixapay.com`), and the full audit is written. **Two
+> real items block implementation, neither fixed here (doc-research
+> pass only):** (1) auth needs **three simultaneous credentials** at
+> once — `Bearer` secret header, separate `api-key` header, *and* a
+> `businessId` body field — not a fit for this repo's existing
+> single-Bearer-header `getProviderKey()` shape without a change; (2)
+> the documented webhook scheme has **no replay protection whatsoever**
+> (bare `HMAC-SHA256(payload, secret)`, no timestamp/nonce), a real
+> provider-side gap, not an implementation choice — and Xixapay's own
+> official Node.js webhook sample has two confirmed bugs of its own
+> (re-serializes the parsed body instead of using raw bytes; uses
+> `===` instead of a constant-time comparison), so don't copy it
+> as-is. Also flagged: no sandbox/test host is documented anywhere,
+> the response envelope's `status` field is a boolean on some
+> endpoints and a string (`"success"`/`"failed"`) on others, and the
+> docs contain several confirmed copy-paste/typo artifacts (a
+> literal-JSON syntax error in one example payload, a malformed JSON
+> example elsewhere, "Beaerer {Secrete_Key}" misspelled identically
+> across every header table) — treat every literal value with the
+> same "verify against a real sandbox call" caution already applied
+> to JuicyWay's docs. Full writeup under "Confirmed research findings"
+> (search "Xixapay — FULL API discovery pass"); Task 0's a-7 bullet
+> has the short version. **Still `a-1-i-X`** is the active task for
+> the Task 0 track — this was a doc-only exception for a-7, same
+> precedent as every other doc-only pass below, not a change to which
+> `X` node is active. Patch for this session covers `handover.md`
+> only — no provider code added or changed.
+>
+> **Newest note (2026-09-06, previous) — Payscribe full
 > API-discovery/audit pass done (doc-research only, no code —
 > `providers/payscribe.js` already exists and is largely **confirmed
 > correct** by this pass, unlike the JuicyWay/Remita/DodoPayments
@@ -2557,6 +2589,220 @@ this repo's existing omission from `CONFIRMED_PROVIDER_CURRENCIES`*
   until a broader page (or the NGN Virtual Accounts endpoints
   specifically, which do accept a `currency` field per the existing
   code's payload) is captured and checked.
+
+**Xixapay — FULL API discovery pass, audited 2026-09-06 (new —
+resolves a-7, both the existence question and the discovery pass
+itself; `providers/xixapay.js` does not exist yet, doc-research
+only).** Per the Discovery Convention, a-7's first job was simply
+confirming Xixapay is a real, documented provider — **it is**:
+`xixapay.com` is a live Nigerian payments platform ("enabling Nigerian
+businesses to receive payments"), with a real, structured GitBook docs
+site at `documentation.xixapay.com`, its own `llms.txt` index, and
+every page below fetched directly from that site this session. Scope
+covered: Authentication, Error Codes, Customer (KYC), Virtual Account
+(create/update), ID Verification, Payout, both Webhook pages (Virtual/
+Dynamic Account, Card). **Explicitly not detailed below, confirmed to
+exist by nav/name only:** the Card USD/NGN family beyond `Create a
+Card` (Update Card Status, Withdraw from Card, Fund Card, Refresh Card
+Details) — this platform's current no-DB payin/payout/webhook-relay
+scope per Task 0 doesn't need card issuing yet; if a future task needs
+it, that's its own follow-up read of already-known-to-exist pages, not
+a fresh discovery pass.
+
+*Environment & authentication — CONFIRMED, and structurally different
+from every provider this repo already integrates: THREE credentials
+required at once, not one or two*
+- Single base URL: **`https://api.xixapay.com`** (no separate sandbox
+  host documented anywhere in this pass — contrast with
+  Paystack/Korapay/DodoPayments, which all have a distinct test-mode
+  host or a test/live key pair on one host; Xixapay's docs never
+  mention a sandbox/test environment at all, a real gap flagged for
+  the product owner rather than assumed to not exist).
+- Auth is confirmed, identically, on **every single endpoint page**
+  fetched this pass (Customer, Virtual Account, ID Verification,
+  Payout) as **three simultaneous credentials**: an `Authorization:
+  Bearer {secret key}` header, a **separate** `api-key: {API key}`
+  header, **and** a `businessId` field inside the request **body**
+  itself. This is a real structural difference from every other
+  provider in this file — Paystack/Korapay/JuicyWay/DodoPayments/
+  Payscribe all authenticate with a single Bearer header; Xixapay
+  layers three distinct identifiers (secret-in-header, key-in-header,
+  business-id-in-body) on top of each other. This repo's existing
+  `getProviderKey(provider, type)` pattern (`public`/`secret` per
+  provider) doesn't currently have a slot for a third credential type
+  — implementation would need either a new key type or to treat
+  `api-key` as a second `secret`-class value, plus threading a stored
+  `businessId` into every request body, a real per-request shape
+  difference from how `processPayment(data)` builds a payload for any
+  existing provider.
+- **A word-for-word typo confirmed to repeat across every single
+  request-header table in this doc site**, not a one-off: `Authorization`
+  is documented as `Beaerer {Secrete_Key}` (sic, twice misspelled) on
+  every page that shows it (Authentication Guide, Create/Update
+  Customer, Create/Update Virtual Account, ID Verification, Payout).
+  Flagged only because a consistent typo across an entire doc site
+  (rather than one page) is itself a signal about how carefully this
+  provider's docs are maintained — treat every other value on these
+  pages with the same "verify against a real sandbox call before
+  trusting the literal text" caution this file already applies to
+  JuicyWay's docs.
+
+*Response envelope — CONFIRMED INCONSISTENT across endpoints, a real
+finding, not a copy-paste artifact of this audit*
+- Customer creation/update responses use **`"status": true`** (a
+  boolean, matching Payscribe/Paystack/Korapay's convention).
+- Virtual Account creation, ID Verification, and every Payout response
+  instead use **`"status": "success"`** (or `"failed"`) — **a string,
+  not a boolean** — confirmed directly across three independent
+  endpoint pages, not a single stray example. A future
+  `providers/xixapay.js` cannot check `responseData.status` the same
+  way for every Xixapay call the way this repo's existing providers
+  do for theirs; the check needs to branch by endpoint family (boolean
+  vs. string-literal `"success"`), or normalize both shapes at the
+  point of use.
+- **Update Customer's own documented success response is a
+  confirmed copy-paste artifact from Create Customer**: `{ "status":
+  true, "message": "Customer created successfully", "customer": {...}
+  }` — an *update* endpoint returning the literal message "Customer
+  **created** successfully." Not corrected here; flagged so a future
+  implementer doesn't treat that exact message string as meaningful
+  for branching logic.
+- **The Create Virtual Account response example is malformed JSON in
+  Xixapay's own docs** — a missing comma after `"accountTye": "static"`
+  (also itself a misspelling of "accountType") immediately before
+  `"Reserved_Account_Id"`, and a trailing comma after the `bankAccounts`
+  array's closing brace. Confirmed by direct inspection of the page's
+  own example block, not a fetch/rendering artifact — the shape (a
+  `bankAccounts` array of `{ bankCode, accountNumber, accountName,
+  bankName, accountTye }`, plus top-level `customer`/`business`
+  objects) is still usable as a guide, just not literally copy-pasteable
+  as valid JSON.
+
+*Error codes — CONFIRMED, a real documented taxonomy, closer in shape
+to DodoPayments' flat `{code,message}` than Payscribe's numbered table*
+- Standard HTTP statuses (400/401/403/404/422/429/500/502/503), each
+  with **stable machine-readable snake_case codes**: `bad_request`,
+  `unauthorized`, `forbidden`, `not_found`, `unprocessable_entity`,
+  `too_many_requests`, `internal_server_error`, `bad_gateway`,
+  `service_unavailable` — confirmed at the Error Codes &
+  Troubleshooting page, with example causes and suggested fixes for
+  each. No rate-limit number is stated anywhere in this pass (only
+  that a `429` exists) — contrast with Payscribe's documented 60/sec
+  or DodoPayments' tiered table; flagged as unknown, not assumed
+  unlimited, same posture as Remita's rate-limit gap above.
+
+*Virtual Account creation — CONFIRMED, the closest analog to this
+repo's `processPayment`, and a real design difference worth flagging*
+- `POST /api/v1/createVirtualAccount`. Two mutually exclusive request
+  shapes depending on whether an existing KYC'd `customer_id` is
+  supplied (leaner body) or raw customer data is sent instead (fuller
+  body, `id_type`/`id_number` required only when `accountType:
+  "static"`, optional/omittable for `"dynamic"`) — confirmed directly,
+  not inferred. `accountType` is either `"static"` (permanent,
+  reusable, requires KYC/ID fields) or `"dynamic"` (temporary,
+  requires `amount`) — the same static/dynamic distinction this repo's
+  Payscribe integration already models (`account_type: 'dynamic'` in
+  `providers/payscribe.js`), so the concept maps cleanly, but the field
+  names and required-field logic differ enough (`bankCode` as an
+  *array*, letting one call provision virtual accounts across multiple
+  partner banks simultaneously — a real capability none of this
+  repo's other four providers expose) that this is not a drop-in
+  reuse of Payscribe's payload shape.
+- **Partner-bank codes are a closed, confirmed list**, not a free-text
+  field: `20867` (Palmpay), `20987` (Kolomoni MFB), `29007` (Safehaven,
+  static+dynamic), `100004` (Opay, dynamic only) — a real constraint
+  a future `providers/xixapay.js` would need to validate against
+  before calling, since Opay's code is documented as dynamic-account-only.
+- **No currency field appears anywhere in Virtual Account, Payout, or
+  ID Verification requests/responses** — Payout's own docs explicitly
+  state "All amounts are in NGN," and amounts throughout (Virtual
+  Account's `1500`/`5000`, Payout's `25000`) are bare numbers in what
+  are unambiguously Naira base units, not subunits. **Confirmed
+  NGN-only for the payin/payout/collections surface this repo actually
+  needs** — a stronger, more explicit finding than Payscribe's or
+  Remita's "absence of a currency parameter" hedge above, since
+  Xixapay's own payout docs state the NGN restriction directly rather
+  than leaving it implicit. Card issuing is the one confirmed exception
+  (Create a Card's response includes an explicit `"currency": "NGN"` or
+  `"USD"` field, and `country: "US"` support with its own minimum
+  amount) — but that's a separate resource family, out of this pass's
+  detailed scope per the exclusion noted above, and shouldn't be read
+  as multi-currency support for the Virtual Account/Payout surface this
+  repo would actually integrate against.
+
+*Webhook signature scheme — CONFIRMED, and a materially weaker,
+simpler scheme than every other provider already in this file, a real
+security-relevant gap flagged rather than glossed over*
+- **A single raw header, literally named `xixapay`** (lowercase, no
+  `X-` prefix, no versioning) carries the signature — confirmed
+  identically on both the Virtual/Dynamic Account and Card webhook
+  pages (verbatim-identical writeups on both pages, including the same
+  code samples, suggesting one shared scheme across every Xixapay
+  webhook resource rather than per-resource schemes).
+- Signature is **`HMAC-SHA256(rawPayload, secretKey)`, hex digest,
+  with no other inputs** — no timestamp, no event ID, no nonce
+  concatenated into the signed content. This is a **real,
+  confirmed difference from every other provider audited in this
+  file**: Payscribe (`timestamp.eventId.rawBody`), DodoPayments
+  (`id.timestamp.body`, Standard Webhooks), Korapay, and Paystack all
+  bind a timestamp or a unique ID into what's signed specifically to
+  block replay; **Xixapay's documented scheme has no replay protection
+  at all** — a captured, valid webhook body+signature pair could be
+  replayed indefinitely and would still verify. Not fixed here (doc-only
+  pass); flagged as a real, provider-side gap for whichever session
+  implements this, distinct from an implementation bug this repo could
+  introduce on its own.
+- **A confirmed, concrete bug in Xixapay's own official Node.js
+  example, not a hypothetical**: the sample computes the signature
+  over `JSON.stringify(req.body)` — i.e. **re-serializing the
+  already-parsed body** — rather than the original raw bytes. This is
+  the exact mistake Payscribe's own docs explicitly warn against
+  (`Common Mistakes to Avoid`, mistake #1, in the Payscribe audit
+  above): key-order or whitespace differences between the original
+  raw request and the re-serialized JSON will silently break real
+  signatures for some payloads, even though the PHP and Python
+  examples on the same page correctly use the raw body
+  (`file_get_contents('php://input')`, `request.body` in Django).
+  Confirmed directly by reading the code sample, not inferred — a
+  future `providers/xixapay.js#verifyWebhookSignature` should follow
+  the PHP/Python pattern (verify against the untouched raw body) and
+  explicitly not copy Xixapay's own Node.js sample as-is.
+- **A second confirmed issue in the same Node.js sample**: it compares
+  signatures with plain `===` rather than a constant-time function —
+  the PHP sample correctly uses `hash_equals`, the Python sample
+  correctly uses `hmac.compare_digest`, but the Node.js sample uses
+  neither, unlike Payscribe's Node.js sample (which does use
+  `crypto.timingSafeEqual`). A real, confirmed timing-attack surface
+  in Xixapay's own reference implementation, specific to the
+  language/example this repo would most likely copy from (this is a
+  Node.js codebase).
+- No idempotency guidance and no "always return 2xx quickly" guidance
+  is given anywhere in either webhook page — contrast with Payscribe's
+  explicit mistakes #4/#5 above. Not confirmed absent from Xixapay's
+  actual retry behavior, just absent from the documentation same as
+  Remita's rate-limit gap — don't assume no-retry, assume undocumented.
+- **Payload field-level confirmed** for the Virtual/Dynamic Account
+  webhook (the one this repo's `processPayment` flow would actually
+  need): `notification_status`, `transaction_id`, `amount_paid`,
+  `settlement_amount`, `settlement_fee`, `transaction_status`,
+  nested `sender`/`receiver`/`customer` objects, `description`,
+  `timestamp` (ISO 8601). **The example payload itself contains a
+  literal JSON syntax error** in Xixapay's own docs (an unterminated
+  string: `"email": "adexplug@gmail.com,` — missing closing quote) —
+  confirmed by direct inspection, not a fetch artifact; the field list
+  above is still trustworthy, the literal example block is not
+  copy-pasteable as-is.
+
+*Payout — CONFIRMED, single-currency (NGN), amount in base units*
+- `POST /api/v1/transfer` (`businessId`, `amount`, `bank`,
+  `accountNumber`, `narration`); a documented, separate
+  `POST /api/verify/bank` pre-flight check (recommended, not
+  enforced) and `GET /api/get/banks` for the supported-bank list.
+  Response is `{ status: "success"|"failed", message, reference }` on
+  the transfer call itself — the string-status inconsistency noted
+  above applies here too. Xixapay's own docs state accounts must be
+  exactly 10 digits and describe payouts as "instant," for whatever
+  that's worth as an unverified marketing claim rather than an SLA.
 
 ---
 
@@ -5265,10 +5511,32 @@ already applied to Korapay/Paystack/Juicyway/Payscribe.
   `statuscode` enumeration (only `025`/pending confirmed against a real
   example) and whether currencies beyond NGN are supported at all (no
   currency parameter found in any RRR-generation example examined).
-- **a-7. Xixapay** — not started. This session could not confirm
-  this is a documented, existing payment provider — first step is
-  simply locating real docs, not assuming they match another
-  provider's shape.
+- **a-7. Xixapay** — **discovery/audit done (2026-09-06, doc-only, no
+  code yet)**, per the Discovery Convention above. **Existence
+  confirmed** — a real Nigerian payments platform with a real,
+  structured docs site (`documentation.xixapay.com`), resolving this
+  session's original "could not confirm this is a documented, existing
+  payment provider" caveat. Full audit is in the "Confirmed research
+  findings" section (search "Xixapay — FULL API discovery pass").
+  **Two real items queued there, both blocking implementation:**
+  (1) authentication needs **three simultaneous credentials** — a
+  `Bearer` secret header, a separate `api-key` header, *and* a
+  `businessId` field inside every request body — a genuinely different
+  shape from this repo's existing single-Bearer-header providers, not
+  a drop-in fit for `getProviderKey()`'s current `public`/`secret`
+  pair; (2) the documented webhook signature scheme has **no replay
+  protection at all** (plain `HMAC-SHA256(payload, secret)`, no
+  timestamp/nonce component, unlike Payscribe/DodoPayments/Korapay/
+  Paystack all above) — a real provider-side security gap to design
+  around, not an implementation bug this repo would be introducing.
+  Also flagged there: Xixapay's own official Node.js webhook example
+  has two confirmed bugs (re-serializes the parsed body instead of
+  using raw bytes; compares signatures with `===` instead of a
+  constant-time function) — do not copy that sample as-is if this
+  gets implemented in Node. No sandbox/test-mode host is documented
+  anywhere — only one base URL exists in every source found, an open
+  question for the product owner before assuming test-mode credentials
+  behave identically to live ones.
 - **a-8. PaymentPoint** — not started. No code, no docs consulted.
 - **a-9. Presmit** — same caveat as Xixapay: existence and real docs
   not yet confirmed this session.

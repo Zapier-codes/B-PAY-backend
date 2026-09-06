@@ -860,71 +860,417 @@ push is the whole story next time.
   `charge.success` transactions, and logs-only for every other event
   type (no persistence layer exists yet — see Task 12).
 
-**Korapay**
-- Charges/initialize endpoint (`POST /api/v1/charges/initialize`) —
-  amount is in the **base currency unit**, NOT subunits. **Confirmed
-  directly** (Task 7, 2026-08-27) against
-  developers.korapay.com/docs/checkout-redirect, the guide that walks
-  through this exact endpoint. That page's own parameter table lists
-  `amount` as type `Integer` with no subunit/multiplier instruction
-  anywhere on the page (contrast with Paystack, whose docs explicitly
-  say "multiply the base amount by 100" — Korapay's page has no
-  equivalent sentence, which is itself informative). Corroborating,
-  consistent evidence across every other primary-source example found
-  this session: the Checkout Standard widget doc's own JS examples use
-  `amount: 22000` and `amount: 3000` for NGN test charges — sensible as
-  ₦22,000/₦3,000, nonsensically small as kobo (₦220/₦30); the official
-  Elixir client (`hexdocs.pm/kora_pay`) shows
-  `KoraPay.create_charge(1000, "NGN", ...)` returning
-  `"amount" => "1000.00"` — the two-decimal-place formatting on the
-  *output* is a strong tell that `1000` on the *input* was already
-  naira, not kobo; and the checkout-redirect webhook payload example
-  itself shows `"amount": 100000, "fee": 1075` for an NGN transaction —
-  a ~1.075% fee is a realistic real-world card/transfer fee rate at
-  either scale, so it doesn't independently disambiguate, but it's
-  consistent with (not contradicted by) the base-unit reading. No
-  primary-source example anywhere multiplies a naira amount by 100
-  before sending it. This repo's `providers/korapay.js` already passes
-  `data.amount` straight through with no conversion (see
-  `processPayment`) — **confirmed correct as-is, no code change
-  needed** for this task. `toSubUnit()` should continue to NOT be
-  applied to Korapay payloads (matches the pre-existing "Known issues"
-  note above, now confirmed rather than assumed).
-- Supported currencies (payout/collection, varies by product): NGN,
-  GHS, KES, ZAR, USD, XAF, XOF, EGP, TZS. Payment method availability
-  is country-specific — mobile money for KE/GH/CM/CI/EG/TZ, bank
-  transfer/pay-with-bank for NG, EFT for ZA, card broadly. Source:
-  developers.korapay.com/docs/accept-payments and
-  developers.korapay.com/docs/payout-via-api (both primary/official).
-- Webhook signature: **confirmed directly** against
-  developers.korapay.com/docs/webhooks (fetched 2026-08-27). Header
-  `x-korapay-signature`, value is a hex-encoded **HMAC-SHA256**.
-  Important nuance found on direct read, different from Paystack: the
-  hash is computed over **ONLY the `data` object**, not the full
-  payload — Korapay's own official Node/PHP examples both hash
-  `JSON.stringify(req.body.data)` / `json_encode($requestBody['data'])`,
-  never the whole body. Verified numerically this session that a
-  full-body hash and a data-only hash differ for the same payload, so
-  this distinction is load-bearing, not cosmetic — hashing the whole
-  body would silently reject every genuine webhook. Also confirmed:
-  events are `transfer.success`/`transfer.failed`,
-  `charge.success`/`charge.failed`, `refund.success`/`refund.failed`
-  (six total, unlike Paystack which has no charge-failure event at
-  all); `data` always includes `amount`, `fee`, `currency`, `status`
-  (`success`/`failed`), `reference`, plus event-specific extras
-  (`batch_reference` for bulk payouts, `payment_method` for pay-ins,
-  `virtual_bank_account_details` for NG VBA pay-ins, etc). Korapay
-  wants a `200` regardless of any response body content — "does not
-  pay attention to any request parameters apart from the request
-  status code" — and retries for up to 72 hours on anything else.
-  This repo now implements `POST /api/webhooks/korapay` (Task 4):
-  verifies the signature (401 on failure/missing), logs all six event
-  types with reference/amount/currency/status (no persistence layer
-  yet — see Task 12).
-- This repo's provider file already has comments citing the correct
-  `charges/initialize` and `charges/:reference` endpoints (fixed in a
-  prior session, per the comments in `providers/korapay.js`) — no need
-  to re-fix those paths, just verify the amount-unit question above.
+**Korapay — FULL API discovery pass, re-audited 2026-09-06 (supersedes
+all prior Korapay entries below; nothing from the prior audit was
+dropped, only expanded/corrected).** Every source cited was fetched
+directly this session from developers.korapay.com (via its own
+`llms.txt` index plus the live site's sidebar, which turned out to
+list more pages than `llms.txt` does — noted explicitly below rather
+than silently using the shorter list). This pass covers every
+pay-in, payout, refund, chargeback, balance, and conversion endpoint
+Korapay documents; it does **not** cover Card Issuing, Direct Debit,
+Identity/KYC, Payment Links, Pool Accounts, Voucher Payments,
+Settlements/Audit Logs, or the WooCommerce plugin — those are real,
+separate Korapay product lines with their own doc sections, listed
+here so they're a known, explicit exclusion rather than an
+accidental gap (none of them are referenced anywhere in this repo's
+code or in Task 0's own scope — if a future task needs one, it needs
+its own real discovery pass, not an assumption borrowed from this
+one).
+
+*Environment & authentication*
+- Base URL: `https://api.korapay.com/merchant` — **confirmed exact
+  match** with this repo's `getProviderBaseUrl('korapay')` in
+  `utils/helpers.js` (identical for both `development` and
+  `production` entries there, which is correct: Korapay has no
+  separate sandbox host — test vs. live is determined entirely by
+  which of your two key-pairs you use against this one host, per
+  developers.korapay.com/docs/test-live-modes, "No real charge is
+  made on payments in Test mode... switching modes does not stop
+  active payments in Live mode from going through").
+- Auth: `Authorization: Bearer {SECRET_KEY}` on every endpoint seen
+  this session (developers.korapay.com/docs/checkout-redirect states
+  this explicitly for charges; every other endpoint family's
+  documented examples use the same header) — matches this repo's
+  existing `Bearer ${this.secretKey}` usage everywhere in
+  `providers/korapay.js`. One inconsistency in Korapay's *own* docs,
+  flagged as-is rather than resolved: `docs/payout-utilities`'s
+  "Get Supported Bank Countries by Currency Code" section says
+  "Requests without a valid **public** key will return a `401`" —
+  every other endpoint on every other page says **secret** key. Not
+  re-derived or guessed at; if a future session calls that specific
+  endpoint and gets a real 401 with the secret key, try the public
+  key next and update this note with the real answer.
+- Public vs. secret keys, test vs. live: developers.korapay.com/docs/api-keys
+  — public keys are safe client-side, initiate transactions only;
+  secret keys read/write everything and must never leave the server.
+  Separate key-pairs per mode, obtained from the dashboard's API
+  Configuration tab.
+
+*Pay-ins / Collections*
+- `POST /api/v1/charges/initialize` (Checkout Redirect/Standard) —
+  **re-confirmed**, no change from the prior audit: `amount` is base
+  currency units, not subunits (see prior reasoning, still valid).
+  Full parameter table now captured directly from
+  developers.korapay.com/docs/checkout-redirect, including three
+  fields this repo's `processPayment()` never sends today: `notification_url`
+  (per-transaction webhook override — intentionally unused here,
+  since Task 41's architecture relies on exactly one dashboard-level
+  webhook URL for fanout; sending a per-transaction override would
+  bypass that gateway entirely, so this omission is correct, not a
+  gap), `metadata` (up to 5 keys, ≤20 chars each, `A-Z a-z 0-9 -`
+  only — genuinely unused, would be useful for passing the caller's
+  own order id through to the webhook) and `merchant_bears_cost`
+  (boolean, defaults to `true` — genuinely unused; whoever eats the
+  provider fee is currently whatever Korapay's own account-level
+  default is, not something this repo controls per-transaction).
+  Response is `{ status, message, data: { reference, checkout_url } }`
+  — matches what `processPayment()` already expects.
+- `GET /api/v1/charges/:reference` (verify/query a charge) —
+  **re-confirmed** working path, matches `verifyTransaction()`
+  exactly. Response shape (from the Virtual Bank Account doc's own
+  "Charge Query API" example, a fuller example than the checkout page
+  gives): `{ reference, status, amount, amount_paid, fee, currency,
+  description, customer: {name, email}, virtual_bank_account?:
+  {...} }` — note `amount_paid` as a **separate field from `amount`**,
+  relevant for partial/underpaid bank-transfer scenarios (see
+  "Underpayments" below) — this repo's code doesn't currently read or
+  surface `amount_paid` anywhere.
+- **New nuance not in the prior audit:** the Checkout Redirect page's
+  own webhook example includes `payment_reference` as a field
+  alongside `reference`, both equal, but annotates `payment_reference`
+  as `// DEPRECATED`. This repo's webhook handler doesn't reference
+  `payment_reference` at all today, so no fix needed — just recorded
+  so nobody adds a dependency on it later.
+- Checkout Standard (JS widget, `Korapay.initialize({...})`) — client-
+  side embed, not directly relevant to this backend's own server-side
+  calls, but confirms the same `reference`/`amount`/`currency` shape
+  and that `notification_url` can also be passed there.
+- Virtual Bank Accounts (NGN) — **entirely separate product from the
+  `bank_transfer` channel on `charges/initialize`**, and **not
+  implemented anywhere in this repo.** Creates a *persistent*,
+  reusable account per customer (`POST /api/v1/virtual-bank-account`,
+  fields: `account_name`, `account_reference`, `permanent` (must be
+  `true`), `bank_code` (list: Wema `035`, Fidelity `070`, Globus
+  `103`, UBA `033`, Moniepoint `090405`, Optimus `107`, Parallex
+  `104`, FCMB `214`; use `000` in sandbox), `customer: {name,
+  email?}`, and — **mandatory since 2024-01-26** — `kyc: {bvn
+  (required), nin (optional)}`. Limited to 50 accounts by default
+  (raise via support@korapay.com). Query: `GET
+  /api/v1/virtual-bank-account/:accountReference`. Transaction
+  history: `GET /api/v1/virtual-bank-account/transactions?account_number=...`.
+  Sandbox test-credit: `POST /api/v1/virtual-bank-account/sandbox/credit`
+  (NGN only, min 100 / max 10,000,000). USD and KES variants exist as
+  separate doc pages (`virtual-bank-accounts-usd`,
+  `accepting-payments-with-kes-virtual-bank-account`) — not
+  individually fetched this session; same "entirely unimplemented"
+  status applies. Flagging for Task 0's d-1 (white-label checkout):
+  if the orchestration layer ever wants persistent per-customer pay-
+  in accounts rather than one-off checkout sessions, this is a whole
+  separate integration, not a byproduct of the existing charges flow.
+- Mobile Money, Card Payments (API-driven, not checkout-widget),
+  "Pay with Bank (Instant EFT)" (ZAR-only) — each has its own guide
+  page (`mobile-money-apis`, `accepting-card-payments-with-apis`,
+  `accept-flexible-card-payments-with-api`, `pay-with-bank-instant-eft`)
+  but this repo only ever reaches these payment methods indirectly,
+  via the `channels`/`default_channel` array on `charges/initialize`
+  — it never calls a dedicated per-method endpoint. That's consistent
+  with how the repo is built today (one initialize call, Korapay's
+  own checkout handles method selection) and not a gap unless a
+  future task specifically wants server-side card tokenization
+  (`accepting-card-payments-with-apis` requires PCI-DSS Level 1
+  certification and AES-256 payload encryption — a materially
+  bigger compliance lift than anything else in this audit, worth
+  flagging on its own if it's ever considered).
+- Underpayments/overpayments on bank-transfer pay-ins — a real
+  documented behavior (`handling-underpayments-and-overpayments`)
+  this repo has no logic for at all (it only checks `data.status`,
+  never compares `amount` vs `amount_paid`). Not fetched in full detail
+  this session — flagged as a real, not-yet-scoped gap for whichever
+  task first turns on bank-transfer collections at production volume.
+
+*Payouts*
+- `POST /api/v1/transactions/disburse` (single payout) —
+  **re-confirmed**, matches `processPayout()`'s endpoint exactly.
+  Full field table now captured directly from
+  developers.korapay.com/docs/payout-via-api, and it's materially
+  bigger than what this repo implements:
+  - `reference` must be **≥5 characters** — this repo's
+    `generateReference()` output is always far longer, so no risk in
+    practice, just recorded as a real documented constraint.
+  - `destination.amount`: documented as "in two decimal places" —
+    worth a real sandbox check before assuming this must differ from
+    the base-unit Number this repo already sends; every worked
+    example in the docs still shows amount as a plain Number in the
+    request and a `"100.00"`-style **string** only in the *response*,
+    consistent with "decimal precision," not "send it pre-formatted
+    as a string."
+  - `destination.bank_country` — **required whenever currency is USD
+    or GBP**. Not sent anywhere in this repo's payload.
+  - A long list of fields **required only for USD/GBP payouts** —
+    `bank_account.bank_name`, `beneficiary_type` (`individual` /
+    `corporate`), `first_name`, `last_name`, `business_name` (if
+    corporate), `account_type` (`savings`/`checking`),
+    `account_number_type` (`account_number`/`iban`), `payment_method`
+    (`AbaRouting`/`BicSwift` for USD, `SortCode`/`IBAN` for GBP),
+    `routing_number`, `intermediary_routing_number` (if `BicSwift`),
+    a full `address_information` object (country/city/state/zip_code/
+    street/full_address), and `supporting_documents[]` (title +
+    file_reference, uploaded via the separate Supporting Documents
+    endpoint) — **none of this exists in `processPayout()` at all**.
+    This repo's payout support is real and correct for NGN/KES/ZAR
+    bank accounts, but USD/GBP bank payouts would fail outright today
+    (missing required fields), not just format the amount wrong.
+  - `destination.purpose_of_payment` — optional, but conditionally
+    required for some countries per `payout-utilities`' "Get Payment
+    Purposes by Country Code" endpoint (US, GB confirmed listed).
+    Not sent anywhere in this repo.
+  - `metadata` and `notification_url` (per-payout webhook override) —
+    same two genuinely-unused-but-available fields as on the charges
+    side, same reasoning for why the omission is intentional here too.
+  - Response: `{status, message, data: {amount, fee, currency,
+    status, reference, narration, message, customer, metadata}}` —
+    matches what `processPayout()` already reads.
+- **🐛 Real bug found this session, not previously flagged:**
+  `processPayout()`'s handling of mobile-money payouts. The code sets
+  `destination.type = 'mobile_money'` when `data.payment_method ===
+  'mobile_money'`, but then **still only ever populates
+  `destination.bank_account: {bank, account}`** — it never builds a
+  `destination.mobile_money: {operator, mobile_number}` object at
+  all. Korapay's own docs are explicit: `destination.mobile_money` is
+  "**Required** — if destination.type is `mobile_money`" and
+  `destination.bank_account` is required only for the `bank_account`
+  type — sending `bank_account` fields for a `mobile_money`-typed
+  request doesn't just omit something optional, it's the wrong nested
+  object entirely and would be rejected by Korapay's API. This is the
+  same *class* of bug Task 42 already found and fixed for the
+  bank-account case (flat payload instead of nested `destination`) —
+  it just wasn't caught for the mobile-money branch at the time
+  because mobile-money payouts hadn't been exercised yet under the
+  "Korapay only" narrowed focus. Documentation-only session — **not
+  fixed here**, flagged for the next implementation session.
+- **🐛 Second bug found this session:** there is no code anywhere in
+  this repo that calls the Mobile Money Operator List endpoint (see
+  below), so even once the bug above is fixed, there's currently no
+  way for this repo to obtain the `operator` slug (e.g.
+  `safaricom-ke`, `mtn-gh`) that `destination.mobile_money.operator`
+  requires — it would have to be hardcoded or accepted as-is from the
+  caller with no validation against Korapay's real, current list.
+- `POST /api/v1/transactions/disburse/remittance` (payout for
+  remittance-registered merchants — sender KYC-style fields:
+  `remittance_data.sender_name/phone/dob/country_iso/nationality/
+  id_type/id_number/service_provider_name/remittance_purpose/
+  sender_recipient_relationship/sender_occupation`) — **not
+  implemented in this repo**, and likely out of scope unless the
+  product owner confirms this account is remittance-registered.
+  Flagging one small inconsistency in Korapay's own docs as-is: this
+  endpoint is written **without** the `/merchant` prefix every other
+  endpoint on the same page uses (`{{baseurl}}/api/v1/transactions/
+  disburse/remittance` vs. everything else's
+  `{{baseurl}}/merchant/api/v1/...`) — could be a genuine different
+  route or a typo in Kora's own docs; not re-derived, worth one real
+  sandbox call before ever building against it.
+- `GET /api/v1/transactions/:reference` (fetch/verify a single
+  payout) — **now directly confirmed**, not just pattern-matched.
+  The prior audit's `verifyPayout()` carried an explicit comment
+  flagging this path as "a strong pattern-match, not a directly-
+  quoted string." This session found it stated outright, with worked
+  success/failure examples, on developers.korapay.com/docs/bulk-payouts-via-api
+  under "Fetch Payout Transaction" — same path this repo already
+  uses. That comment in `providers/korapay.js` can be updated to
+  "confirmed" the next time that file is touched (not changed this
+  session — docs only).
+- `POST /api/v1/transactions/disburse/bulk` (bulk payout) — endpoint
+  and full field table confirmed
+  (developers.korapay.com/docs/bulk-payouts-via-api): `batch_reference`
+  (5-50 chars), `description`, `merchant_bears_cost` (defaults
+  **`false`** here — note this is the *opposite* default from the
+  single-payout endpoint's `true`), `currency`, `payouts[]` (2-50
+  items, each with `reference` (5-50 chars), `amount`, `type` (only
+  `bank_account` accepted for bulk — **mobile money is not available
+  for bulk payouts**, only for single), `narration`, `bank_account:
+  {bank_code, account_number}`, `customer: {name, email}`). Companion
+  endpoints: `GET /api/v1/transactions/bulk/:batch_reference` (batch
+  status: pending/failed/complete, with per-status counts) and `GET
+  /api/v1/transactions/bulk/:batch_reference/payouts` (paginated list
+  of every payout in the batch). **None of this is implemented in
+  this repo** — Task 0's a-1 scope should treat bulk payouts as a
+  net-new build, not an extension of the existing single-payout code.
+- Payout Utilities (developers.korapay.com/docs/payout-utilities):
+  - `GET /api/v1/misc/payout-payment-purpose-by-country-code/:countryCode`
+    — payment purposes for USD/GBP-style payouts. Not implemented.
+  - `GET /api/v1/misc/payout-countries-by-currency-code/:currencyCode`
+    — supported bank countries for a currency. Not implemented. (This
+    is the page with the public-vs-secret-key auth inconsistency
+    noted above.)
+  - `GET /api/v1/misc/banks?countryCode=NG|KE|ZA` (list banks) and
+    `GET /api/v1/misc/mobile-money?countryCode=KE|GH` (list mobile
+    money operators) — **🐛 third bug found this session:** this
+    repo's `getBanks()` calls `${this.baseUrl}/api/v1/banks?currency=...`
+    — **wrong path** (`/api/v1/banks` vs. the documented
+    `/api/v1/misc/banks`) **and wrong query param** (`currency=NGN`
+    vs. the documented `countryCode=NG`, a country code, not a
+    currency code). This looks like exactly the kind of guessed,
+    never-verified endpoint the other two provider files' bugs
+    turned out to be — genuinely worth a real sandbox call before
+    trusting `getBanks()` at all; it may simply 404 or 400 today.
+    The mobile-money-operator-list endpoint has no code counterpart
+    at all (see the mobile-money payout bug above).
+  - `POST /api/v1/misc/banks/resolve` (bank account name resolve,
+    NG/KE) and `POST /api/v1/misc/mobile-money/resolve` (mobile money
+    account name resolve, GH) — both optional-but-recommended
+    pre-payout verification steps, both unimplemented here.
+  - `POST /api/v1/payouts/availability` (bank/MMN availability check,
+    **South Africa only**) — unimplemented, low priority given the
+    narrow scope.
+- `GET /api/v1/payouts` (Payout History — list, not per-reference;
+  filters: currency, date_from/to, limit, starting_after/ending_before)
+  — unimplemented.
+- Payout error handling: Korapay's own docs are explicit and this
+  repo already follows the principle correctly for the single-payout
+  path — 502/504/503/500 and other unexpected errors must NOT be
+  treated as a failed payout; always verify via the query endpoint
+  before giving value, since the payout may have actually gone
+  through despite the error response. `processPayout()`'s own code
+  comments already reflect this correctly.
+- Supported payout destinations, per developers.korapay.com/docs/send-payments
+  (dated 2026-08-15, newer than the prior audit's currency list —
+  **superseding it, not just adding to it**): NGN/KES/ZAR **bank
+  accounts**; KES/GHS/XOF/XAF/EGP/TZS **mobile money**; USD/GBP
+  **bank accounts** (with the extra required-field set above); and
+  **stablecoins (USDC and USDT)** — this last one is genuinely new
+  information, not mentioned anywhere in the prior audit, and this
+  repo has zero stablecoin-payout support of any kind (no destination
+  type, no code path, nothing in `processPayout()`'s `type` ternary).
+
+*Refunds — 🆕 entire product surface, zero implementation in this repo*
+  (developers.korapay.com/docs/refunds-api, fetched fresh this
+  session — the prior audit didn't cover this at all):
+- `POST /api/v1/refunds/initiate` — `payment_reference` (required,
+  the *original charge's* reference) + `reference` (required, a
+  **new**, merchant-generated reference *for the refund itself*, ≤50
+  chars) + optional `amount` (omit for a full refund), `reason`
+  (≤200 chars), `webhook_url` (per-refund override, ≤200 chars).
+  NGN minimum refund amount: 100.
+- `GET /api/v1/refunds/:reference` — refund details by the refund's
+  own reference (not the original payment's reference).
+- `GET /api/v1/refunds` — list, filterable by currency/date_from/
+  date_to/limit/starting_after/ending_before/status
+  (`processing`/`failed`/`success`).
+- Webhook events `refund.success`/`refund.failed` were already
+  recorded in the prior audit's webhook section, but **one field
+  meaning was wrong/incomplete there**: the refund webhook's `data.reference`
+  is the **refund's own** reference, while `data.payment_reference`
+  is the **original payment's** reference — these are two different
+  values, not the same value under two names (contrast with the
+  regular charge-success webhook, where `reference` and
+  `payment_reference` are the same value, with `payment_reference`
+  marked deprecated there). Anyone implementing refund webhook
+  handling needs to key off `payment_reference` to find the original
+  transaction, not `reference`.
+
+*Chargebacks — 🆕 entire product surface, zero implementation*
+  (developers.korapay.com/docs/chargebacks): `GET
+  /api/v1/chargebacks/:reference` (details), `GET /api/v1/chargebacks`
+  (list, filterable), `PATCH /api/v1/chargebacks/:reference` (mark
+  Won/Lost/Partial — declining or partially declining requires PDF
+  evidence uploaded via the separate Supporting Documents endpoint
+  with purpose `chargeback_supporting_document`). Webhooks fire on
+  chargeback creation and on Won/Lost/Partial resolution — event
+  names not independently confirmed this session. **One base-URL
+  inconsistency worth flagging as-is:** every chargeback endpoint on
+  this page is written as `https://api.korapay.com/api/v1/chargebacks/...`
+  — **missing the `/merchant` segment** every other endpoint family
+  in this entire audit uses. Same caveat as the remittance-payout
+  path above: could be a real, deliberately different route, or a
+  documentation typo — not re-derived, confirm with one real sandbox
+  call before building against it.
+
+*Balance*
+  (developers.korapay.com/docs/balance-api,
+  developers.korapay.com/docs/balance-history-api): `GET
+  /api/v1/balances` — returns `{available_balance, pending_balance}`
+  per currency (NGN always present; USD/GHS/KES/XAF/XOF/ZAR for
+  multi-currency accounts; USD additionally carries an
+  `issuing_balance` field, presumably tied to Card Issuing). `GET
+  /api/v1/balances/history` — ledger of everything that moved the
+  balance (pay-ins, payouts, chargeback deductions, etc.), with
+  `direction` (debit/credit) and `source` (e.g. `"chargeback"`) per
+  entry. **Neither is implemented in this repo.** Relevant beyond
+  just bookkeeping: a pre-payout balance check would directly answer
+  "do we actually have enough to disburse this" before hitting the
+  disburse endpoint and discovering insufficient funds the hard way —
+  worth considering for Task 0's b-1 routing-rule design (routing
+  could account for available balance per provider, not just
+  currency/country/method).
+
+*Currency Conversion* (developers.korapay.com/docs/exchange-rate-api,
+  /currency-conversion-api, /dynamic-currency-conversion): this
+  repo's use of DCC is real but partial — `processPayment()` already
+  sends `payment_currency`/`settlement_currency` together when the
+  caller supplies both (confirmed correct in the prior audit). The
+  *separate* standalone Currency Conversion API — look up an exchange
+  rate for a pair, then `POST` to initiate an actual balance-to-
+  balance conversion (moving funds from one currency balance to
+  another, independent of any specific transaction) — is a different
+  feature and **not implemented here at all**. An email confirmation
+  is sent on completion per Kora's own docs; conversions require
+  sufficient available balance in the source currency (ties back to
+  the Balance API gap above).
+
+*Split Payments* (developers.korapay.com/docs/split-payments) — page
+  exists, not fetched in full detail this session (lower priority —
+  no indication anywhere in Task 0 or this repo's existing code that
+  splitting a single payment across multiple recipients is a near-
+  term need). Recorded as a known, unaudited gap rather than silently
+  skipped.
+
+*Webhooks* — prior audit's HMAC-SHA256-of-`data`-only finding,
+  Buffer/timing-safe-equal implementation, and the six core event
+  names all **re-confirmed**, no changes. New from this session's
+  direct re-fetch of developers.korapay.com/docs/webhooks:
+  - The "Resend Webhook" dashboard button only activates under
+    specific conditions: for payouts, channel `api` + status
+    `successful`/`failed`; for pay-ins, channel `api` + status
+    `successful`/`failed`, **or** channel `modal` + status
+    `successful` only (a pending/failed modal pay-in can't be
+    manually resent). Operationally relevant for the product owner,
+    not something this repo's code needs to handle.
+  - Best-practice guidance directly from Kora: keep track of every
+    notification received and check it hasn't already been processed
+    before giving value (i.e., their own docs assume the merchant
+    does idempotency — directly relevant to Task 0/c-1's resolution
+    elsewhere in this file) and always acknowledge with a bare `200`
+    before doing further processing, to avoid a timeout-triggered
+    retry.
+  - Sample payloads for **every** event family were captured directly
+    this session (single payout, bulk payout, NG VBA pay-in, card/
+    bank-transfer/mobile-money pay-in, refund) — all consistent with
+    the six-event-type/`data`-shape findings already on file; no
+    corrections needed there beyond the `payment_reference` nuances
+    already called out above under Pay-ins and Refunds.
+
+*Not covered by this pass — real, explicit exclusions, not oversights:*
+  Card Issuing (virtual card creation/funding/withdrawal/management,
+  beta), Direct Debit (authorization creation/retrieval, variable-
+  authorization debits), Identity/KYC & KYB (NG/ZA/GH/KE/US/CI, BVN/
+  NIN/vNIN/SSN/passport/national-ID/phone verification, liveness
+  check, document verification), Payment Links, Pool Accounts,
+  Voucher Payments (checkout + API), Settlements & Audit Logs, and the
+  WooCommerce plugin. None are referenced anywhere in this repo's
+  code or in Task 0's stated scope. Also worth recording precisely
+  because it surprised this session: developers.korapay.com's own
+  `llms.txt` index (the file explicitly meant to help an AI agent
+  discover all pages) **does not list every page the live site's own
+  sidebar shows** — Errors, Payment Links, Bank Transfers, Pool
+  Accounts, a Card Payments overview page, Pay with Bank, Voucher
+  Payments, Pay-ins History API, Withdrawals, all of Direct Debit,
+  all of Card Issuing, all of Identity, all three Balance pages, and
+  all three Settlements pages are missing from `llms.txt` but present
+  in the sidebar fetched directly from developers.korapay.com/docs/balance-api
+  this session. A future discovery pass on any of the excluded areas
+  above should re-fetch the live sidebar rather than trusting
+  `llms.txt` alone to enumerate what exists.
 
 **JuicyWay**
 - Real, current docs: **https://docs.juicyway.com** (confirmed to

@@ -3,7 +3,30 @@
 > **▶ START HERE — read this box only, then go straight to work. Skip
 > everything else below unless you get stuck.**
 >
-> **Newest note (2026-09-06, latest of all) — Task 0 expanded:
+> **Newest note (2026-09-06, latest of all) — Task 8: Paystack full
+> API-discovery/audit pass done (doc-research only, per the existing
+> "Current focus: Korapay only" exception for doc-only work).** Every
+> Transaction-API endpoint, the six-currency support table, the error
+> envelope, rate limits, and the webhook signature scheme were
+> re-fetched directly from paystack.com/docs and checked against
+> `providers/paystack.js`/`routes.js`/`utils/helpers.js`. Both
+> previously-implemented endpoints (`/transaction/initialize`,
+> `/transaction/verify/:reference`) are confirmed byte-for-byte
+> correct, as is the webhook signature code. **Two real findings, not
+> yet fixed (documentation-only pass, code changes queued as new
+> tasks):** (1) **Task 8c** — `verifyTransaction()`/`GET /api/verify`
+> never inspect the nested `data.status` field, so a failed or
+> abandoned transaction is reported back as `"Verification
+> successful"` — a "paid but no value" class bug; (2) **Task 8d** —
+> `CONFIRMED_PROVIDER_CURRENCIES.paystack` is missing `XOF`, which
+> Paystack's own docs list as a sixth supported currency (Côte
+> d'Ivoire). Full writeup under "Confirmed research findings" below.
+> **Still `a-1-i-X`** is the active task for the Task 0 track — this
+> was a Task 8-track, doc-only exception, not a change to which `X`
+> node is active. Patch for this session covers `handover.md` only —
+> no provider code changed.
+>
+> **Newest note (2026-09-06, previous) — Task 0 expanded:
 > business model, pricing, dynamic default provider, admin route, and
 > the discovery convention (product owner direction, this session).**
 > Pricing: platform charges 5x underlying provider cost per
@@ -825,37 +848,245 @@ push is the whole story next time.
 
 ## Confirmed research findings (verified against primary sources — don't re-derive these, but do re-verify the specific endpoint page before shipping a task that depends on one)
 
-**Paystack**
-- Supports exactly 5 currencies: NGN, GHS, ZAR, KES, USD.
-  Source: paystack.com developer docs, corroborated by multiple
-  integration guides (Chargebee, Zoho, mctaba.com).
-- Amounts are in **subunits** (multiply by 100) for all 5 currencies —
-  this repo's `toSubUnit()`/`fromSubUnit()` already does this correctly
-  for Paystack. Source: paystack.com/docs/api/ ("Sending an amount in
-  subunits simply means multiplying the base amount by 100").
-- Webhook signature: **confirmed directly** against
-  paystack.com/docs/payments/webhooks/ (fetched 2026-08-27). Header
-  `x-paystack-signature`, value is a hex-encoded **HMAC-SHA512** of the
-  event payload, keyed with the secret key. Important nuance found on
-  direct read: Paystack's own official Node example computes the hash
-  over `JSON.stringify(req.body)` — the body **after**
-  `express.json()` has parsed and re-serialized it — not the raw
-  request bytes. Task 2's speculative note (that Paystack needs true
-  raw bytes) turned out to be an overcautious guess for this specific
-  provider; implemented to match the primary source exactly
-  (`providers/paystack.js#verifyWebhookSignature`), with a code
-  comment flagging the re-serialization fragility this implies. No
-  `express.json({ verify })` change was needed for Paystack.
-  Also confirmed directly: there is **no dedicated "charge failed"
-  event** in Paystack's supported-events list — `charge.success` is
-  the only charge-related webhook; failures simply don't raise one.
-  Full event list (for future reference): charge.dispute.create/
-  remind/resolve, charge.success, customeridentification.failed/
-  success, dedicatedaccount.assign.failed/success, invoice.create/
+**Paystack — FULL API discovery pass, audited 2026-09-06 (supersedes
+all prior Paystack entries below; nothing from the prior audit was
+dropped, only expanded/corrected).** Every source cited below was
+fetched directly this session from paystack.com/docs — the API
+Reference (Introduction, Authentication, Rate Limits, Pagination,
+Errors) and the Transactions endpoint page, plus a re-fetch of the
+Webhooks guide to re-confirm what the 2026-08-27 pass already found.
+This covers the Transactions API **in full** (every endpoint Paystack
+documents under that resource, not just the two this repo currently
+calls), the six-currency support table, the error-response envelope,
+and documented rate limits, on top of re-confirming the webhook
+signature scheme. It does **not** cover Transaction Splits, Terminal,
+Virtual Terminal, Customers, Direct Debit, Dedicated Virtual
+Accounts, Preauthorization, Apple Pay, Capitec Pay, Subaccounts,
+Plans, Subscriptions, Products, Storefronts, Orders, Payment Pages,
+Payment Requests, Settlements, Transfer Recipients, Transfers,
+Transfers Control, Bulk Charges, Integration (session-timeout),
+Charge (the PIN/OTP/phone/birthday/address step-up flow), Disputes,
+Refunds, or Verification (Resolve Account Number/Validate Account/
+Resolve Card BIN) — those are real, separate Paystack API resource
+families with their own doc sections, listed here as a known,
+explicit exclusion rather than an accidental gap (none of them are
+referenced anywhere in this repo's code today — if a future task
+needs Transfers for payouts, or Verification's "Resolve Account
+Number" for bank-detail confirmation, it needs its own real discovery
+pass, not an assumption borrowed from this one).
+
+*Environment & authentication*
+- Base URL: `https://api.paystack.co` — **confirmed exact match**
+  with this repo's `getProviderBaseUrl('paystack')` in
+  `utils/helpers.js` (identical for both `development` and
+  `production` entries there — correct: like Korapay, Paystack has no
+  separate sandbox host; test vs. live is determined entirely by
+  which key-pair is used against this one host). Source:
+  paystack.com/docs/api/.
+- Auth: `Authorization: Bearer {SECRET_KEY}` on every request —
+  confirmed at paystack.com/docs/api/authentication/ ("Every request
+  must include your secret key in the Authorization header, using the
+  Bearer scheme") — matches this repo's existing
+  `Bearer ${this.secretKey}` usage in both methods in
+  `providers/paystack.js`. Minor, harmless observation: the verify
+  call is a bodyless `GET` but this repo still sends a
+  `Content-Type: application/json` header on it — dead weight, not a
+  correctness issue (Paystack ignores it on a bodyless GET).
+
+*Initialize Transaction — `POST /transaction/initialize`*
+- **Path confirmed exact match** against
+  paystack.com/docs/api/transaction/#initialize — `processPayment`'s
+  call site already uses this path correctly. Task 8's premise that
+  this endpoint "was already believed correct going in" is now a
+  **confirmed correct**, not just a belief.
+- Required body params confirmed: `email` (string), `amount` (subunit
+  of the currency — see currency table below). This repo sends both.
+- `currency` is documented as **optional**, defaulting to the
+  integration's own configured currency if omitted — this repo always
+  sends it explicitly (`data.currency`), which is fine (arguably
+  safer — removes ambiguity about which currency a request lands in)
+  but is a deliberate choice worth knowing about, not a requirement.
+- Optional params confirmed to exist that this repo does **not**
+  currently send (documented, unused capability, not bugs — noted so
+  a future task doesn't have to re-discover them): `channels` (array
+  — restrict which payment channels Checkout offers: card, bank,
+  apple_pay, ussd, qr, mobile_money, bank_transfer, eft, capitec_pay,
+  payattitude), `callback_url` (per-transaction redirect override),
+  `metadata` (stringified JSON — no metadata pass-through exists in
+  this repo today), and `split_code`/`subaccount`/
+  `transaction_charge`/`bearer` (marketplace-style payment splitting
+  — not relevant unless/until this platform needs to split a payment
+  across multiple destination accounts).
+- Response shape **confirmed exact match** against the docs' own
+  sample: `{ status: true, message: "Authorization URL created",
+  data: { authorization_url, access_code, reference } }` — this
+  repo's `responseData.status` check and its reliance on
+  `data.authorization_url`/`data.reference` downstream both line up
+  with what Paystack actually returns.
+- `reference`: optional at the API level (Paystack generates one if
+  omitted), but this repo always generates/passes its own via
+  `generateReference('paystack')`, consistent with Task 12's
+  idempotency work. Character restriction **confirmed exact match**:
+  docs state "Only `-`, `.`, `=` and alphanumeric characters allowed"
+  — `routes.js`'s regex (`/^[A-Za-z0-9\-.=]+$/`) enforces exactly
+  that set, no more and no less.
+
+*Verify Transaction — `GET /transaction/verify/:reference`*
+- **Path confirmed exact match** against
+  paystack.com/docs/api/transaction/#verify — same "already believed
+  correct, now confirmed" status as Initialize above.
+- **Real finding, not just a docs confirmation — queued as Task 8c
+  rather than fixed here, since this pass is documentation-only per
+  Task 8's own scope:** Paystack's Errors page states explicitly, in
+  its own HTTP-codes table: "Note that we will always send a 200 if a
+  charge or verify request was made. Do check the data object to know
+  how the charge went (i.e. successful or failed)." The top-level
+  `status: true` / `message: "Verification successful"` Paystack
+  returns on a verify call describes **the API call succeeding**, not
+  **the transaction succeeding** — a verify call for a genuinely
+  failed or abandoned transaction still comes back HTTP 200 with
+  top-level `status: true`; only the nested `data.status` field
+  (`"success"` / `"failed"` / `"abandoned"`) says what actually
+  happened to the money.
+  `providers/paystack.js#verifyTransaction` only throws on
+  `!response.ok || !responseData.status` — it never inspects
+  `responseData.data.status` — so it returns normally (no throw) for
+  a failed or abandoned transaction. `routes.js`'s `GET /api/verify`
+  route then reports that back to its caller as `{ status: true,
+  message: 'Verification successful', ... }` unconditionally, with
+  the real per-transaction outcome buried in `data.data.status` and
+  never surfaced or checked. This is exactly the "paid but no value"
+  class of bug Paystack's own webhooks guide warns integrators about
+  — a caller trusting the outer `status`/`message` fields (the
+  natural reading of this route's own response shape) would treat a
+  declined card or an abandoned checkout as a confirmed payment.
+- Response shape for a *successful* verification is otherwise
+  **confirmed exact match**: `id`, `status`, `reference`, `amount`
+  (subunit), `currency`, `channel`, `paid_at`, `customer{...}`,
+  `authorization{...}`, `fees`, `gateway_response`, `log{...}`, etc.
+  This repo doesn't destructure any of these fields itself (the whole
+  `responseData` is passed back up through `routes.js` as-is), so
+  there's no field-name mismatch to find — the only real issue is the
+  status-check gap above, not the shape.
+
+*Supported currencies & amount units*
+- **Real finding: the confirmed-currency list is incomplete.**
+  Paystack's own API Reference ("Supported currency" section) lists
+  **six** currencies, not five:
+
+  | Currency | Subunit | Min. transaction | Availability |
+  |---|---|---|---|
+  | NGN | Kobo | ₦50.00 | Nigeria |
+  | USD | Cent | $2.00 | Kenya and Nigeria |
+  | GHS | Pesewa | ₵0.10 | Ghana |
+  | ZAR | Cent | R1.00 | South Africa |
+  | KES | Cent | Ksh.3.00 | Kenya |
+  | **XOF** | *(none — see below)* | XOF 1.00 | Côte d'Ivoire |
+
+  `utils/helpers.js`'s `CONFIRMED_PROVIDER_CURRENCIES.paystack` lists
+  only `['NGN', 'GHS', 'ZAR', 'KES', 'USD']` — **XOF is missing.** Not
+  a mistake at the time the list was written (the prior session's
+  cited sources — Chargebee, Zoho, mctaba.com — are third-party
+  integration guides describing only Paystack's five better-known
+  currencies; none mention XOF), but Paystack's own primary docs now
+  list a sixth, real, live-supported currency for Côte d'Ivoire
+  integrations. Doesn't block anything today if this platform has no
+  Côte d'Ivoire-facing integration yet, but the list can't accurately
+  call itself "confirmed against primary sources" while missing an
+  entry the primary source itself lists. Queued as **Task 8d**, not
+  fixed here — editing `CONFIRMED_PROVIDER_CURRENCIES` is Task 9/9b's
+  territory, not Task 8's.
+- XOF has an unusual rule worth flagging even though implementing it
+  is out of this pass's scope: "While there is no subunit for XOF,
+  developers must multiply the amount by 100 regardless." — the ×100
+  multiplier this repo already applies uniformly
+  (`getAmountFormat`'s `{ unit: 'subunit', multiplier: 100 }` for
+  every Paystack currency) would, unusually, still be *correct* for
+  XOF too, even though XOF has no real subunit. So Task 8d, when
+  picked up, is a pure addition to the array, not a new branch or a
+  multiplier change.
+- For the five currencies already in the list, ×100 subunit
+  conversion and the `NGN`/`GHS`/`ZAR`/`KES`/`USD` set itself are
+  **both re-confirmed, exact match** — no changes needed there.
+- Per-currency **availability is account-level, not something this
+  code can or should try to validate itself**: e.g. USD only works
+  "for businesses in Nigeria and Kenya" per Paystack's own docs — a
+  single Paystack account can't accept all six currencies regardless
+  of what this repo sends. Noted here as a real operational
+  constraint (a request in a currency the account isn't configured
+  for will fail on Paystack's side with a validation error, not on
+  this repo's side), not as a code bug — there's no control-flow
+  change this repo could make to fix it.
+
+*Error response format — newly documented here, not previously in
+this file*
+- Confirmed at paystack.com/docs/api/errors/: every error response
+  shares the envelope `{ status: false, message, meta: { nextStep,
+  ... }, type: "api_error" | "validation_error" | "processor_error",
+  code }`. HTTP codes: 200 (success **or** a charge/verify call that
+  completed but describes a failure in `data` — see the Verify
+  finding above), 201, 400 (validation/client error), 401 (bad or
+  missing secret key), 404, 5xx (Paystack-side). This repo's
+  `throw providerError(responseData.message || '...')` in both
+  `processPayment` and `verifyTransaction` only ever surfaces
+  `message` — `type` and `code` (e.g. `missing_params`, or
+  processor-specific codes) are discarded. Not a bug — `message` is
+  explicitly documented as "the only key that's universal across
+  requests," and Task 13 already marked Paystack's `message` safe to
+  surface to end users — but `type`/`code` would be useful for
+  programmatic branching (e.g. treating `processor_error` differently
+  from `validation_error`) if a future task ever needs that
+  distinction. Not queued as its own task; noted as available-but-
+  unused, same treatment as the unused `channels`/`metadata`/split
+  params above.
+
+*Rate limits — newly documented here, not previously in this file*
+- Confirmed at paystack.com/docs/api/rate-limits/: standard limit is
+  **600 requests/60s live, 100 requests/60s test**, per integration,
+  applied per-endpoint (not a single combined budget across the whole
+  integration). `/transaction/verify` specifically has an **extended**
+  limit of 3,000 requests/60s (live only — test mode always uses the
+  standard limit); `/transaction/initialize` gets 1,200/60s. A `429`
+  comes back with the same error envelope as above
+  (`code: "rate_limited"`) plus `x-ratelimit-reset`/`-remaining`/
+  `-limit` headers. This repo has no retry/backoff handling for `429`
+  today in either `processPayment` or `verifyTransaction` — not
+  flagged as a bug at current traffic levels (there's no evidence
+  this repo is anywhere near these limits), but worth knowing exists
+  if traffic grows, especially since Paystack's own docs specifically
+  call out "polling `/transaction/verify/:reference` in a loop" as
+  the most common cause of hitting it — this repo's `/api/verify`
+  route is called on-demand per-request, not polled in a loop, so
+  it's not currently doing the thing Paystack warns about, but a
+  future retry/polling feature should keep this limit in mind.
+
+*Webhook signature — re-confirmed this session, no corrections needed*
+- Header `x-paystack-signature`, value is a hex-encoded **HMAC-SHA512**
+  of the event payload, keyed with the secret key — re-fetched and
+  re-confirmed against paystack.com/docs/payments/webhooks/ plus
+  Paystack's own public Node.js webhook example (identical
+  `crypto.createHmac('sha512', secret).update(JSON.stringify(req.body))`
+  pattern). `providers/paystack.js#verifyWebhookSignature` still
+  matches exactly — no changes needed. Nuance already recorded from
+  the original 2026-08-27 pass, unchanged: Paystack's own official
+  Node example computes the hash over `JSON.stringify(req.body)` —
+  the body **after** `express.json()` has parsed and re-serialized it
+  — not the raw request bytes. Task 2's speculative note (that
+  Paystack needs true raw bytes) turned out to be an overcautious
+  guess for this specific provider; implemented to match the primary
+  source exactly, with a code comment flagging the re-serialization
+  fragility this implies. No `express.json({ verify })` change was
+  needed for Paystack.
+  Also re-confirmed: there is **no dedicated "charge failed" event**
+  in Paystack's supported-events list — `charge.success` is the only
+  charge-related webhook; failures simply don't raise one. Full event
+  list (for future reference): charge.dispute.create/remind/resolve,
+  charge.success, customeridentification.failed/success,
+  dedicatedaccount.assign.failed/success, invoice.create/
   payment_failed/update, paymentrequest.pending/success, refund.
   failed/pending/processed/processing, subscription.create/disable/
   expiring_cards/not_renew, transfer.failed/success/reversed.
-  This repo now implements `POST /api/webhooks/paystack` (Task 3):
+  This repo implements `POST /api/webhooks/paystack` (Task 3):
   verifies the signature (401 on failure/missing), logs
   `charge.success` transactions, and logs-only for every other event
   type (no persistence layer exists yet — see Task 12).
@@ -1507,7 +1738,16 @@ committed for those three providers. Until those keys arrive:
 - **Don't** start Task 6 (Payscribe — already blocked on docs anyway),
   Task 8 (Paystack endpoint verification), or the Paystack/JuicyWay/
   Payscribe portions of any multi-provider task (9, 10, 11, 12, 13) —
-  leave their checkboxes unchecked and skip over them.
+  leave their checkboxes unchecked and skip over them. **Exception
+  exercised 2026-09-06:** Task 8's own note already allowed the
+  doc-research half to proceed without keys ("Doc research alone
+  doesn't need a key"); that half is now done (see Task 8 and the
+  "Confirmed research findings" section). The end-to-end,
+  key-required half of Task 8 is still on hold, unchanged by this.
+  Two new Paystack-specific code tasks came out of that doc pass
+  (Task 8c, Task 8d) — both are still genuinely blocked by this
+  narrowing like any other Paystack code task, except noted otherwise
+  in Task 8d's own entry (a static list change needs no live key).
 - Multi-provider tasks (9, 10, 11, 12, 13) that don't strictly require
   the other three providers' credentials may still get a **Korapay-only
   partial pass** if a session finds a clean way to scope the work that
@@ -1785,21 +2025,108 @@ change). Per the "Current focus: Korapay only" note above, this was
 the one task worked this session — no other provider's task was
 started.
 
-### Task 8 — Paystack: verify endpoint paths + response shape against docs [ ]
-**On hold — see "Current focus: Korapay only" above.** We're waiting
-on API keys from Paystack, so even a confirmed-correct endpoint/shape
-can't actually be exercised end-to-end right now; revisit once keys
-arrive. (Doc research alone doesn't need a key, so a future session
-could still do the read-only confirmation half if useful — but per the
-current focus narrowing, skip this task entirely for now rather than
-partially doing it.)
-Confirm `/transaction/initialize` and `/transaction/verify/:reference`
-are exactly right (they were already believed correct going in, unlike
-Korapay's paths which needed real fixes in a prior session — this is a
-confirmation pass, not expected to find much, but do it properly
-rather than skip it). Also confirm the response shape this repo
-assumes (`responseData.status`, `.data.authorization_url` etc. if used
-downstream) matches what Paystack actually returns.
+### Task 8 — Paystack: verify endpoint paths + response shape against docs [x] (doc-only; end-to-end exercise still blocked on keys)
+**Done this session (2026-09-06), doc-research half only** — this
+task's own prior note already carved out that exception ("Doc
+research alone doesn't need a key, so a future session could still do
+the read-only confirmation half if useful"), so this pass took that
+option instead of skipping the task entirely. **Still blocked on
+Paystack API keys for actually exercising any of this end-to-end** —
+see "Current focus: Korapay only" above, unchanged by this pass.
+
+Both `/transaction/initialize` and `/transaction/verify/:reference`
+are **confirmed exact, byte-for-byte correct** against
+paystack.com/docs/api/transaction/ — no path or method changes
+needed. The response shape this repo relies on (`responseData.status`
+at the top level; `data.authorization_url`/`data.access_code`/
+`data.reference` for initialize) also matches exactly.
+
+This pass went beyond just those two endpoints and beyond "not
+expected to find much" — it turned into a **full API-discovery pass**
+(currencies, error format, rate limits, webhook signature
+re-confirmation, and every other Transaction-API endpoint Paystack
+documents, even the ones this repo doesn't call). Full writeup moved
+to the "Confirmed research findings" section above (search for
+"Paystack — FULL API discovery pass"), matching the precedent already
+set there for Korapay's full pass. **Two real findings came out of
+it, queued as their own tasks rather than fixed under this task's own
+doc-only scope:**
+- **Task 8c** — `GET /api/verify` reports `"Verification successful"`
+  for transactions that actually failed or were abandoned, because
+  neither `providers/paystack.js#verifyTransaction` nor the route
+  itself checks the nested `data.status` field, only the top-level
+  API-call-succeeded `status` field. Real bug, not a docs mismatch.
+- **Task 8d** — the confirmed-currency list for Paystack
+  (`utils/helpers.js`) is missing `XOF`, which Paystack's own docs
+  list as a sixth supported currency.
+
+### Task 8c — Fix `GET /api/verify`: surface Paystack's real per-transaction status, not just the API-call status [ ]
+**Added by Task 8's full audit pass (2026-09-06), doc-research only —
+not fixed as part of that pass since it's a code change outside
+Task 8's own stated scope, and this repo is still under the "Current
+focus: Korapay only" narrowing above (this is a Paystack-specific fix,
+not Korapay).** Confirmed directly against
+paystack.com/docs/api/errors/: Paystack always answers a verify call
+with HTTP 200 and top-level `status: true` **even when the underlying
+transaction failed or was abandoned** — "Note that we will always
+send a 200 if a charge or verify request was made. Do check the data
+object to know how the charge went." The transaction's real outcome
+only lives in the nested `data.status` field (`"success"` /
+`"failed"` / `"abandoned"`).
+
+`providers/paystack.js#verifyTransaction` only throws on
+`!response.ok || !responseData.status` — both of which stay
+true/truthy for a failed-or-abandoned transaction — so it returns
+normally. `routes.js`'s `GET /api/verify` route then unconditionally
+answers `{ status: true, message: 'Verification successful', ...,
+data: result }`, with the real outcome buried in
+`data.data.status` and never checked or surfaced at the top level. A
+caller reading the natural top-level `status`/`message` fields (which
+is what this route's own response shape invites) would treat a
+declined card or an abandoned checkout as a confirmed payment — the
+exact "paid but no value" failure mode Paystack's webhooks guide
+warns integrators about.
+**Fix, once picked up:** in `verifyTransaction`, either (a) also throw
+(or return an explicit failed-status result) when
+`responseData.data?.status !== 'success'`, or (b) leave the provider
+method as a thin pass-through and instead fix it one layer up in
+`routes.js`'s `/verify` handler, setting the route's own top-level
+`status`/`message` from `result.data.status` rather than hardcoding
+`status: true, message: 'Verification successful'` whenever no
+exception was thrown. Either approach needs a decision on which layer
+owns "did the payment actually succeed" — flagging that decision
+here rather than presupposing it.
+**Blocked on Paystack keys for end-to-end testing**, same as Task 8
+itself — but this is a pure logic fix (no API call shape changes), so
+it can be written and unit-reasoned-about without live keys; only the
+final end-to-end confirmation needs them.
+
+### Task 8d — Add `XOF` to Paystack's confirmed-currency list [ ]
+**Added by Task 8's full audit pass (2026-09-06), doc-research only —
+not fixed as part of that pass since editing
+`CONFIRMED_PROVIDER_CURRENCIES` is Task 9/9b's territory (currency-list
+work), not Task 8's (endpoint/shape verification).** Confirmed
+directly against paystack.com/docs/api/ ("Supported currency" table):
+Paystack supports **six** currencies, not five — `NGN`, `USD`, `GHS`,
+`ZAR`, `KES`, and **`XOF`** (West African CFA Franc, Côte d'Ivoire).
+`utils/helpers.js`'s `CONFIRMED_PROVIDER_CURRENCIES.paystack` lists
+only the first five. This isn't a mistake in how the prior list was
+built — its cited sources (Chargebee, Zoho, mctaba.com) are
+third-party integration guides that only describe Paystack's five
+better-known currencies — but Paystack's own primary docs now list a
+sixth.
+**Fix, once picked up:** add `'XOF'` to the array. **No multiplier
+change needed** — Paystack's docs explicitly say "While there is no
+subunit for XOF, developers must multiply the amount by 100
+regardless," so the existing uniform `{ unit: 'subunit', multiplier:
+100 }` in `getAmountFormat('paystack', ...)` is already correct for
+XOF too; this is a pure addition to the array, not a new branch.
+Not blocked on API keys (this is a static list, not a call this repo
+makes) — could be picked up any time regardless of the "Current
+focus: Korapay only" narrowing's usual rule, since it's a one-line,
+already-fully-confirmed change with no ambiguity to resolve. Left
+unchecked/undone here anyway, per this session's scope being
+doc-only, not because it's blocked.
 
 ### Task 8b — Juicyway: verify the payment-initialization endpoint path [ ]
 **Added by Task 15's audit pass** (see that task's note) — `providers/juicyway.js`

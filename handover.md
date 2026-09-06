@@ -3046,6 +3046,24 @@ Bpay app's only payment source of truth, Korapay-primary-provider
 constraint, stub-not-half-built for new providers) is unaffected by
 this correction and still stands as written below.
 
+**Second correction (2026-09-05) — the cross-repo purpose question is
+now resolved, confirmed directly, not assumed.** mavins-web's own
+`handover.md` (Task 70) independently flagged the same repo from its
+own side with a seemingly different stated purpose — repointing this
+same fork onto Mavins-web's own Supabase project so Mavins can credit
+`bpay_tag` wallets for listener payouts, not this task's own
+"consolidate the Bpay app's payment plumbing through B-Pay-backend"
+framing. Neither session that wrote these two tasks had seen the
+other. Asked directly rather than picking one interpretation
+unilaterally: **confirmed — one fork, both purposes.**
+`Zapier-codes/B-PAY` will both (1) have its own payment/payout calls
+consolidated to route through this backend, per this task's own
+direction below, and (2) get repointed onto Mavins-web's own Supabase
+project so Mavins can credit listener wallets directly, per Task 70's
+own direction. These are complementary changes to the same fork, not
+competing visions — resolving the ambiguity both tasks independently
+flagged.
+
 **Documentation only, per explicit instruction — no code, no repo
 clone, no exploration this session.** The product owner gave real
 architectural direction for a separate, not-yet-touched app/repo this

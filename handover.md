@@ -3,7 +3,31 @@
 > **▶ START HERE — read this box only, then go straight to work. Skip
 > everything else below unless you get stuck.**
 >
-> **Newest note (2026-09-06, latest of all) — Task 0 written: full
+> **Newest note (2026-09-06, latest of all) — Task 0 expanded:
+> business model, pricing, dynamic default provider, admin route, and
+> the discovery convention (product owner direction, this session).**
+> Pricing: platform charges 5x underlying provider cost per
+> transaction, across all service types — **flagged for legal/
+> compliance review, not resolved**, given it's paired with fully
+> hiding provider identity from businesses and end users (see Task
+> 0's business-model note for why this specific combination is worth
+> checking against payment-regulator and card-network rules before
+> going live). Korapay is the default provider but must be dynamically
+> changeable via a new **admin route, explicitly not exposed to end
+> users**. **Discovery convention now in force:** each provider gets
+> one real discovery pass (web search official docs, ask the product
+> owner if genuinely not findable), written up as a full audit in
+> Task 0 under that provider's own entry — that audit is the source
+> of truth for implementation sessions, which do not redo the
+> discovery search unless real testing concretely contradicts a
+> recorded audit. Also: intent is full build-and-test with each
+> provider's own sandbox/test-mode credentials, so going live means
+> the product owner drops real keys into Render env vars with no
+> further code changes needed. **Still `a-1-i-X`** is the active
+> task — none of this changes where to start. Full detail under Task
+> 0 below.
+>
+> **Newest note (2026-09-06, previous) — Task 0 written: full
 > discovery scope for the canonical multi-provider orchestration
 > architecture (product owner direction, this session).** Ten
 > providers total (Korapay/Paystack/Juicyway/Payscribe existing,
@@ -3324,16 +3348,44 @@ Juicyway, Payscribe** (already integrated in this repo, per earlier
 tasks), plus net-new: **DodoPayments, Flutterwave, Remita, Xixapay,
 PaymentPoint, Presmit**, and **`telcos.opik.net`** (the product
 owner's own personal endpoint, stated purpose: global VTU/airtime-
-data services). No customer or caller of the public checkout is ever
-meant to see which underlying provider actually handled a given
-transaction — provider selection and routing become entirely
-internal to this repo.
+data services). No customer, and no business integrating this
+platform, is ever meant to see which underlying provider actually
+handled a given transaction — provider selection and routing become
+entirely internal to this repo.
+
+**Business model, stated directly by the product owner this
+session:** businesses integrate against this platform's own API and
+see only this platform's own services and per-transaction pricing —
+payins, cards, conversions, payouts, etc. — never the underlying
+provider names. **Pricing: this platform charges 5x whatever the
+underlying provider charges, per transaction, across every service
+type.** This session did not evaluate this commercially or legally —
+flagging one thing worth resolving with a lawyer or compliance
+advisor before this goes live, not blocking it: combining (a) a
+markup at this scale with (b) fully hiding which regulated payment
+provider is actually moving the money is exactly the kind of setup
+that payment regulators and card networks tend to have specific
+rules about (in Nigeria, that's typically the CBN's payment-service-
+provider licensing categories; Visa/Mastercard also have their own
+surcharge-disclosure rules). Worth a real answer before production
+traffic, same spirit as the no-DB audit-trail question in (c) below.
+
+**Default provider, stated directly by the product owner this
+session:** Korapay is the initial default provider, but the default
+must be a **dynamic, changeable value** — the platform owner can
+switch it at any time through an admin interface, not a hardcoded
+constant.
 
 **Customer-facing surface, per product owner:**
 - A **dynamic, fully white-label-configurable checkout page** — this
   is the only thing customers interact with; no provider is ever
-  named or exposed to them.
+  named or exposed to them. Users never select a provider themselves
+  — the orchestration layer decides, invisibly.
 - A **home page** where end users land before reaching checkout.
+- An **admin route, explicitly not exposed to end users**, where the
+  platform owner (only) can change the dynamic default provider and
+  presumably other platform-level config — scope of what else lives
+  here not yet defined (see d-3 below).
 
 **Explicit architectural constraint, per product owner: this repo is
 NOT to have a database at all.** Its job is limited to (a) initiating
@@ -3342,9 +3394,29 @@ selected, and (b) forwarding webhooks from those providers onward —
 no local persistence of any transaction, session, or customer data.
 
 **a. Provider integration inventory** — one sub-branch per provider.
+
+**Discovery convention, stated directly by the product owner this
+session, in force for every sub-item below:** each provider gets
+exactly one real discovery pass. That session web-searches for the
+provider's official API documentation; if it genuinely can't be
+found, it asks the product owner directly rather than guessing. Once
+found, the session reads it and writes a **full audit into this
+file** under that provider's own entry — endpoints, auth scheme,
+request/response shapes, a link/citation to the actual doc, and the
+date it was checked. **That written audit becomes the source of
+truth for every later implementation session — implementation
+sessions build against the recorded audit and do not redo the
+discovery web search.** One narrow exception, not a loophole: if an
+implementation session hits something in real testing that
+concretely contradicts a recorded audit (an endpoint 404s, a
+signature scheme fails to verify against real test data), that's
+grounds to re-check *that one provider's* audit — not grounds to
+distrust the convention itself or start re-discovering providers
+that are working fine.
+
 None should be assumed to behave like an existing one; each gets its
-own real-docs verification before any code is written, the same
-discipline already applied to Korapay/Paystack/Juicyway/Payscribe.
+own real-docs audit before any code is written, the same discipline
+already applied to Korapay/Paystack/Juicyway/Payscribe.
 
 - **a-1. Korapay** — already integrated. Re-scope under the no-DB
   constraint.
@@ -3421,17 +3493,46 @@ needs a real, explicit answer before this carries production traffic:
 
 **d. Customer-facing surface** — not started. **Confirmed by the
 product owner: no separate merchant/admin dashboard is in scope** —
-see b-2. What remains in scope is customer-facing only:
+see b-2. What remains in scope: customer-facing surface, plus one
+owner-only admin route.
 - d-1. Dynamic white-label checkout page: no config schema yet
   (branding, which providers/currencies/methods are enabled per
   merchant, etc.).
 - d-2. Home page: not yet scoped beyond "users land here and reach
   checkout."
+- d-3. Admin route, **explicitly not exposed to end users** — at
+  minimum lets the platform owner change the dynamic default provider
+  (Korapay initially). Not yet scoped beyond that: how it's
+  authenticated, whether it covers anything besides default-provider
+  selection, and how "not exposed to end users" is actually enforced
+  (separate route namespace kept out of any public router table? its
+  own auth gate distinct from `requireInternalApiKey`? not decided).
+
+**e. Testability / go-live philosophy, stated directly by the product
+owner this session:** the intent is for this system to be fully
+built and tested end-to-end using placeholder/test API keys in each
+session's own sandbox, so that going live is reduced to the platform
+owner inserting real API keys as environment variables on Render —
+no further code changes needed at that point. Implications for every
+future implementation session:
+- Every provider integration needs to be exercised against that
+  provider's own sandbox/test-mode credentials (not just written and
+  assumed correct) before being considered done.
+- Code must read all credentials via environment variables (this repo
+  already does this via `getProviderKey()` for existing providers —
+  continue that pattern for every new provider, don't hardcode
+  anything provider-specific).
+- "Fully tested with placeholder keys" means test-mode keys for each
+  provider's own sandbox, not fabricated dummy values with no real
+  provider behind them — a session that can't get real sandbox
+  credentials for a provider should ask the product owner (same
+  discovery-convention rule as above), not invent a fake response
+  shape and call it tested.
 
 **Not yet done, this session, deliberately — documentation only.** No
-provider code, no routing code, no checkout page, no home page. This
-task exists so the next session knows the full shape of the goal and
-exactly where to start (`a-1-i-X`), instead of re-deriving scope from
-a standing start.
+provider code, no routing code, no checkout page, no home page, no
+admin route. This task exists so the next session knows the full
+shape of the goal and exactly where to start (`a-1-i-X`), instead of
+re-deriving scope from a standing start.
 
 ---

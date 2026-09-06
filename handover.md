@@ -3,7 +3,41 @@
 > **▶ START HERE — read this box only, then go straight to work. Skip
 > everything else below unless you get stuck.**
 >
-> **Newest note (2026-09-06, latest of all) — Task 0's a-6: Remita
+> **Newest note (2026-09-06, latest of all) — Payscribe full
+> API-discovery/audit pass done (doc-research only, no code —
+> `providers/payscribe.js` already exists and is largely **confirmed
+> correct** by this pass, unlike the JuicyWay/Remita/DodoPayments
+> passes below).** Product owner supplied the primary source directly
+> this time (a saved snapshot of docs.payscribe.co), resolving both
+> Task 6's long-standing PENDING_DOCS blocker and the stale "Payscribe
+> / waiting on a docs link" placeholder in "Confirmed research
+> findings." **Confirmed correct, no changes needed:** base URLs,
+> `Bearer` auth header, and the `.description` error-field parsing
+> Task 13 already implemented. **Newly confirmed, not yet
+> implemented:** the full webhook signature scheme (`X-Payscribe-*`
+> headers, HMAC-SHA256, `v1=<hex>`, 300-second replay window) —
+> resolves Task 6's core blocker, but implementation still needs real
+> Payscribe API keys (not yet available) and the still-uncaptured body
+> of the `accounts.payments.status` webhook event. **Two items the
+> docs source itself didn't cover, flagged rather than guessed at:**
+> whether `processPayment`'s existing
+> `/collections/virtual-accounts/create` call and
+> `verifyTransaction`'s current throw-always behavior are correct or
+> stale — the doc snapshot's sidebar confirms matching-by-name
+> endpoints exist ("Create Dynamic (Temporary) Virtual Account,"
+> "Verify Payment") but their bodies weren't captured, so neither is
+> confirmed nor corrected here. Also newly confirmed: a real `201`
+> ("Transaction Pending") status-code gotcha this repo's
+> `!response.ok` check doesn't currently account for. Full writeup
+> under "Confirmed research findings" (search "Payscribe — FULL API
+> discovery pass"); Task 6 above has the short version. **Still
+> `a-1-i-X`** is the active task for the Task 0 track — this was a
+> doc-only exception for Task 6, same precedent as every other
+> doc-only pass below, not a change to which `X` node is active. Patch
+> for this session covers `handover.md` only — no provider code added
+> or changed.
+>
+> **Newest note (2026-09-06, previous) — Task 0's a-6: Remita
 > full API-discovery/audit pass done (doc-research only, no code —
 > `providers/remita.js` does not exist yet).** Same doc-only precedent
 > as the Task 8b/JuicyWay pass below. **Unlike every provider audited
@@ -2309,15 +2343,220 @@ an inferred value*
   fragments from specific real examples and one wrapper's own
   translation layer, not a documented enumeration from Remita itself.
 
-**Payscribe**
-- **Waiting on a docs link from the project owner.** Check the
-  "PENDING_DOCS" note right below this section before starting any
-  Payscribe task — if the link still isn't there, skip to the next
-  task in the queue rather than guessing from the existing code's
-  `sandbox.payscribe.ng` URL alone.
+**Payscribe — FULL API discovery pass, audited 2026-09-06 (first full
+pass — resolves the "Waiting on a docs link" placeholder below and
+Task 6's docs blocker; `providers/payscribe.js` already exists and is
+largely confirmed correct by this pass, a different outcome from the
+JuicyWay re-audit above).** Source this time is different in kind
+from every other pass in this section: the product owner supplied the
+primary source **directly, as a saved-page snapshot of
+docs.payscribe.co** (Postman/ReadMe-hosted public docs, page title
+"Build, Embed Launch Financial Products in One Single API",
+Snapshot-Content-Location `https://docs.payscribe.co/#ff3b4877-f018-4573-9c01-d61e36a679be`),
+rather than this session locating it via web search — same
+authoritative status as Paystack/JuicyWay's own docs sites, just
+delivered differently. **Real caveat on completeness, stated plainly:**
+this is a single-page-app doc site, and the saved snapshot only
+contains the DOM for whichever sections were expanded/open at save
+time. The **sidebar nav is complete** (every resource family and
+endpoint name below is real and confirmed to exist), but the actual
+request/response body was only captured for: Introduction (incl.
+environment, response codes, rate limits), the full Webhook Security &
+Signature Verification folder (Overview + PHP/Node.js/Python
+verification examples + Common Mistakes), and two Bills Payments
+endpoints (Cable TV vend, Data Vending). Every other resource family
+visible in the nav — Internet Subscription, ePins, Airtime to Wallet,
+Electricity, Bulk SMS, Betting, Airtime, International Bills, My
+Account, Payout, Customers, Collections (Wallet System **and** NGN
+Virtual Accounts — this is the family `processPayment` actually calls
+into), Payment Links, Invoices, FX & Conversions, Card Issuing,
+Stablecoin Cards, KYC, Savings, Misc — is confirmed to **exist** by
+name/method only; none of their individual endpoint bodies were
+captured this pass. Treat every finding below as confirmed against a
+primary source, and everything not mentioned below as **still
+nav-only**, not silently assumed equivalent to what was captured.
 
-**PENDING_DOCS:**
-`<!-- paste the Payscribe docs link here when the project owner provides it -->`
+*Environment & authentication — CONFIRMED, and matches this repo's
+existing code exactly*
+- Base URLs, confirmed at the Introduction page: **Sandbox (test
+  mode) `https://sandbox.payscribe.ng/api/v1`**, **Production (live
+  mode) `https://api.payscribe.ng/api/v1`** — this is a byte-for-byte
+  match with what's already in `utils/helpers.js`'s
+  `getProviderBaseUrl('payscribe')` (`development`/`production` pair),
+  no change needed there.
+- Auth: `Authorization: Bearer {API key}` on every request — confirmed
+  directly ("Use your API key as Bearer in the header of each
+  request"), matching `providers/payscribe.js`'s existing
+  `Authorization: Bearer ${this.secretKey}` exactly. One minor,
+  non-blocking inconsistency **in the docs themselves, not in this
+  repo's code**: the webhook folder's own auth example shows a secret
+  key formatted `ps_sk_test_YOUR_SECRET_KEY`, while the PHP/Node/Python
+  verification code samples instead hardcode `sk_live_your_secret_key`
+  as their placeholder — two different key-prefix conventions shown
+  side-by-side in Payscribe's own docs. Not something to resolve here;
+  just don't treat either placeholder's prefix as a confirmed literal
+  format.
+- Rate limit: **60 requests/second** account-wide, confirmed at the
+  Introduction page; exceeding it returns HTTP `429` with body
+  `{"message": "API rate limit exceeded"}`. New information — this
+  repo has no rate-limiting/backoff handling for Payscribe (or any
+  provider) today, same gap already noted for Paystack/DodoPayments
+  above, not a Payscribe-specific deficiency.
+
+*Response envelope & status/response codes — CONFIRMED, and explains
+why Task 13's existing `.description`-based error parsing is already
+correct*
+- Every captured example (Cable TV vend, Data Vending, both success
+  and the webhook code samples' implied shape) uses one consistent
+  envelope: **`{ status: bool, description: string, message: {
+  details: {...} }, status_code: number }`**. `providers/payscribe.js`
+  already reads `responseData.description` for its error message
+  (the Task 13 comment calls this out explicitly) — **confirmed
+  correct by this pass**, not a guess that turned out lucky.
+- Full response/status-code table, confirmed at the Introduction page
+  (this is Payscribe's own `status_code` value, not a raw HTTP status
+  in every case — see the 201 gotcha below):
+
+  | Code | Meaning |
+  |---|---|
+  | 200 | Success |
+  | 201 | Transaction Pending — reverify using Payscribe `trans_id` or the `ref` passed |
+  | 400 | Bad Request — something missing in the body |
+  | 401 | User not authenticated |
+  | 403 | Forbidden request — contact support |
+  | 404 | Page not found |
+  | 405 | Duplicate transaction |
+  | 406 | Missing required information |
+  | 407 | Invalid product code/token |
+  | 408 | Result not found |
+  | 409 | Invalid amount / transaction limit |
+  | 410 | Insufficient money in wallet |
+  | 434 | General operator-side error, transaction failed |
+  | 435 | General database error, transaction failed |
+  | 5xx | Server-side error |
+
+- **Real gotcha, not yet handled by this repo's code, flagged for a
+  future task rather than fixed here (doc-only pass):** `201` is
+  documented as **"Transaction Pending — reverify"**, i.e. a real,
+  meaningful non-final state — but `201` is also a `2xx` **HTTP**
+  status, so `providers/payscribe.js`'s current `!response.ok` check
+  (which only inspects the HTTP status) would treat a `201` response
+  as success and return it via `processPayment`'s normal success path
+  without ever surfacing that the transaction is actually still
+  pending. Whether `status_code: 201` shows up in the *body* alongside
+  a `2xx` HTTP status, or Payscribe actually sends HTTP `201` itself,
+  isn't confirmed by any example captured this pass — either way, this
+  is a real distinction the current code doesn't check for and should,
+  once this becomes an implementation task.
+
+*Webhook signature scheme — CONFIRMED IN FULL, resolves Task 6's core
+blocker*
+- Three headers on every inbound webhook: **`X-Payscribe-Event-Id`**,
+  **`X-Payscribe-Timestamp`** (Unix seconds), **`X-Payscribe-Signature`**
+  in the literal format **`v1=<64-char lowercase hex>`**.
+- Signed content is the concatenation **`${timestamp}.${eventId}.${rawBody}`**
+  (period-joined, same three-part-concatenation shape as DodoPayments'
+  Standard Webhooks scheme above, but with different field order/count
+  and a different algorithm) — **`HMAC-SHA256`** of that string, hex
+  digest (not base64 — a real difference from DodoPayments), compared
+  against the signature with a **constant-time comparison**
+  (`hash_equals` in PHP, `crypto.timingSafeEqual` in Node.js,
+  `hmac.compare_digest` in Python — all three official examples use
+  the correct constant-time function, not `===`/`==`).
+- **Replay protection is mandatory and explicit**: reject if
+  `abs(now - timestamp) > 300` seconds, confirmed identically across
+  all three language examples *and* independently restated in the
+  "Common Mistakes to Avoid" page (mistake #3).
+- The raw, unparsed request body must be used for signature
+  verification — Payscribe's own docs call out re-serializing parsed
+  JSON before verifying as mistake #1 (key-order changes would alter
+  the bytes and break the signature), same caution DodoPayments/
+  Standard Webhooks implementations need and this repo's existing
+  Korapay/Paystack/JuicyWay handlers already get right.
+- Idempotency: store `X-Payscribe-Event-Id` with a uniqueness
+  constraint and skip duplicates (mistake #4) — directly relevant to
+  Task 0/c-1's in-memory `provider:event:reference` dedupe store,
+  which this repo would extend to cover Payscribe the same way as the
+  other four providers, keyed on this header.
+- **Must always return a `2xx` quickly** even if downstream processing
+  is async (mistake #5) — Payscribe explicitly retries on any
+  non-`2xx` response, same "ack fast, process after" requirement this
+  repo's other webhook handlers already follow.
+- **Confirmed real-name webhook events, from the sidebar nav (page
+  titles, not bodies — see completeness caveat above):**
+  `bills.payment.success` / `bills.payment.failed` (Bills Payment
+  Webhook), `payout.created` / `payout.failed` (Payout Webhooks),
+  `customer.created` / `customers.update` (Customers Webhook),
+  **`accounts.payments.status`** (Collection Webhook, under NGN
+  Virtual Accounts — **this is the one event this repo's existing
+  `processPayment` flow actually needs**, since it creates a dynamic
+  virtual account and would need to know when it's paid), plus
+  `payment_link.paid`, `invoice.sent`/`invoice.paid`/
+  `invoice.partially_paid`/`invoice.overdue`, `card.auth.refund`/
+  `card.auth.verified`/`card.status.changed`,
+  `savings.contribution.success`/`savings.contribution.failed`/
+  `savings.withdrawal.success`/`savings.withdrawal.failed`.
+- **Real, documented inconsistency flagged rather than smoothed
+  over:** the PHP/Node/Python signature-verification *code samples'*
+  own `switch`/`match` statements branch on `bills.created`, `cards.*`
+  (a wildcard), `invoice.paid`, `payment_link.paid`, and one
+  `savings.*` variant — **none of which exactly match** the sidebar's
+  actual named webhook-reference pages above (`bills.payment.success`/
+  `.failed`, not `bills.created`; specific `card.auth.*`/
+  `card.status.changed` names, not a `cards.*` wildcard). These code
+  samples read as **illustrative**, not an exhaustive/precise event
+  list — a future implementation should switch on the sidebar's actual
+  named events (especially `accounts.payments.status`), not copy the
+  signature-verification examples' illustrative case labels verbatim.
+- **Not confirmed by this pass:** the actual field-level payload shape
+  of `accounts.payments.status` (or any other named event) — the
+  webhook-reference pages exist in the nav but their bodies weren't
+  captured in this snapshot. `routes.js`'s Payscribe webhook stub can
+  be upgraded to verify signatures today using the scheme above, but
+  mapping the *payload* into Task 0/b-3's normalized envelope still
+  needs that specific page opened first.
+
+*`processPayment`'s endpoint and `verifyTransaction`'s current
+behavior — two real open items, neither confirmed nor contradicted by
+this pass*
+- `providers/payscribe.js#processPayment` calls
+  `POST {baseUrl}/collections/virtual-accounts/create`. The sidebar's
+  closest-named match is **"Create Dynamic (Temporary) Virtual
+  Account"** under Collections → NGN Virtual Accounts — plausible by
+  name and consistent with the request payload already being built
+  (`account_type: 'dynamic'`, an `order`/`customer` shape), but that
+  page's own body was **not captured** in this snapshot, so the exact
+  literal path and required fields are **not confirmed against a
+  primary source by this pass** — this audit makes the existing
+  endpoint call *more plausible*, not *confirmed correct*.
+- `verifyTransaction(reference)` currently just throws `'Payscribe
+  verification requires Webhook or Bank Session ID. Please check
+  Webhooks.'` The sidebar lists a real, named **"Verify Payment"**
+  endpoint (POST, under Collections → NGN Virtual Accounts) whose body
+  was likewise not captured — so this pass can **neither confirm nor
+  correct** whether that thrown message is accurate (i.e., whether
+  "Verify Payment" actually needs something this repo doesn't have,
+  like a bank session ID) or stale (i.e., whether it just needs the
+  `ref`/`trans_id` this repo already generates, the same shape as
+  every other provider's `verifyTransaction`). Both of these need that
+  specific page opened before either is touched — not fixed here, per
+  the Discovery Convention's doc-only-pass rule, and not guessed at
+  either way in the meantime.
+
+*Currency — CONFIRMED NGN in every captured example, consistent with
+this repo's existing omission from `CONFIRMED_PROVIDER_CURRENCIES`*
+- Every request/response body captured this pass (Cable TV, Data
+  Vending) is implicitly NGN — Cable TV's response includes an
+  explicit `"currency": "NGN"` field; Data Vending's examples carry no
+  currency field at all but are unambiguously Naira amounts. No
+  captured source documents a currency *parameter* anywhere. **Not
+  added to `CONFIRMED_PROVIDER_CURRENCIES` this pass** — same posture
+  as Remita above: absence of a documented parameter isn't the same as
+  a confirmed single-currency restriction, and the existing
+  `getAmountFormat` guard (throw rather than guess) stays correct
+  until a broader page (or the NGN Virtual Accounts endpoints
+  specifically, which do accept a `currency` field per the existing
+  code's payload) is captured and checked.
 
 ---
 
@@ -2722,17 +2961,30 @@ status" above — check it's still current as of whichever session reads
 this next).
 
 ### Task 6 — Payscribe webhook: find the real scheme + implement [ ]
-**On hold — see "Current focus: Korapay only" above.** Doubly blocked
-right now: still no PENDING_DOCS link, *and* we're waiting on API keys
-from Payscribe regardless, so there'd be nothing to test against even
-with docs in hand. **Check PENDING_DOCS above first** once the focus
-narrowing is lifted. If no link has been provided yet, skip this task
-(leave it unchecked) and move to the next one — don't guess Payscribe's
-webhook scheme from general assumptions. If the link is there, this is
-also the task that should replace `Payscribe.verifyTransaction()`'s
+**Docs blocker resolved 2026-09-06 — the signature scheme itself is
+now fully confirmed (doc-research only this session, no code changed;
+see "Confirmed research findings" above, search "Payscribe — FULL API
+discovery pass").** The PENDING_DOCS placeholder above has been
+replaced by that full writeup. **Still blocked on implementation,
+though, for two separate reasons, neither fixed by the docs alone:**
+(1) we're still waiting on real API keys from Payscribe, so there'd be
+nothing to exercise the verification code against in sandbox even
+though the scheme is known — same "Fully tested with placeholder keys
+means real sandbox credentials" rule Task 0/e states for every
+provider; (2) the audit could **not** confirm the actual payload shape
+of `accounts.payments.status` (the one webhook event this repo's
+`processPayment` flow needs) — only its name, from the docs' sidebar
+nav, not its body, which wasn't captured in the snapshot this audit
+was built from. Implementing `verifyWebhookSignature` for Payscribe
+(headers, HMAC-SHA256, replay window — all confirmed) can proceed
+once keys exist; mapping the *payload* into Task 0/b-3's normalized
+webhook envelope still needs that specific docs page opened first.
+This is also the task that should revisit `Payscribe.verifyTransaction()`'s
 current behavior (it just throws "requires Webhook or Bank Session ID"
-today) — once webhooks are stored, `/api/verify` for Payscribe should
-look up the stored result instead of always throwing.
+today) — the audit found a real, named "Verify Payment" endpoint that
+could make this stale, but couldn't confirm either way (its body
+wasn't captured either); check that page directly before touching
+this, don't assume the audit already settled it.
 
 ### Task 7 — Korapay: confirm the amount-unit question directly [x]
 The findings section above has secondary evidence (decimal amounts in

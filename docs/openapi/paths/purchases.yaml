@@ -1,0 +1,60 @@
+# Nigeria (NG) VTU purchase endpoints. When a new country rail goes
+# live, add its own purchaseData/purchaseAirtime pair here (or a
+# sibling purchases-{iso2}.yaml file if the set of countries grows
+# large enough that one file gets unwieldy) rather than overloading
+# these two operations with a country parameter — different countries
+# have different plan catalogs, currencies, and network enums, so
+# separate operations keep each country's contract independently
+# versionable. See docs/guides/08-adding-a-country-rail.md.
+
+purchaseData:
+  post:
+    tags: [Purchases]
+    operationId: purchaseDataNG
+    summary: Purchase a data bundle
+    description: Nigeria (NG) rail — current, confirmed live.
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas.yaml#/schemas/PurchaseDataRequest'
+    responses:
+      '200':
+        description: Purchase successful
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/schemas/PurchaseResponse'
+      '402':
+        description: Insufficient wallet balance (CONFIRM against live server)
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/schemas/ErrorResponse'
+
+purchaseAirtime:
+  post:
+    tags: [Purchases]
+    operationId: purchaseAirtimeNG
+    summary: Purchase airtime
+    description: Nigeria (NG) rail — current, confirmed live.
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas.yaml#/schemas/PurchaseAirtimeRequest'
+    responses:
+      '200':
+        description: Purchase successful
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/schemas/PurchaseResponse'
+      '402':
+        description: Insufficient wallet balance (CONFIRM against live server)
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/schemas/ErrorResponse'

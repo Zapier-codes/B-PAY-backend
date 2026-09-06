@@ -6764,3 +6764,126 @@ shape of the goal and exactly where to start (`a-1-i-X`), instead of
 re-deriving scope from a standing start.
 
 ---
+
+## Task 45 — Reseller API (`telcos.opik.net`) endpoint audit; Supabase-backed dashboard, transaction tracking/suspension, and public/secret key model decided this session [ ]
+
+**Scope note, read first:** `telcos.opik.net` is Task 0/a-10 — the
+product owner's own personal endpoint (global VTU/airtime-data
+services), listed there as "not started." This task is that discovery
+pass, plus a scope decision the product owner made this session about
+where that product is headed. **This does not, by itself, reopen
+Task 0/c ("no-database operational risk") or Task 0/d ("no separate
+merchant/admin dashboard is in scope") for `B-Pay-backend`'s own
+payout-routing role** — those were confirmed decisions about this
+repo acting as a stateless orchestration layer across ten payment
+providers, and nothing here changes that. What changes is the product
+owner's plan for the Reseller/VTU product itself, which is a separate
+running service this repo only references as a future integration
+target. **Flagged explicitly for the product owner to confirm:** if
+the intent was actually to reopen Task 0/c-d for `B-Pay-backend`
+itself, say so directly — the instruction that triggered this task
+("link this payment infrastructure with Supabase... build a full
+dashboard...") is genuinely readable either way, and this write-up
+assumes the narrower reading rather than silently assuming the
+broader, more consequential one.
+
+**a. Endpoint audit — done this session.** Captured from the live
+Swagger UI at `https://telcos.opik.net/api/v1/docs` (all 10 operations
+were already expanded in the source capture, so this is transcribed
+from the real server, not inferred): `POST /auth/register`,
+`POST /auth/login`, `GET /plans`, `GET /wallet`,
+`POST /wallet/deposit`, `POST /purchase/data`,
+`POST /purchase/airtime`, `GET /transactions`, `GET /webhooks`,
+`POST /webhooks`. Base URL: `https://telco.opik.net/api/v1`. Full
+field-level contract, a modular OpenAPI 3.0 spec (one file per module,
+so a new country's VTU rail never requires touching an unrelated
+file), and human-readable guides now live in this repo under `docs/`
+— see `docs/README.md` for the index and update instructions, and
+`docs/guides/09-conventions-and-open-items.md` for the consolidated
+list of everything the Swagger capture didn't show (exact auth header,
+full error shape, full `transactions[].type`/`status` enums, full
+webhook `events` set, insufficient-balance behavior — 10 items total,
+each still needing direct confirmation against the live server before
+a client integration relies on it). **This resolves Task 0/a-10's
+"not started" as far as request/response contract goes** — the
+uptime/reliability posture half of that item is still genuinely open.
+
+**b. Supabase integration — decided this session, not yet built.**
+Product owner direction: link the Reseller/VTU product to Supabase so
+that every transaction is tracked centrally (not left to
+per-business/per-provider reconciliation) and so that a business (or a
+specific card/transaction) can be suspended. Proposed shape, offered
+as a starting point for whichever session actually builds this — not
+yet confirmed with the product owner at the field level:
+- `businesses` — one row per registered business (mirrors today's
+  `POST /auth/register`), plus a `status` column
+  (`active`/`suspended`) that every authenticated request checks
+  before doing anything else — fail closed, same posture this repo's
+  own `requireInternalApiKey` already uses for an unconfigured key.
+- `api_keys` — see (d) below; separate table rather than columns on
+  `businesses` so a business can hold multiple keys (e.g. live + test)
+  and so a compromised key can be revoked without touching the
+  business row itself.
+- `transactions` — mirrors the existing `GET /transactions` response
+  shape (`id`, `type`, `amount`, `status`, `reference`, `created_at`)
+  plus a `business_id` foreign key; this is the row the dashboard (c)
+  reads from, and the row a `POST /purchase/*` call writes at request
+  time rather than only relying on the provider's own record.
+- `webhook_endpoints` and `webhook_deliveries` — separates "what a
+  business registered" from "what was actually sent and whether it
+  succeeded," so delivery failures are queryable instead of silent.
+
+  Genuinely open, not addressed above: Row-Level Security policy
+  design (which of these tables a business's own dashboard session can
+  read directly vs. only through the API), whether `suspend` blocks at
+  the auth-check layer or per-endpoint, and migration of any
+  transaction history that predates this table existing.
+
+**c. Full dashboard — decided this session, not yet built.** Product
+owner direction: a Korapay-style dashboard — businesses log in and see
+their own transactions/wallet/webhooks; the product owner has an
+admin view that can see and suspend any business. This is new scope,
+not previously mentioned anywhere in this file for the Reseller/VTU
+product. Genuinely open: dashboard auth (a business's dashboard login
+is not the same credential as their API secret key — conflating the
+two means a leaked API key also grants dashboard access, which is
+worse than either leak alone), hosting/framework choice, and whether
+"admin" is the product owner alone or a role multiple people can hold.
+
+**d. Public/secret key model — decided this session, not yet built.**
+Move off the single `api_key` returned by `POST /auth/register` today
+(see `docs/guides/02-authentication.md`) onto an industry-standard
+public/secret pair — `pk_live_.../pk_test_...` (safe client-side,
+identifies the business) and `sk_live_.../sk_test_...` (server-side
+only, shown once at generation, hashed at rest — never store or
+re-display the raw secret after issuance, same principle as never
+logging a provider's raw API key elsewhere in this codebase). Keys are
+generated/rotated/revoked from the dashboard (c), not only issued once
+at registration as today. Genuinely open: whether existing `api_key`
+holders get a forced migration or a grace period running both schemes,
+and the exact rotation UX (does rotating immediately invalidate the
+old secret, or is there an overlap window).
+
+**e. White-label — decided this session, not yet built.** Each
+business gets a brandable surface (at minimum a checkout/deposit page
+matching their own name/logo/colors, per the product owner's "custom
+white label" direction) rather than a page carrying this platform's
+own branding. No config schema yet — genuinely open, same category of
+gap as Task 0/d-1's dynamic white-label checkout page for
+`B-Pay-backend`'s own separate customer-facing surface; the two should
+probably share a config shape if one business could plausibly sit on
+both products, but that hasn't been confirmed with the product owner
+either.
+
+**Not yet done, this session, deliberately — documentation and
+decision-recording only,** matching this repo's own established
+pattern (see Task 0's closing note). No Supabase project created, no
+schema migrated, no dashboard code, no key-issuance code. This task
+exists so the next session that picks up the Reseller/VTU product
+knows the full shape of where it's headed and exactly which sub-item
+is unconfirmed, instead of re-deriving scope from a standing start —
+and so the scope-boundary question in this task's own opening note
+gets the product owner's direct answer before any session assumes
+either reading of it.
+
+---

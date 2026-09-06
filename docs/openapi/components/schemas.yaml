@@ -1,0 +1,303 @@
+securitySchemes:
+  apiKeyAuth:
+    type: apiKey
+    in: header
+    name: Authorization
+    description: >
+      INFERRED, NOT CONFIRMED. The Swagger UI capture this spec is built
+      from shows an "Authorize" lock icon and a security scheme named
+      api_key, but the modal itself (which states the exact header name)
+      was not open when the page was saved. Confirm the real header
+      (commonly `Authorization: Bearer <api_key>` or a raw `x-api-key`
+      header) against the live server or its source before shipping
+      client code against this. Update this file the moment it's
+      confirmed — this is exactly the kind of thing this modular spec
+      exists to make a one-file fix.
+
+schemas:
+  RegisterRequest:
+    type: object
+    required: [email, password, firstName, lastName]
+    properties:
+      email:
+        type: string
+        format: email
+        example: user@example.com
+      password:
+        type: string
+        format: password
+        example: stringst
+      firstName:
+        type: string
+        example: string
+      lastName:
+        type: string
+        example: string
+      companyName:
+        type: string
+        example: string
+
+  LoginRequest:
+    type: object
+    required: [email, password]
+    properties:
+      email:
+        type: string
+        format: email
+        example: user@example.com
+      password:
+        type: string
+        format: password
+
+  AuthUser:
+    type: object
+    properties:
+      id:
+        type: string
+      email:
+        type: string
+      api_key:
+        type: string
+        description: >
+          Single combined API key returned today. Planned change (see
+          handover.md, "Business dashboard & Supabase integration"):
+          split into a public/secret key pair, industry-standard style
+          (pk_live_.../sk_live_...), issued from the business dashboard
+          instead of only at registration.
+
+  AuthResponse:
+    type: object
+    properties:
+      success:
+        type: boolean
+        example: true
+      data:
+        $ref: '#/schemas/AuthUser'
+
+  Network:
+    type: string
+    description: >
+      Mobile network operator code. This enum is Nigeria-only today.
+      Each new country rail adds its own enum of local networks — do
+      not add foreign networks to this same list; give the new
+      country its own Network-{ISO2} schema and its own purchase
+      endpoints. See docs/guides/08-adding-a-country-rail.md.
+    enum: [MTN, AIRTEL, GLO, 9MOBILE]
+
+  PlanCategory:
+    type: string
+    enum: [data, airtime]
+
+  Plan:
+    type: object
+    properties:
+      id:
+        type: string
+      plan_id:
+        type: integer
+      network:
+        $ref: '#/schemas/Network'
+      plan_type:
+        type: string
+      plan_name:
+        type: string
+      price:
+        type: number
+      validity:
+        type: string
+
+  PlansResponse:
+    type: object
+    properties:
+      success:
+        type: boolean
+        example: true
+      data:
+        type: array
+        items:
+          $ref: '#/schemas/Plan'
+
+  Wallet:
+    type: object
+    properties:
+      balance:
+        type: number
+      total_spent:
+        type: number
+      total_deposited:
+        type: number
+
+  WalletResponse:
+    type: object
+    properties:
+      success:
+        type: boolean
+        example: true
+      data:
+        $ref: '#/schemas/Wallet'
+
+  VirtualAccount:
+    type: object
+    properties:
+      bankName:
+        type: string
+      accountNumber:
+        type: string
+      accountName:
+        type: string
+
+  DepositResponse:
+    type: object
+    properties:
+      success:
+        type: boolean
+        example: true
+      data:
+        type: object
+        properties:
+          accounts:
+            type: array
+            items:
+              $ref: '#/schemas/VirtualAccount'
+
+  PurchaseDataRequest:
+    type: object
+    required: [planId, phoneNumber, network]
+    properties:
+      planId:
+        type: integer
+      phoneNumber:
+        type: string
+      network:
+        $ref: '#/schemas/Network'
+
+  PurchaseAirtimeRequest:
+    type: object
+    required: [network, phoneNumber, amount]
+    properties:
+      network:
+        $ref: '#/schemas/Network'
+      phoneNumber:
+        type: string
+      amount:
+        type: number
+
+  PurchaseResponse:
+    type: object
+    properties:
+      success:
+        type: boolean
+        example: true
+      data:
+        type: object
+        properties:
+          reference:
+            type: string
+          plan_name:
+            type: string
+            description: Present on data-bundle purchases only.
+          amount:
+            type: number
+          phone_number:
+            type: string
+          message:
+            type: string
+
+  TransactionType:
+    type: string
+    enum: [deposit, purchase, airtime, data]
+    description: >
+      CONFIRM full value set against the live server — the captured
+      example only shows "deposit". Update this enum once the real
+      set is known instead of guessing further values.
+
+  TransactionStatus:
+    type: string
+    enum: [pending, success, failed]
+    description: >
+      CONFIRM full value set — the captured example only shows
+      "pending".
+
+  Transaction:
+    type: object
+    properties:
+      id:
+        type: string
+      type:
+        $ref: '#/schemas/TransactionType'
+      amount:
+        type: number
+      status:
+        $ref: '#/schemas/TransactionStatus'
+      reference:
+        type: string
+      created_at:
+        type: string
+        format: date-time
+
+  TransactionsResponse:
+    type: object
+    properties:
+      success:
+        type: boolean
+        example: true
+      data:
+        type: array
+        items:
+          $ref: '#/schemas/Transaction'
+
+  Webhook:
+    type: object
+    required: [url, events]
+    properties:
+      url:
+        type: string
+        format: uri
+      events:
+        type: array
+        items:
+          type: string
+        description: >
+          CONFIRM the real fixed event-name set from the live server
+          (e.g. purchase.success, purchase.failed, deposit.success) —
+          not captured in the source Swagger snapshot.
+      secret:
+        type: string
+        description: >
+          Used to sign outbound webhook payloads (HMAC, convention to
+          confirm) so the receiving business can verify authenticity.
+
+  WebhookResponse:
+    type: object
+    properties:
+      success:
+        type: boolean
+        example: true
+      data:
+        $ref: '#/schemas/Webhook'
+
+  WebhooksListResponse:
+    type: object
+    properties:
+      success:
+        type: boolean
+        example: true
+      data:
+        type: array
+        items:
+          $ref: '#/schemas/Webhook'
+
+  ErrorResponse:
+    type: object
+    description: >
+      CONFIRM against the live server — no error-path example was
+      captured in the source snapshot (only 200 responses were
+      expanded). Shape below follows this repo's own B-Pay-backend
+      convention ({status, message}) as a reasonable placeholder;
+      replace with the real shape as soon as it's confirmed.
+    properties:
+      success:
+        type: boolean
+        example: false
+      message:
+        type: string

@@ -1,0 +1,41 @@
+listWebhooks_createWebhook:
+  get:
+    tags: [Webhooks]
+    operationId: listWebhooks
+    summary: List webhooks
+    responses:
+      '200':
+        description: List of webhooks
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/schemas/WebhooksListResponse'
+      '4XX':
+        description: Error (CONFIRM exact codes against live server)
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/schemas/ErrorResponse'
+  post:
+    tags: [Webhooks]
+    operationId: createWebhook
+    summary: Create webhook
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas.yaml#/schemas/Webhook'
+    responses:
+      '200':
+        description: Webhook created
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/schemas/WebhookResponse'
+      '4XX':
+        description: Error (CONFIRM exact codes against live server)
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/schemas/ErrorResponse'

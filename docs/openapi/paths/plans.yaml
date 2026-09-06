@@ -1,0 +1,31 @@
+listPlans:
+  get:
+    tags: [Plans]
+    operationId: listPlans
+    summary: Get all available data and airtime plans
+    parameters:
+      - name: network
+        in: query
+        required: false
+        description: Filter by network
+        schema:
+          $ref: '../components/schemas.yaml#/schemas/Network'
+      - name: category
+        in: query
+        required: false
+        description: Filter by category
+        schema:
+          $ref: '../components/schemas.yaml#/schemas/PlanCategory'
+    responses:
+      '200':
+        description: List of plans
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/schemas/PlansResponse'
+      '4XX':
+        description: Error (CONFIRM exact codes against live server)
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/schemas/ErrorResponse'

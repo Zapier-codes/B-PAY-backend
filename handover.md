@@ -3377,6 +3377,401 @@ this repo's other nine providers document*
 
 ---
 
+**Flutterwave — FULL API discovery pass, audited 2026-09-06 (new —
+resolves a-5; `providers/flutterwave.js` does not exist yet, doc-
+research only).** Per the Discovery Convention, every page below was
+fetched directly from `developer.flutterwave.com` this session
+(official docs, confirmed live, with its own `llms.txt` index and
+`.md`-suffix markdown mirrors of every page). Scope covered:
+Authentication, Environments, Supported Request Headers, Encryption,
+Errors, Webhooks, and the OpenAPI-defined reference pages for `Create
+a charge`, `Initiate an Orchestrator charge`, and `Initiate an
+Orchestrator transfer`. **The single biggest finding of this pass, and
+the one that gates everything else: Flutterwave currently publishes
+*two structurally incompatible API generations at once* (v3 and v4),
+the docs portal defaults to v4, and this repo's other nine providers
+all use v3-shaped single-static-secret-key auth — this is a genuine
+version-choice open item, not a detail to pick silently, flagged in
+its own subsection below rather than buried.**
+
+*Version conflict — CONFIRMED, blocking, and structurally different
+from every currency/base-URL conflict already recorded for other
+providers in this file*
+- **v3** (confirmed via `developer.flutterwave.com/v3.0/docs/
+  authentication` and the trufflehog/keyhog secret-scanner detector
+  entries for this provider, not this session's primary v4 pass):
+  single static secret key sent as `Authorization: Bearer
+  {secret_key}`, no token exchange, no expiry — identical in shape to
+  every other provider already integrated in this repo (Paystack,
+  Korapay, JuicyWay, Payscribe). Base URL `https://api.flutterwave.com/
+  v3/...`. Keys are prefixed and pattern-matchable (`FLWSECK_TEST-`/
+  `FLWSECK_LIVE-` for secret, `FLWPUBK_TEST-`/`FLWPUBK_LIVE-` for
+  public), per the keyhog detector spec fetched this pass. **v3's own
+  webhook scheme was not re-verified this pass** (this session's
+  webhook audit below is v4-only) — a future session choosing v3
+  must redo the Webhooks page read for v3 specifically rather than
+  assume it matches the v4 findings below.
+- **v4** (this pass's primary target, confirmed directly against
+  `developer.flutterwave.com/docs`, which now defaults to v4 with a
+  version-toggle to v3 still visibly present): authentication is
+  **OAuth 2.0 client-credentials**, not a static key — see full
+  breakdown below. This is a **materially different integration
+  shape**, not just a renamed field: v3's Bearer-secret-key pattern
+  this repo's `getProviderKey(provider, type)` already handles for
+  every existing provider has **no analog** in v4, which instead needs
+  a token-fetch-and-refresh manager (an `access_token` that expires
+  every 10 minutes) sitting in front of every actual API call.
+- Flutterwave's own public messaging (a DEV.to v4-beta announcement
+  fetched during the initial search phase of this pass, not re-fetched
+  for this file directly) states **v3 has no announced deprecation
+  date and continues to be fully supported** — this is not a
+  "v3 is legacy, ignore it" situation the way, say, an old SDK major
+  version might be. **Open item, blocking, for the product owner
+  directly, not resolvable from docs alone:** whether to build
+  `providers/flutterwave.js` against v3 (matches every other
+  provider's integration shape, but is the visibly-secondary option on
+  Flutterwave's own docs portal) or v4 (the actively-promoted default,
+  but requires this repo's first token-refresh-manager component,
+  a new category of moving part — and expiring credentials sitting in
+  a service explicitly built to have **no database** per Task 0's own
+  constraint, meaning the access token and its expiry would have to
+  live in-process memory only, re-fetched on every cold start). Not
+  picked here — recorded as the load-bearing open question a future
+  implementation session must get an answer to before writing any
+  code, the same posture Remita's base-URL conflict and DodoPayments'
+  currency conflict already established for this file.
+
+*v4 Authentication — CONFIRMED, a full OAuth2 client-credentials flow,
+not a bearer-key scheme*
+- `POST https://idp.flutterwave.com/realms/flutterwave/protocol/
+  openid-connect/token`, form-urlencoded body (`client_id`,
+  `client_secret`, `grant_type=client_credentials`) → JSON response
+  containing `access_token`, `expires_in` (confirmed **600 seconds /
+  10 minutes** in the worked example), `token_type: Bearer`, `scope`.
+  The returned `access_token` is then sent as `Authorization: Bearer
+  {access_token}` on every actual API call — **not** the
+  `client_id`/`client_secret` pair themselves, which only ever go to
+  the token endpoint.
+- Flutterwave's own official code samples (Node.js, Python, PHP, all
+  three fetched directly from the Authentication page) all implement a
+  token-caching-and-refresh pattern client-side (check
+  `expires_in`/elapsed time, refresh when under ~60 seconds remain) —
+  confirming this isn't an edge case Flutterwave expects integrators to
+  ignore; a bare "fetch token, use once" implementation would work but
+  contradicts Flutterwave's own recommended pattern and would incur an
+  extra round-trip on every single charge/transfer call.
+- Two separate credential-retrieval token endpoints are named across
+  the fetched pages for the *same* OAuth flow — `idp.flutterwave.com`
+  (Authentication page, Environments page) and `keycloak.dev-
+  flutterwave.com` (inside the PHP SDK sample's `TOKEN_URL` constant,
+  same Authentication page) — **a real, confirmed inconsistency within
+  a single page's own code samples**, not a copy artifact from a
+  different provider. Flagged rather than resolved; a future
+  implementation session should verify directly against a real
+  sandbox credential pair which host actually accepts the token
+  request before hardcoding either one.
+
+*v4 Environments — CONFIRMED, and containing a direct, confirmed bug in
+Flutterwave's own multi-environment code sample*
+- Test/sandbox base URL: **`https://developersandbox-api.flutterwave.com`**.
+  Production base URL: **`https://f4bexperience.flutterwave.com`**
+  (note: given with a trailing slash in the prose, without one in the
+  cURL example — inconsistent but not itself a functional issue since
+  a trailing slash is fine to strip). Both stated explicitly, twice
+  each, in the Environments page's own prose and cURL examples.
+- **The page's own "Multi-Environment Integrations" JavaScript example
+  has the two base URLs swapped relative to its own prose two sections
+  above on the same page**: `FLW_BASE_URL = isProd ?
+  'https://developersandbox-api.flutterwave.com' :
+  'https://f4bexperience.flutterwave.com'` — i.e. the sample sets the
+  **sandbox** host when `isProd` is true and the **production** host
+  when `isProd` is false, the exact opposite of what the same page
+  states directly above it. Confirmed by direct side-by-side reading
+  of the same fetched page, not a rendering artifact. A future
+  `providers/flutterwave.js` must not copy this example's env-select
+  ternary as-is — the correct mapping is sandbox = `developersandbox-
+  api...`, production = `f4bexperience...`, per the page's own
+  explicit prose statements, not per its own inverted code sample.
+- Test data is archived after **30 days** and becomes permanently
+  inaccessible after that — a stated data-retention limit, relevant
+  for any future testing/QA plan, not just a documentation curiosity.
+- v3-vs-v4 key visibility is tied together in one dashboard: the
+  Environments page states a v3 account shows `Public Key`/`Private
+  Key`/`Encryption Key` fields and a same-account toggle
+  ("Switch to v4 live API keys") reveals v4 credentials instead —
+  confirming v3 and v4 are two faces of the *same* underlying merchant
+  account/dashboard, not two separate signups, which matters for
+  whichever version the product owner ultimately picks (no separate
+  "create a v4 account" step needed beyond the existing merchant
+  relationship, if one already exists from earlier Flutterwave use).
+
+*v4 Encryption — CONFIRMED, a third, distinct secret type, specific to
+card charges only, not reused for OAuth or webhooks*
+- Card charges require **field-level AES-256-GCM encryption** of the
+  card number, expiry month, expiry year, and CVV individually, using
+  a separate **encryption key** (retrieved from the same dashboard
+  API-settings page as the OAuth `client_id`/`client_secret`, but a
+  distinct value, not reused) plus a **12-character single-use nonce**
+  generated per request. Confirmed directly from the Encryption page's
+  own worked example and three official code samples (Node.js Web
+  Crypto `AES-GCM`, Java `javax.crypto` `AES/GCM/NoPadding`, Python
+  `cryptography`'s `AESGCM`) — all three independently implement the
+  same AES-256-GCM-with-nonce scheme, not just one language sample
+  guessing at it.
+- This means a v4 card charge needs **three separate secret values in
+  play at once** — OAuth `client_id`+`client_secret` (to get an
+  `access_token` for the request's own `Authorization` header),
+  the field-encryption key (to encrypt the card object before it goes
+  in the request body), and a per-request nonce (not secret, but must
+  be exactly 12 characters and unique per encryption call) — a
+  materially more complex credential shape than any other provider
+  already in this file, including Xixapay's three-simultaneous-
+  credentials finding above (Xixapay's three are all *sent* per
+  request; Flutterwave's encryption key is used **client-side only**,
+  before the request is built, and never appears in the request
+  itself).
+- Sending unencrypted or malformed-encrypted card fields returns a
+  confirmed, specific `422` (`CLIENT_ENCRYPTION_ERROR`, code `11100`,
+  "Unable to decrypt encrypted fields provided") rather than a generic
+  validation error — worth wiring a specific message for, not lumping
+  into a catch-all 4xx handler.
+- Non-card payment methods (bank transfer, mobile money, USSD, wallet)
+  confirmed to need **no field-level encryption at all** in this
+  scheme — only the `card` object's four fields require it. A future
+  `providers/flutterwave.js` only needs the AES-256-GCM path wired for
+  the card charge case, not universally.
+
+*v4 Charge creation — CONFIRMED, and the shape differs sharply
+depending on which of two charge endpoints is used*
+- **`POST /charges`** (the plain, OpenAPI-documented endpoint) requires
+  a **pre-existing `customer_id` and `payment_method_id`** in its
+  request body — i.e. a customer record and a payment-method record
+  must each be created via their own separate endpoints *before* this
+  call, a two-extra-round-trips-minimum flow. This does not match how
+  this repo's existing providers work (Paystack/Korapay/JuicyWay/
+  Payscribe all accept inline customer + raw payment details in a
+  single call) and would be a poor fit for this repo's stated no-DB,
+  single-call orchestration goal.
+- **`POST /orchestration/direct-charges`** (the "Orchestrator" helper
+  endpoint, confirmed via its own separate OpenAPI reference page) is
+  the actual analog to every other provider's single-call charge —
+  it accepts an inline `customer` object (email required; name/phone/
+  address optional) and an inline `payment_method` object in the same
+  request, with no pre-created IDs needed. **This is the endpoint a
+  future `providers/flutterwave.js` should target for v4**, not the
+  plain `/charges` endpoint — confirmed by directly comparing the two
+  endpoints' own OpenAPI schemas (`charge_in` requires `customer_id`
+  + `payment_method_id`; `direct_charge_in` requires `customer` +
+  `payment_method` as inline objects instead).
+- Both endpoints share one currency enum (confirmed identical list
+  across both OpenAPI documents fetched this pass) that is **far wider
+  than every other provider already in this file**: standard ISO 4217
+  codes across every region Flutterwave serves, plus three
+  **non-ISO stablecoin codes appended to the same enum** — `USDC`,
+  `USDT`, `RLUSD` — a genuinely unusual design (stablecoins listed as
+  ordinary currency values alongside NGN/USD/EUR, not as a separate
+  payment-method type), confirmed directly from the schema, not
+  inferred from marketing copy. `amount` on both endpoints is a
+  **decimal, in major currency units** (`12.34`, not `1234`), a real,
+  confirmed difference from Korapay/Paystack's kobo-style integer-
+  subunit convention already established elsewhere in this file — a
+  future `providers/flutterwave.js` must not reuse this repo's
+  existing amount-unit-conversion helper for Korapay/Paystack as-is.
+- `reference` is validated by regex on both endpoints (`^[a-zA-Z0-9\-
+  ]+$`, 6–42 characters) — alphanumeric-plus-hyphen only, no other
+  punctuation, a concrete constraint this repo's own reference
+  generator (per Decision 1 above) would need to satisfy for
+  Flutterwave specifically.
+- **Card fields in the `direct_charge_in` schema are the encrypted
+  ones** (`encrypted_card_number`/`encrypted_expiry_month`/
+  `encrypted_expiry_year`/`encrypted_cvv`/`nonce`, required together)
+  — confirming the Orchestrator endpoint is not an "encryption-
+  optional" shortcut; the AES-256-GCM requirement above applies to it
+  identically.
+- A documented **timeout-and-requery pattern**, confirmed via the
+  Errors page's own worked example: charge/order requests that don't
+  get a definitive result within roughly 25–28 seconds return `HTTP
+  201 Created` with `next_action.type: "requires_requery"` rather than
+  an error — the integrator is expected to wait **20 seconds**, then
+  poll the retrieve-charge endpoint, and repeat with a **40-second**
+  wait if still `requires_requery`; transactions unresolved after
+  about a minute transition to `failed`. This is a materially
+  different in-flight-uncertainty pattern from every other provider's
+  synchronous success/fail response already in this file, and the docs
+  explicitly recommend adding an `X-Idempotency-Key` header specifically
+  to make safe retries of this scenario possible.
+
+*v4 Errors — CONFIRMED, a large, stable, machine-readable taxonomy,
+closer in shape to Xixapay's snake_case codes than Payscribe's numbered
+table, but far larger than either*
+- Standard envelope: `{"status": "failed", "error": {"type", "code",
+  "message", "validation_errors"?}}` on every 4xx/5xx, confirmed
+  identically across the Errors page's own example and both charge-
+  endpoint OpenAPI schemas' `400`/`401`/`403`/`409` response
+  definitions (i.e. this isn't just prose describing an aspiration —
+  the same shape is baked into the machine-readable OpenAPI spec
+  itself).
+- **~70 collections/inflow-specific error codes** and a further ~70
+  **payout-specific** error codes, each with a stable numeric-ish
+  `code` and a `SCREAMING_SNAKE_CASE` `error.type`, confirmed
+  enumerated directly on the Errors page (not summarized from a
+  shorter table) — meaningfully larger and more granular than any
+  other provider's error taxonomy already recorded in this file.
+  Notable ones relevant to a no-DB relay layer: `CHARGE_ALREADY_EXISTS`
+  (`1100409`, reference reuse), `CARD_NOT_TOKENIZED` (`1104400`,
+  raw card data sent where a token/nonce was expected — relevant given
+  the encryption requirement above), `INVALID_CHARGE` (`1150400`,
+  "Please use the /virtual-accounts resource" — meaning bank-transfer-
+  style collections are a **separate resource family** from `/charges`
+  entirely, not a `payment_method.type` value on the charge endpoints,
+  a real structural fact confirmed by the error message's own wording,
+  not inferred).
+- **Rate limit confirmed as a flat 500 requests/minute**, a single
+  documented number (not a "contact support" hedge the way Xixapay's
+  rate limit was left undocumented above) — this repo's `/pay`/
+  `/payout` routes calling out to Flutterwave should budget against
+  this directly. The Errors page separately notes intermediary
+  infrastructure (Cloudflare) may return **non-JSON** throttling pages
+  under sustained abuse — a real parsing edge case (a future
+  `providers/flutterwave.js`'s response-error-parsing code must not
+  assume every non-2xx body is valid JSON).
+
+*v4 Webhooks — CONFIRMED, and containing a direct, confirmed
+contradiction between two sections of Flutterwave's own single
+Webhooks page*
+- Single raw header, **`flutterwave-signature`** (lowercase, no `X-`
+  prefix) — structurally the same "one flat header, no versioning"
+  shape as Xixapay's `xixapay` header above, not Payscribe/
+  DodoPayments' composite-header schemes.
+- The page's own **"Verifying Webhook Signatures" section** (the
+  canonical description, presented first) states the signature is
+  `HMAC-SHA256(rawBody, secretHash)`, **base64-encoded** — a real,
+  confirmed difference from every other provider in this file, all of
+  which use **hex** digests (Paystack, Korapay, Payscribe, Xixapay all
+  confirmed hex above) — copying an existing hex-comparison helper
+  as-is for Flutterwave would silently and permanently fail every
+  signature check.
+- **The same page's own later "Examples" section directly
+  contradicts its own canonical description**: the Node.js/PHP/Python
+  webhook-handler examples in that section all compare the incoming
+  `flutterwave-signature` header **directly against the raw
+  `secretHash` value itself** (`signature !== secretHash`) — i.e. they
+  never compute an HMAC at all, contradicting the HMAC-SHA256-of-the-
+  body scheme stated two sections above on the identical page.
+  Confirmed by direct side-by-side reading of both sections in the
+  same fetched document, not a version-mismatch between separately-
+  fetched pages. A future `providers/flutterwave.js#verifyWebhookSignature`
+  must implement the **HMAC-SHA256-then-base64** scheme from the
+  "Verifying Webhook Signatures" section, not copy the "Examples"
+  section's simpler-looking but contradictory direct-comparison code.
+- **Neither version of the comparison code uses a constant-time
+  compare** — the "Verifying Webhook Signatures" section's own sample
+  uses plain `===`/`hash === signature`, and the "Examples" section's
+  three language samples use plain `!==`/`==` comparisons too. This is
+  the same confirmed timing-attack-surface finding already recorded
+  for Xixapay's Node.js sample above, but here it's **every one of
+  Flutterwave's own samples, in every language shown**, not just the
+  Node.js one.
+- Webhook timeout confirmed at **60 seconds**; failed/unreachable
+  webhooks are retried **3 times at a 30-minute interval** (both
+  numbers stated directly, not inferred) — a materially longer retry
+  spacing than typical exponential-backoff schemes, worth noting for
+  any future reconciliation/backfill logic built on top of this
+  gateway.
+- Payload envelope confirmed as `{data: {...}, type, id, timestamp}` —
+  a `type` field (`charge.completed`, `transfer.disburse`,
+  `transfer.reversal`, `order.authorization`, `refund.completed`, all
+  five confirmed directly from the shared OpenAPI `webhooks` block
+  attached to the charge-endpoint reference pages, not guessed from
+  the prose page alone) rather than a boolean success flag the way
+  several other providers in this file use — this repo's existing
+  `webhookGateway.js` dispatch-by-provider logic would need a
+  dispatch-by-`type`-field branch for Flutterwave specifically, not a
+  dispatch-by-status-boolean branch.
+- Flutterwave's own **Best Practices** subsection on the same page
+  explicitly recommends the same three defensive patterns this file
+  has already flagged as *missing* from other providers' own docs
+  above (always re-verify via the API before giving value; don't rely
+  solely on webhooks, poll as a backup; be idempotent, dedupe on
+  unchanged status) — worth noting as a positive contrast, not just a
+  list of gaps, since Payscribe/Xixapay's own docs were confirmed
+  silent on idempotency/backup-polling guidance above and Flutterwave's
+  are not.
+
+*v4 Payouts (Transfer Orchestrator) — CONFIRMED, and the single most
+currency-fragmented request shape of any provider in this file*
+- **`POST /direct-transfers`** is the single-call analog to every
+  other provider's payout call (confirmed via its own OpenAPI
+  reference page, separate from the plain `/transfers` endpoint, which
+  — like plain `/charges` — needs pre-created recipient/sender IDs
+  first and is not the fit for this repo's no-DB single-call model,
+  by direct analogy to the charges-vs-orchestrator-charges finding
+  above, not independently re-confirmed line-by-line this pass).
+- **The request body's required recipient/sender fields are entirely
+  currency-dependent**, via a `oneOf`+`discriminator` schema keyed on
+  `destination_currency` — confirmed directly from the OpenAPI
+  document, not inferred: an NGN payout needs only
+  `bank.account_number`+`bank.code` (matching the minimal shape this
+  repo's other NGN-only providers already use); a EUR, GBP, USD, or
+  ZAR payout instead **requires full recipient KYC** — first/last name,
+  phone, email, and a complete postal address — **plus**, for EUR/GBP/
+  USD specifically, an equally complete **sender** KYC block
+  (name/national ID or date-of-birth/phone/email/address). This is a
+  categorically different, and categorically larger, payload
+  requirement than any payout shape already recorded in this file for
+  any other provider — a future `providers/flutterwave.js`'s payout
+  function cannot use one fixed request-body shape the way this repo's
+  existing `processPayout` does for Korapay; it needs currency-
+  conditional payload assembly from the start.
+- `action` (`instant`/`deferred`/`scheduled`) plus an optional
+  `disburse_option` (`date_time` + IANA `timezone` from a fixed,
+  confirmed enum list) is a scheduling capability **not present in any
+  other provider's payout call already documented in this file** —
+  genuinely new surface area, not a renamed existing field.
+- Payout error taxonomy (confirmed on the Errors page, ~70 codes) is
+  its own numeric-code family, separate from the charge-side codes
+  above, and includes several compliance/geofencing-specific codes
+  worth flagging for a global orchestration layer specifically:
+  `ZAMBIA_TRANSFER_UNAVAILABLE` (Zambia payouts restricted to Zambia-
+  registered merchants only), `XAF_TRANSFER_ONLY` (XAF-involving
+  transfers restricted to XAF-to-XAF only without separate approval),
+  `IP_WHITELISTING_REQUIRED`/`NON_WHITELISTED_IP`/`BLACKLISTED_IP` (an
+  IP-allowlisting gate on the transfer API specifically, the same
+  category of constraint Prestmit's own audit above flagged, now
+  confirmed present for Flutterwave's payout surface too — worth
+  checking this repo's Render-hosted egress IP against Flutterwave's
+  dashboard allowlist before payouts go live, same recommendation
+  already made for Prestmit above).
+
+*Not covered by this pass — real open items, not yet resolved*
+- **The v3-vs-v4 version choice above is the primary blocker** — no
+  further Flutterwave implementation work should proceed until the
+  product owner picks one, for the reasons laid out in that subsection
+  (integration-shape mismatch with every other provider vs.
+  actively-promoted-but-heavier default).
+- The `idp.flutterwave.com` vs `keycloak.dev-flutterwave.com` token-
+  endpoint inconsistency is not resolved — needs a real sandbox
+  credential pair tested against both hosts, not a guess.
+- v3's webhook signature scheme, error taxonomy, and payout shape were
+  **not** re-audited this pass (v4 was this session's target) — a
+  future v3-track implementation session needs its own read of the
+  v3-specific docs, not an assumption that the v4 findings above
+  transfer over.
+- Subscriptions, Settlements, Refunds, Chargebacks, and the full set of
+  currency-specific payout instruction schemas beyond NGN/EUR/GBP/USD/
+  ZAR (ETB, GHS, MWK, and the mobile-money-specific EGP/ETB/XAF
+  variants all appeared in the OpenAPI schema fetched this pass but
+  were not individually detailed above) are out of this pass's scope —
+  this platform's current no-DB payin/payout/webhook-relay focus per
+  Task 0 doesn't need them yet; a future session adding any of those
+  should read those specific schema branches directly rather than
+  assume this entry covers them.
+- No sandbox-vs-live *behavioral* differences (e.g. whether test-mode
+  webhooks fire identically to production ones) were confirmed either
+  way this pass, beyond the stated 30-day test-data archival limit.
+
+---
+
 ## Project owner decisions (recorded verbatim from the owner — resolves previously open questions; read before touching reference/idempotency or anything wallet-related)
 
 ### Decision 1 — Reference generation + ownership, and who calls this backend (resolves the storage question Task 12 deliberately left open, see "Known issues" below)
@@ -6055,7 +6450,35 @@ already applied to Korapay/Paystack/Juicyway/Payscribe.
   Paystack/Korapay's single hex-HMAC-header schemes — implementation
   should use the `standardwebhooks` package rather than adapting
   existing signature-verification code.
-- **a-5. Flutterwave** — not started. No code, no docs consulted.
+- **a-5. Flutterwave** — **discovery/audit done (2026-09-06, doc-only,
+  no code yet)**, per the Discovery Convention above. Full audit is in
+  the "Confirmed research findings" section (search "Flutterwave —
+  FULL API discovery pass"). **The primary open item is not a
+  currency or base-URL conflict like the other net-new providers
+  above — it's a version choice**: Flutterwave currently publishes two
+  structurally incompatible generations at once. v3 uses the same
+  single-static-secret-key Bearer scheme as every other provider
+  already in this repo; v4 (the docs portal's current default) is a
+  full OAuth2 client-credentials flow with a 10-minute-expiring access
+  token, needing this repo's first token-refresh-manager component —
+  a real complication under Task 0's own no-database constraint, since
+  the token/expiry would have to live in-process memory only. **Get
+  the product owner's explicit v3-vs-v4 decision before writing
+  `providers/flutterwave.js`** — not resolvable from docs alone. Other
+  confirmed findings queued there, all relevant once the version
+  question is settled: v4's card charges need field-level AES-256-GCM
+  encryption with a third, distinct secret (separate from the OAuth
+  credentials); the single-call charge/payout analogs to this repo's
+  other providers are the `/orchestration/direct-charges` and
+  `/direct-transfers` "Orchestrator" endpoints specifically, not the
+  plain `/charges`/`/transfers` endpoints (which need pre-created
+  customer/recipient IDs first); payout request shape is fully
+  currency-conditional (NGN needs only account/bank-code, EUR/GBP/USD/
+  ZAR need full recipient-and-sender KYC); and the Webhooks doc page
+  contradicts itself between its "Verifying Webhook Signatures"
+  section (HMAC-SHA256, base64) and its own "Examples" section (a
+  direct, non-HMAC string comparison) — the former is correct, the
+  latter must not be copied as-is.
 - **a-6. Remita** — **discovery/audit done (2026-09-06, doc-only, no
   code yet)**, per the Discovery Convention above. Full audit is in
   the "Confirmed research findings" section (search "Remita — FULL API

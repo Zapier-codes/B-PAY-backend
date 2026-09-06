@@ -3,7 +3,36 @@
 > **▶ START HERE — read this box only, then go straight to work. Skip
 > everything else below unless you get stuck.**
 >
-> **Newest note (2026-09-06, latest of all) — Task 8b resolved:
+> **Newest note (2026-09-06, latest of all) — Task 0's a-6: Remita
+> full API-discovery/audit pass done (doc-research only, no code —
+> `providers/remita.js` does not exist yet).** Same doc-only precedent
+> as the Task 8b/JuicyWay pass below. **Unlike every provider audited
+> so far, Remita has no single public developer-docs site** — the
+> audit is built from an official PDF, official GitHub SDK repos for a
+> different Billing Gateway product, a public Postman collection, and
+> community integrations, several of which conflict. **Three real open
+> items block implementation, none fixed here (doc-research pass
+> only):** (1) three source families disagree on the base URL/path for
+> RRR generation vs. status-check — don't pick one, get it from the
+> product owner's own onboarding email; (2) two incompatible auth
+> schemes exist (classic hash-in-URL vs. header-based
+> `remitaConsumerKey`/`remitaConsumerToken`), each with two different
+> hash formulas for generate vs. verify; (3) Remita confirms payment
+> via an **unsigned browser redirect** the merchant must independently
+> re-verify with a separate hash-authenticated status call — not an
+> inbound signed webhook like Korapay/Paystack/JuicyWay/DodoPayments,
+> a real difference for Task 0/b-3's webhook-normalization design.
+> Also unresolved: the full `statuscode` enumeration (only `025`/
+> pending confirmed against a real example) and whether Remita supports
+> any currency besides NGN (no currency parameter found anywhere).
+> Full writeup under "Confirmed research findings" (search "Remita —
+> FULL API discovery pass"); Task 0's a-6 bullet has the short version.
+> **Still `a-1-i-X`** is the active task for the Task 0 track — this
+> was a doc-only exception for a-6's audit, same as Task 8b was for
+> a-3, not a change to which `X` node is active. Patch for this session
+> covers `handover.md` only — no provider code added or changed.
+>
+> **Newest note (2026-09-06, previous) — Task 8b resolved:
 > JuicyWay full API-discovery/audit pass done (doc-research only, no
 > code changed — `providers/juicyway.js` is untouched by this
 > session).** Same doc-only precedent as the Paystack and DodoPayments
@@ -2049,6 +2078,236 @@ nothing above touches webhooks):**
   verifies the checksum (401 on failure/missing), logs both event
   types with reference/amount/currency/status (no persistence layer
   yet — see Task 12).
+
+**Remita — FULL API discovery pass, audited 2026-09-06 (new — resolves
+a-6, doc-research only, no code — `providers/remita.js` does not exist
+yet).** Unlike every other provider audited in this file, Remita has
+**no single public developer-docs site** (no `docs.remita.net`
+equivalent to `paystack.com/docs`, `docs.juicyway.com`, or Korapay's
+own docs). What's publicly findable is a patchwork of: one official
+SystemSpecs-authored PDF ("Remita Developer Documentation") hosted on
+a third-party document site rather than remita.net itself; several
+official `RemitaNet`-org GitHub SDK repos (Node.js, Python, Java, PHP)
+for Remita's **Billing Gateway** product specifically, a different
+surface from the general payment-collection RRR gateway; one public
+Postman collection (documenter.getpostman.com, owner id 3613789)
+covering FIRS-tax-specific RRR integration; and a mix of
+third-party/community material (a WordPress/WooCommerce plugin, older
+standalone PHP/JS libraries, blog walkthroughs) that documents
+real-world behavior but isn't Remita's own authoritative source. **Per
+the Discovery Convention above, this is exactly the "genuinely can't
+be found" case** — this session did not stop at that, since enough
+converging detail exists across official SDKs/PDF/Postman collection
+to write a real audit, but the product owner should still be asked
+directly for current merchant onboarding docs and sandbox credentials
+before implementation starts, rather than treating what's below as
+equivalent in authority to Paystack's or JuicyWay's own docs sites.
+
+*Two structurally different integration surfaces exist — do not
+conflate them*
+- **Surface 1 — the classic RRR Payment Gateway** (what this repo
+  almost certainly wants, matching how Korapay/Paystack/JuicyWay are
+  used here): merchant generates a Remita Retrieval Reference (RRR)
+  for an amount, the payer settles it (card, bank transfer, USSD, or
+  in-branch), the merchant checks/confirms status by RRR.
+- **Surface 2 — the Billing Gateway** (the `RemitaNet` org's Node/
+  Python/Java SDKs): a *different* product where the merchant's own
+  customers pick a **biller** (school, church, government MDA, etc.)
+  already onboarded to Remita and pay *that biller* through the
+  merchant's platform — oriented around `GetBillerList`,
+  `GetRRRDetails(billId)`, `ValidateRequest`, not a generic
+  "charge this amount" call. **Confirmed real risk:** these two
+  surfaces are easy to conflate because both produce and consume an
+  "RRR," but they are different products with different credential
+  sets (Billing Gateway uses a separate "Public key/Secret key" pair
+  from the Billing page of a merchant's dashboard, not the classic
+  `merchantId`/`apiKey` pair). This audit is written for **Surface 1**
+  only, since that matches this repo's `processPayment(data)` /
+  `verifyTransaction(reference)` shape used by every other provider —
+  Surface 2 would need its own separate discovery pass and its own
+  provider file if the product owner actually wants biller-payment
+  functionality, not charge-collection.
+
+*Base URLs — CONFIRMED INCONSISTENT across primary sources, a real
+unresolved ambiguity, same class of finding as JuicyWay's currency
+conflict*
+- The public FIRS-integration Postman collection states test-mode RRR
+  generation goes to `https://remitademo.net/remita/exapp/api/v1/send/api`
+  while test-mode status-checking goes to a **different host entirely**,
+  `https://login.remita.net/remita/ecomm` — i.e. even within one
+  official source, generate and verify are documented against two
+  different base hosts in test mode, not variations of the same host.
+  The same collection's live-mode block points **both** operations at
+  `login.remita.net`, with credentials "provisioned upon successful
+  UAT" rather than published.
+- A separate official `RemitaNet` GitHub SDK sample (`remita-rrr-generator-status-dotnet`) instead
+  defines its own demo/live constants as `https://demo.remita.net`
+  (note: no "remita" repeated in the hostname, unlike the Postman
+  collection's `remitademo.net`) and `https://login.remita.net`, with
+  its own generate-RRR path
+  (`/remita/exapp/api/v1/send/api/echannelsvc/merchant/api/paymentinit`)
+  that matches neither the Postman collection's path nor the
+  classic-PHP-library pattern below.
+- Multiple older PHP/JS community integrations instead call
+  `www.remitademo.net/remita/ecomm/...` paths ending in `.reg`
+  (`init.reg`, `status.reg`, `orderstatus.reg`) — a third, older-looking
+  URL family again distinct from the two above.
+- **Not resolved here.** Three source families (official Postman
+  collection, official .NET SDK sample, community `.reg`-style
+  integrations) each imply a different combination of hostname and
+  path for what is nominally the same "generate RRR" operation.
+  Whichever session implements Remita for real should get the current
+  base URL and path directly from the product owner's own registration/
+  demo-credential email (the FIRS collection itself says these are
+  sent by email on request, not published), rather than guessing which
+  of the three documented shapes is current — this is a case where
+  picking wrong doesn't 422 cleanly, it likely just times out or 404s
+  against a stale host.
+
+*Authentication — CONFIRMED, but two incompatible schemes coexist and
+picking the wrong one for a given base URL will silently fail*
+- **Classic/legacy scheme (matches the `.reg`-style and .NET-sample
+  URL families above):** no `Authorization` header at all — the hash
+  itself is embedded in the URL path or POST body. Two distinct hash
+  formulas, confirmed identical across three independent sources (an
+  official PDF excerpt, a community PHP library, and a community React
+  walkthrough): **RRR generation** hashes
+  `SHA512(merchantId + serviceTypeId + orderId + amount + apiKey)`;
+  **status/verification** hashes a *different* concatenation order,
+  `SHA512(RRR + apiKey + merchantId)` — these are not interchangeable,
+  and re-using the generation hash formula for a status check (or vice
+  versa) will produce a hash that simply doesn't match, with no
+  explanatory error beyond a generic auth failure.
+- **Newer REST/JSON scheme (matches the Postman-collection URL
+  family):** a single `Authorization` header of the form
+  `remitaConsumerKey={merchantId},remitaConsumerToken={hash}` — same
+  two hash formulas as above (generation vs. status use different
+  concatenations), just carried in a header instead of the URL, with a
+  JSON body instead of a query string/form POST.
+- **Confirmed NOT part of Remita's own generic merchant API, despite
+  looking like a real Remita integration at first glance:** a
+  `Nau-Contractor-ID` / `Nau-Api-Key` / `Nau-Access-Token` header
+  scheme found in one source is explicitly a single university's own
+  wrapper built on top of Remita for its own contractors/internal
+  developers — not a scheme any other Remita merchant would be issued.
+  Flagging this explicitly because it's the kind of institution-specific
+  wrapper that could get mistaken for Remita's own documented API if
+  this session's search results were taken at face value; excluded
+  from the scheme options above for that reason.
+- **Not resolved here which of the two real schemes (classic-hash-in-URL
+  vs. header-based) is current/preferred for new integrations** — the
+  Postman collection (header-based) is the most recently-structured
+  official source found, but nothing confirms the classic scheme is
+  deprecated rather than still-supported-in-parallel. Get this directly
+  from the product owner's onboarding material rather than assuming.
+
+*Request/response shape for RRR generation — CONFIRMED core fields,
+consistent across every source regardless of which base-URL/auth
+family is used*
+- Required fields, consistent across all sources: `serviceTypeId`,
+  `amount`, `orderId` (merchant-generated, this repo's existing
+  `generateReference()` pattern maps onto this), `payerName`,
+  `payerEmail`, `payerPhone`, `description`. `merchantId` is either
+  sent explicitly in the body (classic scheme) or implied by the
+  `remitaConsumerKey` in the header (REST scheme) — not sent in both
+  places redundantly in any single source seen.
+- Successful response carries the generated `RRR` (a numeric string,
+  typically 12 digits in real examples across sources) plus an echo of
+  `orderId`/`serviceTypeId`/a generation timestamp — exact field names
+  for this vary between sources (`rrr` lowercase vs. `RRR` uppercase,
+  `date_generated` vs. no timestamp field at all in the classic-scheme
+  examples), another concrete detail to pin down against the specific
+  base URL/scheme actually used rather than assumed from whichever
+  source happens to be open.
+
+*Status/response codes — CONFIRMED TO EXIST, but meanings are only
+partially and inconsistently documented across sources — a real,
+unresolved gap, not just a nice-to-have*
+- A **numeric `statuscode`** is confirmed to accompany RRR status
+  (seen directly in a real merchant redirect URL from a government
+  portal's integration: `statuscode=025` paired with a human-readable
+  `status=Payment Reference generated`, for a **pending, not yet
+  paid** RRR). No source found in this session's search enumerates the
+  **full** set of `statuscode` values and their meanings in one place
+  — `025` (pending/reference-generated) is the only value this session
+  could confirm against a real, dated, in-the-wild example rather than
+  a code sample's placeholder text.
+- Separately, a **university-wrapper-specific** response envelope
+  (not confirmed as Remita's own canonical shape — see the auth-scheme
+  caveat above) uses HTTP-style codes instead: `200`/`"RRR generated
+  successfully"` on success, `424`/`"RRR could not be generated"` and
+  `503`/`"RRR was generated but could not be saved"` on failure. Listed
+  here for completeness but **explicitly not confirmed to be Remita's
+  own response shape** — it may be that wrapper's own translation
+  layer, not what Remita's raw API itself returns. Conflating the two
+  would overstate how much of this is actually verified.
+- **Not resolved here.** A real sandbox call (once credentials exist)
+  is the only reliable way to enumerate the actual `statuscode`
+  space and confirm which response envelope (raw Remita vs. some
+  integrator's own wrapper shape) this repo would actually receive —
+  flagging as a required pre-implementation step, same treatment as
+  JuicyWay's currency conflict and DodoPayments' settlement-currency
+  conflict above, not something to guess from the fragments found here.
+
+*Confirmation/webhook model — CONFIRMED to be architecturally
+different from every other provider this repo integrates, a real
+design consideration for b-3's normalized-webhook-envelope work*
+- **No inbound HMAC-signed webhook header of any kind was found in any
+  source** — unlike Paystack (`x-paystack-signature`), Korapay, or
+  JuicyWay (body-embedded `checksum`). The classic flow instead
+  redirects the *payer's browser* back to a merchant-supplied
+  `responseurl`/`notify_url` with **unsigned** query-string parameters
+  (`status`, `RRR`, `orderID` confirmed directly from a real,
+  dated government-portal redirect URL found this session). Because
+  these parameters travel through the payer's own browser and carry no
+  cryptographic signature, they are **not safe to trust as proof of
+  payment on their own** — every community integration examined
+  (the WooCommerce plugin, the PHP libraries) treats the redirect only
+  as a *signal to go re-check status*, then calls the separate
+  hash-verified status/verify endpoint (using the `RRR+apiKey+merchantId`
+  hash from the Authentication section above) as the actual source of
+  truth before crediting anything. **This repo's other four providers
+  all verify an inbound signature and trust the payload; Remita's
+  documented pattern instead requires an outbound confirmation call
+  triggered by an untrusted inbound signal** — a materially different
+  shape that Task 0/b-3's per-provider webhook-to-normalized-envelope
+  mapping needs to account for explicitly (Remita's "webhook handler"
+  would need to *call out* to the verify endpoint before it can decide
+  `status`, not just parse and map an inbound body like the other four
+  do) rather than assumed to fit the same pattern.
+- No separate server-to-server IPN/webhook mechanism distinct from the
+  browser-redirect model above was confirmed in any source this
+  session found — flagged as a gap to close with the product owner's
+  onboarding docs, not assumed absent.
+
+*Currency — CONFIRMED NGN is supported; broader multi-currency support
+NOT confirmed either way, an omission worth flagging rather than
+guessing*
+- Every source examined this session — the RRR examples, the
+  government-portal redirect, the demo credentials, the Billing
+  Gateway SDKs — deals exclusively in Naira amounts with no currency
+  parameter at all in the classic RRR-generation payload (amount is
+  sent as a bare number, currency implied rather than stated). No
+  source found documents an explicit multi-currency capability or
+  parameter for the RRR gateway the way Paystack/Korapay/JuicyWay each
+  do. **Not added to `CONFIRMED_PROVIDER_CURRENCIES` this pass** —
+  absence of a documented currency parameter is different from a
+  confirmed single-currency restriction, and `getAmountFormat`'s
+  existing guard (throws rather than guesses) is the right posture
+  until the product owner's actual onboarding docs either show a
+  currency field or confirm NGN-only.
+
+*Rate limits and error taxonomy — NOT FOUND, an honest gap rather than
+an inferred value*
+- No source examined this session documents per-endpoint or
+  account-wide rate limits for the RRR gateway (contrast with
+  JuicyWay's documented per-endpoint limits and Paystack's documented
+  limits) — flagged as unknown, not assumed unlimited.
+- No general error-code taxonomy comparable to Paystack's or JuicyWay's
+  `errors` doc page was found for the classic RRR gateway itself —
+  what exists (see the statuscode/response-code finding above) is
+  fragments from specific real examples and one wrapper's own
+  translation layer, not a documented enumeration from Remita itself.
 
 **Payscribe**
 - **Waiting on a docs link from the project owner.** Check the
@@ -4728,7 +4987,32 @@ already applied to Korapay/Paystack/Juicyway/Payscribe.
   should use the `standardwebhooks` package rather than adapting
   existing signature-verification code.
 - **a-5. Flutterwave** — not started. No code, no docs consulted.
-- **a-6. Remita** — not started. No code, no docs consulted.
+- **a-6. Remita** — **discovery/audit done (2026-09-06, doc-only, no
+  code yet)**, per the Discovery Convention above. Full audit is in
+  the "Confirmed research findings" section (search "Remita — FULL API
+  discovery pass"). Unlike every other provider audited so far, Remita
+  has no single public developer-docs site — the audit is built from a
+  patchwork of an official PDF, official `RemitaNet` GitHub SDK repos
+  (for a *different* Billing Gateway product, not confirmed to be the
+  same surface this repo needs), a public Postman collection, and
+  community integrations, several of which document mutually
+  inconsistent base URLs/paths for the same nominal operation. Three
+  real open items queued there, all blocking implementation rather
+  than optional polish: (1) three source families disagree on the
+  base URL/path for RRR generation and status-check — get the current
+  values directly from the product owner's own onboarding email rather
+  than picking one; (2) two incompatible auth schemes exist (classic
+  hash-in-URL vs. header-based `remitaConsumerKey`/`remitaConsumerToken`),
+  each with two different hash formulas for generate vs. verify — using
+  the wrong one silently fails auth; (3) Remita's confirmation model is
+  an **unsigned browser redirect** the merchant must independently
+  re-verify via a separate hash-authenticated status call, not an
+  inbound signed webhook like this repo's other four providers — a
+  real design difference for Task 0/b-3's normalized-webhook mapping,
+  not just an implementation detail. Also unresolved: the actual
+  `statuscode` enumeration (only `025`/pending confirmed against a real
+  example) and whether currencies beyond NGN are supported at all (no
+  currency parameter found in any RRR-generation example examined).
 - **a-7. Xixapay** — not started. This session could not confirm
   this is a documented, existing payment provider — first step is
   simply locating real docs, not assuming they match another

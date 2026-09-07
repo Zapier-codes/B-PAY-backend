@@ -3,7 +3,38 @@
 > **▶ START HERE — read this box only, then go straight to work. Skip
 > everything else below unless you get stuck.**
 >
-> **Newest note (2026-09-07, latest of all) — Task 52 written: full
+> **Newest note (2026-09-07, latest of all) — Task 53 written: three
+> more product decisions from the product owner, decision-record only,
+> no code this session.** **(1) Card issuance is Korapay** — this
+> platform's customers (business or individual) get a card that is
+> actually Korapay's card product underneath, but the customer only
+> ever sees this platform's own brand on it, same identity-concealment
+> posture Task 47 already established for every other rail. **(2)
+> White-label branding (name shown to the customer, and the UI theme)
+> must be dynamic/configurable at runtime** — not hardcoded to "BPay"
+> or any fixed theme, so the product owner can change either at any
+> time without a code deploy. **(3) KYC/KYB verification is done via
+> PaymentPoint specifically** (chosen for its licensing/compliance
+> posture, not for any technical reason over Korapay's own competing
+> Identity/KYC-KYB feature, which this platform is deliberately NOT
+> using) **but the verification result must be persisted in this
+> platform's own database**, so a customer verified once can be reused
+> across Korapay, Juicyway, or any future provider without a redundant
+> re-verification call to each one. See Task 53 below for the full
+> write-up, including two real open items this raises: Korapay's own
+> Card Issuing API is real but was explicitly excluded from every prior
+> Korapay audit pass (it's marked beta in Korapay's own docs) and has
+> never been audited against a primary source in this file — that
+> audit has to happen before any `providers/korapay.js` card-issuance
+> code is written, per this file's own Discovery Convention. The
+> dynamic-branding requirement and the KYC/KYB persistence table both
+> need a database, which Task 46 already reversed the no-DB constraint
+> for — but neither has a schema designed yet. **Per the Patch Handoff
+> Convention, a patch file covering this handover.md update was
+> generated and handed to the product owner directly — not applied or
+> pushed by this session.**
+>
+> **Newest note (2026-09-07, previous) — Task 52 written: full
 > implementation breakdown of every gap Task 51's capability matrix
 > surfaced, so a session can actually build this out instead of just
 > routing tables against providers that don't have the methods yet.
@@ -7968,5 +7999,147 @@ stated reason for keeping fallbacks fully built) promote a fallback to
 default without a code deploy — whether that's an env var, a config
 file, or an admin-dashboard toggle (Task 46 already scoped an admin
 dashboard) is an open design question for this leaf, not decided here.
+
+---
+
+## Task 53 — Card issuance assigned to Korapay; white-label branding (name + theme) must be dynamic; KYC/KYB done via PaymentPoint but persisted in this platform's own database [ ]
+
+**Scope note, read first:** decision-record only, per this file's own
+established pattern (same discipline as Tasks 0/45/46/47/48/51/52). No
+code, no schema, no provider file written this session.
+
+### a. Card issuance — Korapay, white-label
+
+**Stated directly by the product owner this session:** when this
+platform's customers (businesses or individuals — "be it a business or
+anything") get a card, the underlying issuer is **Korapay**, but the
+customer only ever sees this platform's own brand on it. This is the
+same identity-concealment posture Task 47 already established for
+every other rail this platform offers — card issuance is not a special
+case, it just resolves Task 48/e's "planned, provider TBD" line to a
+specific answer: **Korapay**.
+
+**Real open item, not resolved by this decision:** Korapay's own Card
+Issuing surface (virtual card creation/funding/withdrawal/management)
+is real and documented, but per this file's own prior Korapay audit
+(search "Not covered by this pass" in the Korapay research section
+above), it was **explicitly excluded** from every audit pass done so
+far — it's marked **beta** in Korapay's own docs, and this file has
+zero confirmed endpoint/auth/payload detail for it. Per Task 0's own
+Discovery Convention (every provider surface gets one real docs audit
+before any code is written — no assuming a new surface behaves like an
+already-integrated one), **Korapay's Card Issuing API needs its own
+dedicated discovery pass** before `providers/korapay.js` gains any
+card-issuance methods. Do not assume it shares auth/payload shape with
+Korapay's existing collection/payout endpoints just because it's the
+same provider.
+
+### b. White-label branding — must be dynamic, not hardcoded
+
+**Stated directly by the product owner this session:** the brand name
+shown to the customer (today assumed to be "BPay" informally, per this
+repo's own name) and the UI theme must both be **configurable at
+runtime** — the product owner's own stated reason is the ability to
+change either "any time I don't like the name" or the look, without a
+code deploy. This is a **new, cross-cutting requirement** on top of
+Task 47's identity-concealment decision (Task 47 established *that*
+the underlying provider is hidden; this task establishes that the
+platform's own presented identity is itself a mutable setting, not a
+fixed brand).
+
+**Real open item, not resolved by this decision:** where this
+configuration lives and how it's edited is undesigned. Task 46 already
+reversed this repo's original no-database constraint specifically to
+back an admin dashboard — branding config (name string, theme
+values/tokens, presumably a logo asset) is a natural fit for that same
+database and that same admin route, but no table, no field list, and
+no admin-UI surface for editing it has been designed yet. Flagging
+this explicitly so a future session doesn't invent a shape for it
+without checking whether Task 46's dashboard schema work has already
+settled on one.
+
+### c. Domain-based routing — reaffirmed, not changed
+
+**Stated directly by the product owner this session, restating (not
+altering) Task 51's existing decision:** cross-border/international
+payments default to **Juicyway**; African rails default to
+**Korapay**. This task changes nothing about Task 51's tables or
+Task 52's implementation breakdown — it's recorded here only because
+the product owner restated it in the same message as (a)/(b)/(d), and
+this file's own convention is to record what the product owner says
+even when it confirms an existing decision, so a future session
+doesn't wonder whether something changed. **See Task 51 (b-1/b-2) and
+Task 52 for the actual tables and implementation gaps — this
+sub-section is a pointer, not a duplicate.**
+
+### d. KYC/KYB — PaymentPoint as the verification provider, but this platform owns the record
+
+**Stated directly by the product owner this session:** identity
+verification (KYC for individuals, KYB for businesses) is done through
+**PaymentPoint** specifically — the product owner's own stated reason
+is that PaymentPoint has the relevant **licenses and compliance
+posture** ("because they have licenses check and other things"), not a
+technical preference. PaymentPoint's own NIN/BVN verification and
+liveness-check endpoints were already fully audited under Task 0/a-8
+(see "PaymentPoint — FULL API discovery pass" in the Confirmed
+research findings section) — this task assigns that already-audited
+capability to the KYC/KYB role, it doesn't newly audit anything.
+
+**The one part of this that IS new, and matters architecturally: the
+verification result must be persisted in this platform's own
+database, not left to live inside PaymentPoint alone.** Product
+owner's own stated reason: so a customer verified once can be reused
+"in any other payment provider like the Kora and Juicyway that are my
+default" — i.e. this platform, not PaymentPoint, is the source of
+truth for "is this customer/business verified," and Korapay/Juicyway/
+any future provider consult *this platform's* record rather than each
+independently re-running (or being asked to trust) a PaymentPoint
+verification.
+
+**Explicit and deliberate: Korapay has its own competing Identity/
+KYC & KYB feature** (NG/ZA/GH/KE/US/CI coverage, BVN/NIN/vNIN/SSN/
+passport/national-ID/phone verification, liveness check — see
+Korapay's own audit section above, also explicitly excluded from
+Korapay's prior audit passes same as Card Issuing above). **This
+platform is deliberately NOT using Korapay's own KYC/KYB feature for
+this role, in favor of PaymentPoint** — flagging this explicitly so a
+future session doesn't "helpfully" default to Korapay's built-in
+identity feature just because Korapay is already an integrated,
+already-audited-for-other-purposes provider. That would be exactly
+the wrong assumption here.
+
+**Real open items, not resolved by this decision:**
+- No schema exists yet for the persisted verification record. At
+  minimum this needs to capture: which entity was verified (customer
+  vs. business), verification status, the underlying PaymentPoint
+  reference/response (for audit trail), and a way for Korapay/
+  Juicyway-facing code to query "is this entity verified" without
+  re-fetching from PaymentPoint. Field-level design is genuinely open
+  — not decided here, same caution Task 45/b already applied to the
+  Reseller/VTU Supabase schema proposal (that proposal is a *different*
+  set of tables, for a *different* product — don't conflate the two).
+- Row-Level Security / access-control design for who (this platform's
+  own backend only? a future business-facing dashboard?) can read a
+  stored verification result is undesigned, same open question Task
+  45/b already flagged for its own schema proposal.
+- PaymentPoint's own audit (Task 0/a-8) already flagged a live-looking
+  Bearer token + api-key pair exposed directly in PaymentPoint's own
+  docs pages — unrelated to this task's scope, but worth re-flagging
+  here since this task makes PaymentPoint's role load-bearing
+  (compliance-critical, not just a nice-to-have integration) in a way
+  it wasn't before this decision.
+
+### e. Not yet done, this session, deliberately
+
+No code, no schema, no `providers/*.js` changes. This task exists so
+the next session has all three decisions on record in one place before
+picking up implementation — in particular, Task 52's `X` marker
+(Juicyway `processPayout`, Task 52/a-1) is unaffected by this task and
+remains the current single atomic unit of work on the board; card
+issuance, dynamic branding, and KYC/KYB persistence are all real,
+scoped-but-not-started work that a future session should turn into
+their own numbered leaves (following this file's own Task Numbering &
+Workflow Convention) once Task 52's board is far enough along that
+they're not competing for the single `X` slot.
 
 ---

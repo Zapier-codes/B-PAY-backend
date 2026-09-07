@@ -3,7 +3,29 @@
 > **▶ START HERE — read this box only, then go straight to work. Skip
 > everything else below unless you get stuck.**
 >
-> **Newest note (2026-09-06, latest of all) — Task 46 written: product
+> **Newest note (2026-09-07, latest of all) — Task 47 written: product
+> owner states the underlying vision this repo is actually building
+> toward, and resolves one of Task 46's open questions.** Two things,
+> both scope/decision-record only, no code this session: **(1)** this
+> backend is meant to present itself as its own independent payment
+> provider — the ten underlying rails it wraps (Korapay, Paystack,
+> JuicyWay, Payscribe, etc.) and even which payment method actually
+> moved the money should be invisible, not just a per-business
+> checkout skin the way Task 0/d-1 and Task 45/e's white-label
+> checkout already cover, but the platform's own identity end to end.
+> **(2)** Task 46/e's genuinely-open database engine/hosting question
+> is now answered: **Supabase**, confirmed directly by the product
+> owner this session. Also carried forward, not new: Task 46/b's own
+> dashboard scope now has an explicit companion — a feature-parity
+> table (transaction history, settlement/payout reports, balance
+> overview, webhook delivery logs, refund/dispute handling, API
+> key/access management) matching what Korapay's own dashboard offers,
+> in addition to the admin capabilities (country toggling, card
+> activation) Task 46/b already recorded. Full detail under Task 47
+> below. **Patch for this session covers `handover.md` only**, per
+> this repo's own Patch Handoff Convention.
+>
+> **Newest note (2026-09-06, previous) — Task 46 written: product
 > owner has now directly answered the scope-boundary question Task 45
 > deliberately left open, and answered it with the broader reading.**
 > This backend's own "no-database" constraint (Task 0's opening
@@ -7033,15 +7055,12 @@ confirmed with the product owner at the field level, same caveat Task
   the no-DB constraint) migrate onto business records that didn't
   exist when they were written.
 
-**e. Database engine and hosting — not decided this session,**
-flagged directly for the product owner: Task 45's Reseller/VTU product
-already committed to Supabase for its own schema; using the same
-Supabase project for this backend's dashboard tables is the obvious
-option (one place to administer, one set of credentials) but has not
-been confirmed, and there may be reasons to keep the two products on
-separate projects (this backend moves real money across ten payment
-providers; the Reseller product is a VTU/airtime reseller — different
-risk profiles even if both end up on Supabase/Postgres).
+**e. Database engine and hosting — RESOLVED in Task 47 below:
+Supabase, confirmed directly by the product owner.** (Left here for
+history; see Task 47/b for the decision itself and what's still open
+about it — namely, whether it's the same Supabase project as Task
+45's Reseller product or a separate one, which Task 47 does not yet
+resolve.)
 
 **Not yet done, this session, deliberately — documentation and
 decision-recording only,** matching Task 0 and Task 45's own closing
@@ -7064,5 +7083,74 @@ Handoff Convention" below for how commands are run from that device.
 That dump belongs under a new `db/migrations/` (or similar) directory
 in this repo, committed the same way any other change here is — via
 a patch, per the convention immediately below, not applied directly.
+
+---
+
+## Task 47 — Product owner states the platform-identity vision (fully hidden underlying rail) and resolves Task 46/e's database engine question [ ]
+
+**Scope note, read first:** documentation/decision-record only, same
+discipline as Task 0/Task 45/Task 46's own closing notes. No code, no
+schema, no dashboard UI this session.
+
+**a. The vision, stated directly by the product owner this session.**
+This backend is not meant to read to anyone as a wrapper around
+Korapay/Paystack/JuicyWay/Payscribe/etc. — it is meant to **be** the
+payment provider a business or its customers interact with, full
+stop. This goes further than the white-label checkout page already
+decided at Task 0/d-1 and Task 45/e: those cover a business's own
+branding on top of this platform; this is about **this platform's own
+identity being the only one visible**, with which underlying rail
+actually processed a given transaction, and even which payment method
+was used, treated as an internal implementation detail rather than
+something surfaced to the end user. Not yet addressed, and genuinely
+open for whichever session picks this up: how this interacts with any
+provider-specific disclosure a payment method may legally require at
+checkout (e.g., redirect-based methods that briefly show a provider's
+own domain) — flagged here, not resolved.
+
+**b. Database engine and hosting — resolved.** Supabase, confirmed
+directly by the product owner this session, closing the question Task
+46/e left open. Still genuinely open, not addressed this session:
+whether this backend's dashboard tables live in the same Supabase
+project as Task 45's Reseller/VTU product or a separate one — Task
+46/e's original risk-profile note (this backend moves real money
+across ten providers; the Reseller product is airtime/VTU) still
+applies and hasn't been weighed against the one-project convenience
+argument.
+
+**c. Dashboard parity target — reference material produced this
+session, not new scope beyond Task 46/b's own admin-capability list.**
+Alongside the admin roles already decided (per-business country
+allowlist toggling, per-card activate/deactivate), the dashboard
+should reach feature parity with what a Korapay-style dashboard
+offers a business day to day:
+- Transaction history
+- Settlement / payout reports
+- Balance overview
+- Webhook delivery logs
+- Refund / dispute handling
+- API key / access management
+
+This list is a target, not a schema — Task 46/d's proposed
+`businesses`/`admins`/`business_country_permissions`/`cards` tables
+are still the only schema on record, and none of the above has been
+mapped onto concrete tables or endpoints yet.
+
+**d. Interaction with Task 46/d's proposed schema — flagged, not
+resolved.** This session's (a) (hiding which underlying rail and
+payment method handled a transaction) implies transaction-level
+records will need to carry that provider/method detail internally
+while never exposing it through any dashboard view or API response a
+business or its customers can see — a filtering rule the proposed
+schema doesn't yet account for, since it predates this session's
+identity-concealment direction. Worth resolving before any dashboard
+read endpoint is built, not before the schema is created.
+
+**Not yet done, this session, deliberately:** no schema change, no
+Supabase project provisioned, no dashboard code, no filtering logic
+for hiding provider/method detail. This task exists so the next
+session has the platform-identity vision and the resolved database
+engine on record, plus the two genuinely-open questions in (a) and
+(d) called out explicitly.
 
 ---

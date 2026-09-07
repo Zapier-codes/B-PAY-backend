@@ -3,7 +3,50 @@
 > **▶ START HERE — read this box only, then go straight to work. Skip
 > everything else below unless you get stuck.**
 >
-> **Newest note (2026-09-07, latest of all) — Task 49/a's
+> **Newest note (2026-09-07, latest of all) — Task 49/a's amount-unit
+> question researched and resolved for JuicyWay; Payscribe still
+> blocked. Doc-only, no code this session — product owner explicitly
+> asked for documentation only, implementation left for the next
+> session.** JuicyWay's own docs
+> (`docs.juicyway.com/payments/initialize-payment`) directly answer
+> the question the previous note left open: the `amount` field is
+> documented under "Universal Parameters — required for all payment
+> initializations regardless of the payment method" as **"Payment
+> amount in minor units (e.g., cents, kobo) ... Example: 10000 =
+> $100.00 USD"** — i.e. subunit, ×100 — and "universal" means this is
+> stated to apply across every one of JuicyWay's supported currencies
+> (`NGN, USD, CAD, USDT, USDC`), not just fiat ones; no
+> stablecoin-specific override was found on that page or its linked
+> method-specific guides (cards/bank-transfers/stablecoins-transfer/
+> binance-pay/interac). This is a real primary-source citation, the
+> same bar this file has applied to Korapay/Paystack, not a guess —
+> see the note below this one and Task 49/a's own entry for why a
+> blanket "use subunits/kobo for everything" rule was explicitly
+> rejected instead of applied here (it would have silently broken
+> Korapay, which is confirmed to want base units). **Payscribe
+> re-searched, same result as every prior session: no public API
+> reference site found** — stays blocked, not resolved by assumption.
+> **Explicitly not done this session, per direct product-owner
+> instruction:** `getAmountFormat`'s `juicyway` case in
+> `utils/helpers.js` still throws, and `providers/juicyway.js` still
+> sends `data.amount` raw with no `convertAmountForProvider()` call —
+> both were drafted and verified in-session (`node --check` clean,
+> throwaway sanity check confirmed `getAmountFormat('juicyway', 'USD')`
+> would return `{ unit: 'subunit', multiplier: 100 }`) but then
+> reverted (`git checkout`) rather than committed, so `origin/main`'s
+> actual behavior is unchanged by this session. **Next session's
+> concrete, unblocked next step:** apply exactly that change — add the
+> `juicyway` case to `getAmountFormat` per the citation above, and wire
+> `convertAmountForProvider(data.amount, 'juicyway', data.currency)`
+> into `providers/juicyway.js`'s `processPayment`, matching the
+> existing `paystack.js`/`korapay.js` pattern. That change does **not**
+> touch the endpoint-path (`/v1/charges` vs. the confirmed-correct
+> `/payment-sessions`), auth-header, or payload-shape bugs already
+> tracked separately under Task 45a/45b — those stay their own,
+> separate leaf, not bundled into the amount-unit fix. **Patch for
+> this session covers `handover.md` only.**
+>
+> **Newest note (2026-09-07, previous) — Task 49/a's
 > currency-list half implemented in code; its amount-unit half and
 > Task 49/b (Remita) remain open.** Per the standing mandatory
 > task-splitting rule, Task 49 splits into its own existing a
@@ -7388,7 +7431,7 @@ Prestmit geography) called out explicitly rather than assumed away.
 
 ---
 
-## Task 49 — Product owner resolves JuicyWay's stablecoin question and Remita's base-URL ambiguity [ ] (a's currency-list edit done; a's amount-unit question + b still open)
+## Task 49 — Product owner resolves JuicyWay's stablecoin question and Remita's base-URL ambiguity [ ] (a's currency-list edit done; a's amount-unit rule RESEARCHED+CITED, not yet implemented; b still open)
 
 **Scope note, read first:** this task was originally written as a
 decision-record only, per this file's own established pattern (Task
@@ -7408,14 +7451,42 @@ payment.md`'s and `.../cards.md`'s parameter-docs list (`NGN, USD, CAD,
 USDT, USDC`) over `overview.md`'s narrower `NGN, CAD` and over the same
 cards.md page's own contradictory 422-error text. **Done (2026-09-07):**
 this list is now in `CONFIRMED_PROVIDER_CURRENCIES.juicyway` in
-`utils/helpers.js`. **Still not done, deliberately:** confirming the
-amount-unit rule (base units vs. subunits) specifically for a
-stablecoin-denominated JuicyWay charge, which no source audited so far
-has addressed — `getAmountFormat`'s `juicyway` case still throws for
-exactly this reason (still throws today, per Task 9's own guard against
-silently guessing on real money); currency-list confirmation and
-amount-unit confirmation are two different questions and only the
-first is resolved by this note.
+`utils/helpers.js`. **Amount-unit rule — researched and cited
+(2026-09-07), implementation deliberately deferred:**
+`docs.juicyway.com/payments/initialize-payment` documents `amount`
+under "Universal Parameters — required for all payment
+initializations regardless of the payment method" as "Payment amount
+in minor units (e.g., cents, kobo) ... Example: 10000 = $100.00 USD"
+— subunit, ×100, stated to apply across every supported currency
+(`NGN, USD, CAD, USDT, USDC`) including the stablecoins, since it's
+listed as universal rather than per-method; no stablecoin-specific
+override found on that page or its linked method-specific guides. This
+is a real citation, not a guess — same bar as the confirmed
+Korapay/Paystack rules. **A blanket "use subunits/kobo for every
+provider" rule was considered and explicitly rejected** instead of
+applied here: Korapay is confirmed (Task 7,
+developers.korapay.com/docs/checkout-redirect) to want *base* units
+with no multiplier, so a blanket subunit rule would silently
+100x-overcharge every Korapay transaction — the per-provider,
+per-source-confirmed approach stays the rule. **Not yet built, per
+direct product-owner instruction this session (documentation only):**
+`getAmountFormat`'s `juicyway` case in `utils/helpers.js` still throws,
+and `providers/juicyway.js` still sends `data.amount` raw with no
+`convertAmountForProvider()` call. A draft of both changes was written
+and verified in-session (`node --check` clean; a throwaway sanity
+check confirmed `getAmountFormat('juicyway', 'USD')` would return
+`{ unit: 'subunit', multiplier: 100 }`, and korapay/paystack stayed
+unchanged) but then reverted rather than committed — `origin/main`'s
+actual runtime behavior is unchanged by this session. **Concrete next
+step, fully unblocked:** re-apply that same change — add the
+`juicyway` case to `getAmountFormat` per the citation above, and wire
+`convertAmountForProvider(data.amount, 'juicyway', data.currency)`
+into `providers/juicyway.js`'s `processPayment`, matching the existing
+`paystack.js`/`korapay.js` pattern exactly. Keep it scoped to only the
+amount-unit fix — don't bundle in the separate, already-tracked
+endpoint-path (`/v1/charges` vs. the confirmed-correct
+`/payment-sessions`), auth-header, or payload-shape bugs under Task
+45a/45b; those remain their own leaf.
 
 **b. Remita — base URL supplied directly by the product owner:
 `https://api.remita.net/`.** Remita's own research section above found
@@ -7442,9 +7513,14 @@ neither was supplied alongside the base URL.
 `CONFIRMED_PROVIDER_CURRENCIES` edit, no `providers/remita.js`, no
 sandbox call made against `api.remita.net` to verify it responds as
 expected. This task exists so the next session has both resolutions on
-record, plus the specific follow-up questions (JuicyWay stablecoin
-amount-unit rule; Remita's actual paths and auth scheme under the new
-host) called out explicitly.
+record, plus the specific follow-up questions (Remita's actual paths
+and auth scheme under the new host) called out explicitly — the
+JuicyWay amount-unit follow-up question referenced here in earlier
+sessions is now researched and cited under part **a** above, still
+needs implementing, not still needing research. **Payscribe, checked
+again this session:** still no public API reference site found (same
+result as every prior session's search) — stays blocked, not resolved
+by assumption.
 
 ---
 

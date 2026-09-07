@@ -16,8 +16,6 @@ services:
       # Provider Keys (Add these in Render Dashboard for security)
       - key: PAYSTACK_SECRET_KEY
         sync: false
-      - key: PAYSCRIBE_SECRET_KEY
-        sync: false
       - key: JUICYWAY_SECRET_KEY
         sync: false
       - key: KORAPAY_SECRET_KEY

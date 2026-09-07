@@ -3,7 +3,36 @@
 > **▶ START HERE — read this box only, then go straight to work. Skip
 > everything else below unless you get stuck.**
 >
-> **Newest note (2026-09-07, latest of all) — Task 49/a's amount-unit
+> **Newest note (2026-09-07, latest of all) — Task 51 written:
+> product owner has decided the routing model this repo has been
+> waiting on since Task 10/49. Payscribe is fully removed from the
+> codebase this session (code done: `providers/payscribe.js` deleted,
+> all imports/switch-cases/webhook-stub/env-key references removed
+> from `routes.js`, `utils/helpers.js`, `render.yaml` — see Task 51's
+> own entry below for the full file list). The routing model itself —
+> Juicyway default for all international rails, Korapay default for
+> all African rails, every other provider that overlaps a given rail
+> demoted to a full (not stub) fallback — is decision-record only in
+> this note; see Task 51 below for the actual modular table, which is
+> deliberately laid out so a future session can edit one rail's row
+> without touching the others. **Not done this session:** the
+> `ROUTING_RULES`/`getProvider` code in `routes.js` has NOT yet been
+> rewritten to match this new model beyond the one Payscribe-driven
+> change (`bank_transfer` repointed from `payscribe` to `korapay`,
+> since Payscribe no longer exists) — Korapay-as-default-for-all-
+> African-rails and Juicyway-as-default-for-all-international-rails
+> is a broader change (it also touches `collect_payment`, which
+> currently defaults to `paystack`) that the product owner asked to be
+> recorded as a table first, not implemented yet. **Per the Patch
+> Handoff Convention, a patch file covering this session's Payscribe-
+> removal code + this `handover.md` update was generated and handed to
+> the product owner directly — not applied or pushed by this
+> session.** Next session's concrete next step: implement Task 51's
+> table into `ROUTING_RULES` and `getProvider()`, and build out real
+> (non-stub) implementations for whichever fallback providers are
+> currently stubs, per that task's own capability matrix.**
+>
+> **Newest note (2026-09-07, previous) — Task 49/a's amount-unit
 > question researched and resolved for JuicyWay; Payscribe still
 > blocked. Doc-only, no code this session — product owner explicitly
 > asked for documentation only, implementation left for the next
@@ -7617,5 +7646,126 @@ recommended first target — closest fit to this repo's existing
 provider shape and the only one with a confirmed working example) —
 and so it doesn't conflate this task's findings with the still-open
 classic-RRR-flow questions already on record from earlier research.
+
+---
+## Task 51 — Routing model decided: Juicyway default for international rails, Korapay default for African rails, all overlapping providers are full fallbacks; Payscribe fully removed [ ]
+
+**Scope note, read first:** two things happened this session and they
+are tracked separately on purpose — (1) Payscribe removal is **done,
+in code**, per (a) below; (2) the new routing model is **decision-
+record only** — the table in (b) is what `ROUTING_RULES`/`getProvider`
+in `routes.js` must be rewritten to match, not a description of what
+the code already does. Do not conflate the two when picking this task
+back up.
+
+### a. Payscribe removal — DONE this session (code + docs)
+
+Per direct product-owner instruction. Every reference removed:
+- `providers/payscribe.js` — deleted entirely.
+- `routes.js` — import removed; `getProvider()` case removed;
+  `webhookHandlers.payscribe` stub removed; `ROUTING_RULES.bank_transfer`
+  repointed from `'payscribe'` to `'korapay'` (Payscribe was the only
+  provider that rule pointed at, so this was a forced change, not yet
+  the broader Task 51/b model below); stale comments referencing
+  Payscribe updated or removed throughout.
+- `utils/helpers.js` — `payscribe` entry removed from the key map, the
+  base-URL map, `validateProviderKeys()`'s provider list,
+  `getHealthStatus()`'s provider list, and the `getAmountFormat`
+  switch's `case 'payscribe'` (that case was shared with `juicyway`;
+  `juicyway`'s own still-open amount-unit question, per Task 49/a, is
+  untouched by this removal).
+- `render.yaml` — `PAYSCRIBE_SECRET_KEY` env entry removed.
+- Confirmed via `grep -rin payscribe` across the repo (excluding this
+  file's own historical record, which intentionally keeps Payscribe
+  mentions as a record of past research/decisions) — zero remaining
+  live references in `.js`/`.json`/`.yaml` files.
+- **Per the Patch Handoff Convention:** a `git format-patch` file
+  covering all of the above was generated and handed to the product
+  owner directly this session — not applied or pushed by this session.
+
+### b. New routing model — DECISION RECORDED, NOT YET IMPLEMENTED IN CODE
+
+**Stated directly by the product owner this session:** stop routing by
+abstract `action` string alone (Task 10's still-open gap). Instead,
+every rail belongs to exactly one of two domains — **international**
+or **African** — each with one default provider that is expected to
+be able to fully cover that domain by itself, and every other provider
+that overlaps the same domain becomes a **full fallback**: not a stub,
+not "not yet implemented" — a fallback must actually work end-to-end,
+because the product owner's own stated reason for keeping fallbacks
+fully built is that **any fallback can be promoted to default at any
+time**, on short notice, so it can't be allowed to lag behind the
+current default in capability.
+
+**Table format is deliberately modular — read this before editing:**
+each rail-domain gets its own table (b-1, b-2 below), and each table's
+rows are independent of the other table's rows. A future session
+editing, say, Korapay's fallback list for African rails should only
+need to touch table b-2 — not b-1, not the capability matrix in (c).
+When you edit a table, **add a dated one-line changelog entry under
+that same table** (see the empty "Changelog" line under each) rather
+than silently overwriting the previous row — this file's own existing
+convention (see the "Newest note" stacking pattern in the START HERE
+box) is to preserve what changed and when, not just the current state.
+
+#### b-1. International rails
+
+| Field | Value |
+|---|---|
+| Domain covers | Cross-border collection, international bank transfer/receive, stablecoin (USDT/USDC), any currency outside NGN/GHS/KES/ZAR/XAF/XOF/EGP/TZS |
+| **Default** | **Juicyway** |
+| Fallback 1 | Korapay (covers NGN/GHS/KES/ZAR/USD/XAF/XOF/EGP/TZS overlap only — not CAD/USDT/USDC) |
+| Fallback 2 | Paystack (NGN/GHS/ZAR/KES/USD overlap only) |
+| Fallback 3 | Flutterwave — **not yet implemented** (`providers/flutterwave.js` does not exist; blocked on the v3-vs-v4 version decision, see this file's own Flutterwave research section above) — must be built before it can actually serve as a fallback, not just be listed as one |
+| Changelog | 2026-09-07 — table created this session, per product-owner direction (this task). |
+
+#### b-2. African rails
+
+| Field | Value |
+|---|---|
+| Domain covers | Local NGN/GHS/KES/ZAR/XAF/XOF/EGP/TZS collection, local bank transfer, payout/disbursement, bank-list lookup |
+| **Default** | **Korapay** |
+| Fallback 1 | Paystack (collection overlap only — no payout/bank-transfer/bank-list today; would need `processPayout`/`verifyPayout`/`getBanks` built to be a full fallback for those) |
+| Fallback 2 | Juicyway (NGN overlap only, collection-side; no payout/bank-transfer/bank-list support at all) |
+| Fallback 3 | Flutterwave — **not yet implemented**, same blocker as b-1 |
+| Changelog | 2026-09-07 — table created this session, per product-owner direction (this task). |
+
+### c. Capability matrix (cross-cutting reference — do not treat as a third routing table)
+
+This is a read-only summary derived from (b-1)/(b-2) above, kept here
+so a session doesn't have to reconstruct it by re-reading both tables.
+Edit (b-1)/(b-2) first if something changes; update this matrix to
+match afterward, not the other way around.
+
+| Capability | Juicyway | Korapay | Paystack | Flutterwave |
+|---|:---:|:---:|:---:|:---:|
+| International collection | Default | Fallback | Fallback | Fallback (not implemented) |
+| African-rails collection | Fallback | Default | Fallback | Fallback (not implemented) |
+| Local bank transfer | — | Default | — | Fallback (not implemented) |
+| Payout / disbursement | — | Default | Stub (not a real fallback yet) | Fallback (not implemented) |
+| Verify payout | — | Default | Stub | Fallback (not implemented) |
+| Bank list lookup | — | Default | — | Fallback (not implemented) |
+| Webhook verification | Done | Done | Done | Not implemented |
+| Confirmed amount-unit rule | Still unconfirmed (Task 49/a) | Confirmed | Confirmed | Unconfirmed |
+
+### d. Not yet done, this session, deliberately
+
+- `ROUTING_RULES` in `routes.js` has NOT been rewritten to the
+  domain-based (international/African) model above — it still routes
+  by the older four-action shape (`collect_payment`, `bank_transfer`,
+  `payout`, `international`), with only the forced Payscribe→Korapay
+  `bank_transfer` change from (a) applied. Rewriting `getProvider()`
+  and `ROUTING_RULES` to actually pick "Juicyway-unless-African-rail,
+  then Korapay-unless-fallback-requested" is real routing-logic work,
+  scoped for next session, not done here.
+- Paystack's `processPayout`/`verifyPayout`/`getBanks` and all of
+  Flutterwave remain unbuilt. Per (b) above, they cannot honestly be
+  called full fallbacks until that changes — flagging this explicitly
+  so a future session doesn't assume "fallback" in this table means
+  "already works."
+- No currency/country logic was added to auto-detect which domain
+  (international vs. African) an incoming request belongs to — that
+  detection logic is itself unscoped work, needed before the tables
+  above can drive real routing decisions.
 
 ---

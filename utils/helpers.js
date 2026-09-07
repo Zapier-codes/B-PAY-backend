@@ -205,10 +205,6 @@ export function getProviderKey(provider, type) {
       public: process.env.PAYSTACK_PUBLIC_KEY || '',
       secret: process.env.PAYSTACK_SECRET_KEY || '',
     },
-    payscribe: {
-      public: process.env.PAYSCRIBE_PUBLIC_KEY || '',
-      secret: process.env.PAYSCRIBE_SECRET_KEY || '',
-    },
     korapay: {
       public: process.env.KORAPAY_PUBLIC_KEY || '',
       secret: process.env.KORAPAY_SECRET_KEY || '',
@@ -218,7 +214,7 @@ export function getProviderKey(provider, type) {
   const providerKeys = keyMap[providerLower];
   
   if (!providerKeys) {
-    throw new Error(`Unsupported provider: ${provider}. Supported: paystack, payscribe, korapay, juicyway`);
+    throw new Error(`Unsupported provider: ${provider}. Supported: paystack, korapay, juicyway`);
   }
   
   const key = providerKeys[type];
@@ -252,12 +248,7 @@ const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 // file directly this session. Paystack and Korapay were already known
 // to require one (per the task description); JuicyWay does too
 // (providers/juicyway.js forwards `data.customer?.email` with no
-// default, same shape as Paystack). Payscribe is deliberately
-// excluded: its processPayment() already defaults to a placeholder
-// email ('customer@example.com') when none is given, so it doesn't
-// actually require one at this validation layer — Payscribe silently
-// accepting a fake email is a separate, pre-existing concern, not
-// something to newly block here.
+// default, same shape as Paystack).
 const PROVIDERS_REQUIRING_EMAIL = ['paystack', 'korapay', 'juicyway'];
 
 export function isValidCurrencyCode(currency) {
@@ -273,7 +264,7 @@ export function providerRequiresEmail(provider) {
 }
 
 export function validateProviderKeys() {
-  const providers = ['paystack', 'payscribe', 'juicyway', 'korapay'];
+  const providers = ['paystack', 'juicyway', 'korapay'];
   const missing = [];
   
   providers.forEach(provider => {
@@ -333,19 +324,18 @@ export function sanitizePhone(phone) {
 // the same across providers — see handover.md's "Confirmed research
 // findings" section for the primary-source evidence behind each case
 // below. This is a Korapay-focus partial pass on Task 9: only
-// Paystack and Korapay have confirmed rules right now. JuicyWay and
-// Payscribe are still unconfirmed (Payscribe is also blocked on docs;
-// see handover.md), so both throw here rather than silently guessing
+// Paystack and Korapay have confirmed rules right now. JuicyWay is
+// still unconfirmed, so it throws here rather than silently guessing
 // a multiplier — a wrong guess would either overcharge/undercharge by
 // 100x or send garbage upstream, so "fail loud" is safer than "fail
-// silent" until those two get their own confirmation pass. The
-// currency-list-expansion half of Task 9 (pulling the real list from
-// Mavins-web) is NOT done here — see handover.md's Task 9 note for
-// why that's a separate, still-open piece of work.
+// silent" until it gets its own confirmation pass (see Task 49/a).
+// The currency-list-expansion half of Task 9 (pulling the real list
+// from Mavins-web) is NOT done here — see handover.md's Task 9 note
+// for why that's a separate, still-open piece of work.
 // Currency lists confirmed against primary sources (see handover.md's
 // "Confirmed research findings" section). Only Paystack and Korapay
-// have confirmed lists as of Task 10 (Korapay-focus partial) — JuicyWay
-// and Payscribe are deliberately omitted rather than guessed; see
+// have confirmed lists as of Task 10 (Korapay-focus partial) —
+// JuicyWay is deliberately omitted rather than guessed; see
 // getSupportedCurrencies() below and handover.md's Task 10 note.
 //
 // Korapay's list cross-checked against Mavins-web's reconciled
@@ -384,9 +374,9 @@ const CONFIRMED_PROVIDER_CURRENCIES = {
 
 // Returns the confirmed supported-currency list for a provider, or null
 // if that provider's list hasn't been confirmed against a primary
-// source yet (Payscribe). Callers MUST treat null as "can't validate
-// yet" — not as "anything goes" — see routes.js's
-// assertCurrencySupported for how this is actually enforced.
+// source yet. Callers MUST treat null as "can't validate yet" — not
+// as "anything goes" — see routes.js's assertCurrencySupported for
+// how this is actually enforced.
 export function getSupportedCurrencies(provider) {
   return CONFIRMED_PROVIDER_CURRENCIES[(provider || '').toLowerCase()] || null;
 }
@@ -420,16 +410,14 @@ export function getAmountFormat(provider, currency) {
     }
 
     case 'juicyway':
-    case 'payscribe':
-      // Not yet confirmed for either provider. Payscribe is still
-      // waiting on a docs link. JuicyWay's CURRENCY LIST was confirmed
-      // by the product owner (Task 49/a, see CONFIRMED_PROVIDER_CURRENCIES
-      // above) but that is a separate question from the amount-unit
-      // rule below — no source audited so far has addressed base units
-      // vs. subunits for a JuicyWay charge (stablecoin-denominated or
-      // otherwise), so this still throws rather than assuming ×100 or
-      // ×1. A silent wrong guess here is a real-money bug, not a
-      // cosmetic one.
+      // JuicyWay's CURRENCY LIST was confirmed by the product owner
+      // (Task 49/a, see CONFIRMED_PROVIDER_CURRENCIES above) but that
+      // is a separate question from the amount-unit rule below — no
+      // source audited so far has addressed base units vs. subunits
+      // for a JuicyWay charge (stablecoin-denominated or otherwise),
+      // so this still throws rather than assuming ×100 or ×1. A
+      // silent wrong guess here is a real-money bug, not a cosmetic
+      // one.
       throw new Error(
         `getAmountFormat: amount-unit rule for "${provider}" is not yet confirmed — see handover.md Task 49/a note before adding one`
       );
@@ -494,10 +482,6 @@ export function getProviderBaseUrl(provider) {
       development: 'https://api.paystack.co',
       production: 'https://api.paystack.co',
     },
-    payscribe: {
-      development: 'https://sandbox.payscribe.ng/api/v1',
-      production: 'https://api.payscribe.ng/api/v1',
-    },
     juicyway: {
       development: 'https://api-sandbox.spendjuice.com',
       production: 'https://api.spendjuice.com',
@@ -552,7 +536,7 @@ export async function retryApiCall(fn, maxRetries = 3, provider = 'unknown') {
 // ==================================================
 
 export function getHealthStatus() {
-  const providers = ['paystack', 'payscribe', 'juicyway', 'korapay'];
+  const providers = ['paystack', 'juicyway', 'korapay'];
   const providerStatus = {};
   
   providers.forEach(provider => {

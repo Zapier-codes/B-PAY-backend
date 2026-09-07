@@ -1,6 +1,5 @@
 import express from 'express';
 import { Paystack } from './providers/paystack.js';
-import { Payscribe } from './providers/payscribe.js';
 import { Juicyway } from './providers/juicyway.js';
 import { Korapay } from './providers/korapay.js';
 import { log, formatPayload, generateReference, getSupportedCurrencies, isValidCurrencyCode, isValidEmail, providerRequiresEmail, requireInternalApiKey } from './utils/helpers.js';
@@ -95,7 +94,7 @@ router.post('/payout', requireInternalApiKey, async (req, res) => {
 //
 // Guards against calling a nonexistent method on a provider that
 // hasn't implemented payout verification yet (today, everything
-// except Korapay — Paystack/Payscribe/JuicyWay per Task 43's own
+// except Korapay — Paystack/JuicyWay per Task 43's own
 // "stub until fully integrated" rule) with a clear 501, rather than
 // letting `provider.verifyPayout is not a function` reach the client
 // as an unhandled crash.
@@ -155,7 +154,7 @@ router.get('/banks', async (req, res) => {
 
 const ROUTING_RULES = {
   collect_payment: 'paystack',
-  bank_transfer: 'payscribe',
+  bank_transfer: 'korapay',
   payout: 'korapay',
   international: 'juicyway',
 };
@@ -164,11 +163,11 @@ const ROUTING_RULES = {
 // Korapay only" section): ROUTING_RULES above still only maps an
 // abstract `action` string to a provider with zero awareness of
 // currency, exactly the gap this task describes. A full fix (pick a
-// provider from currency+country, across all four providers) isn't
+// provider from currency+country, across all providers) isn't
 // possible yet — Paystack and Korapay are the only two providers with
 // a confirmed currency list (see getSupportedCurrencies() in
-// utils/helpers.js); JuicyWay and Payscribe aren't confirmed and we
-// have no working keys to verify a guess against.
+// utils/helpers.js); JuicyWay isn't confirmed and we have no working
+// keys to verify a guess against.
 //
 // What this DOES do now: once a provider has been chosen (via explicit
 // `provider`, or via `action` -> ROUTING_RULES), if that provider is
@@ -176,11 +175,13 @@ const ROUTING_RULES = {
 // checked against it *before* ever calling the provider. A mismatch
 // returns a clear 400 naming the currency and the provider — not the
 // silent 100-guaranteed-to-fail-downstream behavior the task
-// description calls out. For juicyway/payscribe this check is skipped
-// entirely (falls through, same behavior as before this task) since
-// there's nothing confirmed yet to validate against — see
-// handover.md's Task 10 note for what's left once those two providers
-// have their own confirmed currency lists.
+// description calls out. For juicyway this check is skipped entirely
+// (falls through, same behavior as before this task) since there's
+// nothing confirmed yet to validate against — see handover.md's
+// Task 10 note for what's left once it has its own confirmed
+// currency list. See also Task 51 for the broader domain-based
+// (international/African) routing model this task is expected to
+// eventually be superseded by.
 // Task 11: basic request-shape validation on POST /pay, run before any
 // provider is even resolved. Previously the only check here was
 // `if (!amount)` — which passed for negative numbers, non-numeric
@@ -214,7 +215,7 @@ function assertValidCurrencyFormat(currency) {
 // Only enforced for providers confirmed (by reading their
 // processPayment() call sites, see utils/helpers.js's
 // PROVIDERS_REQUIRING_EMAIL note) to forward the email with no
-// fallback default. Payscribe is excluded on purpose — see that note.
+// fallback default.
 function assertValidCustomerEmail(providerName, customer) {
   if (!providerRequiresEmail(providerName)) return;
   if (!isValidEmail(customer?.email)) {
@@ -256,9 +257,9 @@ function assertValidCustomerEmail(providerName, customer) {
 // return a cached result for a repeated reference — the safer
 // assumption, and the one both providers' primary docs actually
 // support, is that a reused reference gets rejected as a duplicate.
-// JuicyWay and Payscribe: no format research done this session either
-// (out of the narrowed Korapay-focus scope) — non-empty-string is the
-// only check applied to them.
+// JuicyWay: no format research done this session either (out of the
+// narrowed Korapay-focus scope) — non-empty-string is the only check
+// applied to it.
 function assertValidReferenceFormat(providerName, reference) {
   if (reference === undefined || reference === null) return; // omitted -> generateReference() below produces a safe one
 
@@ -317,7 +318,6 @@ function clientSafeMessage(error, fallback) {
 const getProvider = (name) => {
   switch (name.toLowerCase()) {
     case 'paystack': return new Paystack();
-    case 'payscribe': return new Payscribe();
     case 'juicyway': return new Juicyway();
     case 'korapay': return new Korapay();
     default: throw new Error(`Provider '${name}' not supported`);
@@ -331,21 +331,13 @@ const getProvider = (name) => {
 // real signature/checksum verification — see
 // providers/paystack.js#verifyWebhookSignature,
 // providers/korapay.js#verifyWebhookSignature, and
-// providers/juicyway.js#verifyWebhookSignature. Payscribe (Task 6) is
-// still a stub that just acknowledges receipt without verifying
-// anything yet (blocked on PENDING_DOCS in handover.md), so the
-// provider doesn't retry-storm us while real handling isn't
-// implemented for it.
+// providers/juicyway.js#verifyWebhookSignature.
 //
 // Raw-body note from Task 2 has now been checked against Paystack's,
 // Korapay's, and Juicyway's own official examples and does NOT apply
 // to any of the three — all hash/checksum the express.json()-parsed-
 // and-re-serialized body (or, for Juicyway, a checksum field inside
-// that body), not raw bytes. Leaving the note for Payscribe still,
-// since that provider's actual signature requirements haven't been
-// confirmed yet (see handover.md's findings section) — it may turn
-// out to genuinely need
-// `express.json({ verify: (req, res, buf) => { req.rawBody = buf; } })`.
+// that body), not raw bytes.
 const webhookHandlers = {
   paystack: async (req) => {
     const provider = new Paystack();
@@ -463,11 +455,6 @@ const webhookHandlers = {
 
     return { received: true };
   },
-  payscribe: async (req) => {
-    log(`Payscribe webhook stub received (no verification yet): ${formatPayload(req.body)}`);
-    // TODO (Task 6): find + verify Payscribe's signature scheme, then handle event
-    return { received: true };
-  },
 };
 
 // ==================================================
@@ -523,7 +510,7 @@ router.post('/pay', requireInternalApiKey, async (req, res) => {
     // Task 11: customer.email is required (and must look like an
     // email) for providers whose processPayment() forwards it with no
     // fallback default — see utils/helpers.js's PROVIDERS_REQUIRING_EMAIL
-    // note for exactly which providers and why Payscribe is excluded.
+    // note for exactly which providers.
     assertValidCustomerEmail(providerName, customer);
 
     // Task 12 (in-scope half): if the client supplied their own
@@ -635,9 +622,7 @@ router.get('/verify', async (req, res) => {
 
 // POST /api/webhooks/:provider
 // Paystack (Task 3), Korapay (Task 4), Juicyway (Task 5): real
-// signature/checksum verification, 401 on mismatch. Payscribe (Task 6):
-// still a routing-skeleton stub from Task 2 — always ack 200, nothing
-// to reject on yet.
+// signature/checksum verification, 401 on mismatch.
 router.post('/webhooks/:provider', async (req, res) => {
   const { provider } = req.params;
 

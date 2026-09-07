@@ -3,7 +3,39 @@
 > **▶ START HERE — read this box only, then go straight to work. Skip
 > everything else below unless you get stuck.**
 >
-> **Newest note (2026-09-07, latest of all) — Task 47 written: product
+> **Newest note (2026-09-07, latest of all) — Task 48 written: full
+> public-facing service/rail catalog assembled as "the vision doc,"
+> gift cards confirmed in scope, and Remita/Flutterwave's rails
+> cataloged from this file's own existing research.** Three things,
+> all documentation/decision-record only, no code this session:
+> **(1)** the product owner confirms gift-card/crypto off-ramp
+> services (via Prestmit) are intentionally in scope — **resolves
+> Task 0/a-9's open question** ("was Prestmit's inclusion intentional
+> or a mix-up?" — it was intentional), presented publicly as "Gift
+> Cards," Prestmit itself never named, consistent with Task 47/a.
+> **(2)** the full consolidated country footprint is now on record:
+> **Nigeria, Ghana, Kenya, South Africa, Cameroon, Côte d'Ivoire,
+> Egypt, Tanzania, plus USD cross-border** — derived from this file's
+> own `CONFIRMED_PROVIDER_CURRENCIES` (Korapay + Paystack overlap),
+> not new research. JuicyWay and Prestmit are explicitly excluded from
+> that count as still-unconfirmed, not silently folded in. **(3)**
+> Remita's and Flutterwave's own rails — already fully audited
+> elsewhere in this file (Remita's research above; Flutterwave's own
+> discovery pass above) — are now summarized in one place as the
+> platform's own rail list, for use in the public service catalog:
+> Remita contributes RRR-based collection (card/bank transfer/USSD/
+> in-branch) plus a structurally separate Billing Gateway surface;
+> Flutterwave contributes card charges (with v4's field-level
+> encryption), bank transfer, mobile money, USSD, wallet, virtual
+> accounts, and payouts (domestic NGN + international EUR/GBP/USD/ZAR
+> with recipient+sender KYC, plus stablecoin-denominated settlement).
+> Full detail under Task 48 below, including which genuinely-open
+> items from those two providers' own research (Flutterwave's v3-vs-v4
+> choice; Remita's base-URL/auth-scheme ambiguity) still block actually
+> building either provider file. **Patch for this session covers
+> `handover.md` only**, per this repo's own Patch Handoff Convention.
+>
+> **Newest note (2026-09-07, previous) — Task 47 written: product
 > owner states the underlying vision this repo is actually building
 > toward, and resolves one of Task 46's open questions.** Two things,
 > both scope/decision-record only, no code this session: **(1)** this
@@ -7152,5 +7184,102 @@ for hiding provider/method detail. This task exists so the next
 session has the platform-identity vision and the resolved database
 engine on record, plus the two genuinely-open questions in (a) and
 (d) called out explicitly.
+
+---
+
+## Task 48 — Gift cards confirmed in scope; full public-facing service/rail catalog assembled from this file's own existing provider research [ ]
+
+**Scope note, read first:** documentation/decision-record only, same
+discipline as Tasks 0/45/46/47. No code, no schema, no new provider
+files this session. Everything catalogued below was already audited
+elsewhere in this file — this task's job is only to pull it into one
+place as the public-facing vision, per the product owner's direction.
+
+**a. Gift cards — confirmed in scope, resolves Task 0/a-9.** Task
+0/a-9 flagged an open question: was Prestmit's inclusion in this
+repo's ten-provider list intentional, or a mix-up with a different
+kind of provider (Prestmit is a gift-card/crypto off-ramp, not a
+bank/card processor like the other nine)? **The product owner has now
+confirmed, directly, that it was intentional** — gift-card services
+are a real, wanted part of this platform's offering. Per Task 47/a's
+identity-concealment direction, this is presented publicly as
+**"Gift Cards"** — Prestmit itself is never named to end users or
+businesses, same treatment as every other underlying rail.
+
+**b. Consolidated public service list — the vision doc, current
+state.** Bringing together every decision on record across Tasks
+0/45/46/47 and this task:
+- Mobile data, airtime, and eSIM reselling — presented via
+  `telcos.opik.net`, not as individual underlying providers (Lizzysub/
+  Zendit/Accragh stay internal).
+- Reseller wallet management (balances, withdrawals).
+- White-label branded mobile apps (per-reseller APKs).
+- Payment collection (card, bank transfer, mobile money, USSD,
+  virtual accounts) — native, provider-agnostic.
+- Payouts/disbursements — native, **not tied to any one underlying
+  provider** (per the product owner's own correction this session).
+- Gift cards — native, per (a) above.
+- Card issuance — **planned**, to be built on an underlying provider
+  but presented as this platform's own.
+- Cross-border settlement — offered today, since the underlying
+  providers already handle it fully; presented as native.
+- KYC/KYB identity verification, merchant/admin dashboard, settlement/
+  balance reporting — **planned** (Task 46/47).
+
+**c. Country footprint — consolidated, not new research.** Derived
+directly from this file's own `CONFIRMED_PROVIDER_CURRENCIES`
+(`utils/helpers.js`) plus the Task 8d Paystack XOF finding: **Nigeria
+(NGN), Ghana (GHS), Kenya (KES), South Africa (ZAR), Cameroon (XAF),
+Côte d'Ivoire (XOF), Egypt (EGP), Tanzania (TZS), plus USD
+cross-border** — the union of Korapay's and Paystack's own confirmed
+lists. **Explicitly excluded, not silently folded in:** JuicyWay and
+Prestmit's own country/currency coverage remain unconfirmed per their
+own research sections above — this footprint will grow once those are
+resolved, and once Remita/Flutterwave are actually implemented (their
+own geography is cataloged in (d)/(e) below but neither has a
+provider file yet).
+
+**d. Remita's rails, as already audited above — summarized for the
+service catalog, not re-researched.** Two structurally separate
+surfaces exist (see Remita's own research section): **Surface
+1, the classic RRR Payment Gateway** — card, bank transfer, USSD, or
+in-branch settlement of a merchant-generated Retrieval Reference —
+is the one that fits this repo's existing single-call orchestration
+shape and is the one Task 10's routing table should target. **Surface
+2, the Billing Gateway**, is a different biller-payment product
+(school/church/government MDA bill payment) with its own credential
+pair — genuinely a separate scope decision, not yet made, on whether
+this platform wants biller-payments as a distinct offering. Still
+blocking actual implementation: the three-way base-URL/path
+inconsistency and the two incompatible auth schemes already flagged
+in Remita's own research section — unresolved here, still needs the
+product owner's real onboarding material.
+
+**e. Flutterwave's rails, as already audited above — summarized for
+the service catalog, not re-researched.** Once a provider file exists:
+card charges (v4 requires field-level AES-256-GCM encryption of card
+data), bank transfer, mobile money, USSD, wallet, and virtual accounts
+(confirmed as their own separate resource family, not a `charge`
+payment-method value). Payouts (`/direct-transfers`) cover domestic
+NGN with a minimal bank-account payload, and international EUR/GBP/
+USD/ZAR with full recipient KYC (and, for EUR/GBP/USD, sender KYC
+too) — plus scheduled/deferred payout timing, and stablecoin-
+denominated settlement (`USDC`/`USDT`/`RLUSD` listed as ordinary
+currency codes). **Still the primary blocker, unresolved here:** the
+v3-vs-v4 version choice flagged in Flutterwave's own research section
+above — no implementation should start until the product owner picks
+one, for the reasons already on record there (v3 matches this repo's
+existing bearer-key pattern; v4 is the actively-promoted default but
+needs a first-of-its-kind token-refresh manager under this repo's own
+no-persistent-state constraint).
+
+**Not yet done, this session, deliberately:** no schema change, no
+provider files created for Remita or Flutterwave, no gift-card
+endpoint wired, no country-footprint field added to any API response.
+This task exists so the next session has the full public-facing
+service vision, the confirmed country list, and both providers' rail
+catalogs in one place — with the genuinely-open items (Remita's
+auth/base-URL ambiguity, Flutterwave's v3-vs-v4 choice, JuicyWay/
+Prestmit geography) called out explicitly rather than assumed away.
 
 ---

@@ -3,7 +3,30 @@
 > **▶ START HERE — read this box only, then go straight to work. Skip
 > everything else below unless you get stuck.**
 >
-> **Newest note (2026-09-07, latest of all) — Task 53 written: three
+> **Newest note (2026-09-07, latest of all, supersedes the Task 53
+> note below) — Task 54 written: three more product decisions,
+> decision-record only, no code this session.** **(1) KYC/KYB is now
+> default+fallback, not fixed** — PaymentPoint stays the default
+> (licensing/compliance reasons, unchanged from Task 53), but any
+> provider with its own KYC/KYB (Korapay's, specifically) is now a
+> swappable fallback that can be promoted at any time, same shape as
+> Task 51's payment routing. **(2) Two new domains get default+
+> fallback routing: Gift Cards and VTU (airtime/data/eSIM, local and
+> international).** Both default to `telcos.opik.net` — it aggregates
+> the underlying providers, including **two** gift-card providers
+> (Prestmit and Tremendous) behind the scenes. **Flutterwave is the
+> fallback for VTU specifically** (not yet implemented, still blocked
+> on the v3-vs-v4 decision); no gift-card fallback was stated — open
+> item. **(3) Prestmit is no longer a standalone provider candidate**
+> — it's one of `telcos.opik.net`'s internal gift-card providers, same
+> treatment as Lizzysub/Zendit/Accragh for VTU. No code changes (no
+> `providers/prestmit.js` ever existed). See Task 54 below for the
+> full write-up and open items. **Per the Patch Handoff Convention, a
+> patch file covering this handover.md update was generated and handed
+> to the product owner directly — not applied or pushed by this
+> session.**
+>
+> **Newest note (2026-09-07, previous) — Task 53 written: three
 > more product decisions from the product owner, decision-record only,
 > no code this session.** **(1) Card issuance is Korapay** — this
 > platform's customers (business or individual) get a card that is
@@ -8141,5 +8164,108 @@ scoped-but-not-started work that a future session should turn into
 their own numbered leaves (following this file's own Task Numbering &
 Workflow Convention) once Task 52's board is far enough along that
 they're not competing for the single `X` slot.
+
+---
+
+## Task 54 — KYC/KYB reframed as default+fallback (PaymentPoint default, swappable); new Gift Cards & VTU domain routing decided (telcos.opik.net default, Flutterwave VTU fallback); Prestmit demoted from standalone provider list [ ]
+
+**Scope note, read first:** decision-record only, same discipline as
+Tasks 51/52/53. No code, no schema, no `providers/*.js` changes this
+session. Per the Patch Handoff Convention, a `git format-patch` file
+covering this handover.md update is generated and handed to the
+product owner directly this session — not applied or pushed here.
+
+### a. KYC/KYB — now a default+fallback table, not a single fixed provider
+
+**Stated directly by the product owner this session, refining Task
+53/d:** PaymentPoint is the **default** identity-verification provider
+(individual KYC, business KYB), not the only one — same
+default-with-swappable-fallback shape Task 51 already established for
+payment routing. Any provider that has its own competing KYC/KYB
+capability (Korapay's own Identity/KYC-KYB feature, per Task 53/d's
+own note that this platform was "deliberately NOT using" it — that
+posture is now a *default choice*, not an exclusion) is a fallback
+that **can be promoted to default at any time**, same reasoning as
+every other domain in this file: a fallback can't be allowed to lag
+behind the default in capability just because it isn't active today.
+
+| Field | Value |
+|---|---|
+| Domain covers | Individual KYC, business KYB, for every rail/domain in this file (payments, gift cards, VTU, card issuance) — one verification result, reused everywhere, per Task 53/d |
+| **Default** | **PaymentPoint** — chosen for licensing/compliance posture (Task 53/d), not technical preference; NIN/BVN verification + liveness check, fully audited (Task 0/a-8) |
+| Fallback 1 | Korapay's own Identity/KYC & KYB feature (NG/ZA/GH/KE/US/CI, BVN/NIN/vNIN/SSN/passport/national-ID/phone, liveness check) — real and documented, but **explicitly excluded from every Korapay audit pass to date** (same exclusion as Korapay Card Issuing, Task 53/a) — needs its own dedicated discovery pass before it can genuinely serve as a fallback, not just be listed as one |
+| Fallback 2+ | Any other provider's own KYC/KYB surface, if/when audited — none currently confirmed beyond Korapay's |
+| Persistence | Unchanged from Task 53/d: whichever provider performs the check, the result is written to this platform's own DB (Supabase) as the source of truth, so a customer verified once is not re-verified per rail or per provider |
+| Changelog | 2026-09-07 (later same day) — table created this session, per product-owner direction (this task); reframes Task 53/d's "PaymentPoint, deliberately not Korapay" language as "PaymentPoint default, Korapay (or others) swappable fallback" — the underlying persistence-in-Supabase architecture from Task 53/d is unchanged |
+
+**Real open item, not resolved by this decision:** same schema/RLS
+gaps Task 53/d already flagged — no table exists yet, and the promote-
+to-default mechanism (env var / config / admin toggle) is the same
+open design question Task 52/e-2 already raised for payment routing;
+this task does not re-decide it, just notes KYC/KYB now needs the same
+mechanism once it's built.
+
+### b. New domain: Gift Cards & VTU (airtime/data/eSIM, local and international)
+
+**Stated directly by the product owner this session:** two more
+domains get the same default+fallback routing treatment as Task 51's
+international/African rails — **Gift Cards**, and **VTU** (airtime,
+data, eSIM — both local and international). Both default to
+**`telcos.opik.net`**, the product owner's own personal reseller
+endpoint (Task 45), for the same reason already on record there: it
+aggregates the underlying providers for these rails internally, so
+this platform integrates one contract instead of many. The product
+owner's own stated reason gift cards specifically default there:
+`telcos.opik.net` already has **two** underlying gift-card providers
+behind it — **Prestmit and Tremendous** — giving it built-in
+redundancy at the aggregator level before this platform's own
+fallback layer is even considered.
+
+| Field | Value |
+|---|---|
+| Domain covers | Gift cards (buy/sell/liquidation, per Task 48/a's existing "Gift Cards" public framing); airtime, data, and eSIM reselling, local and international |
+| **Default** | **`telcos.opik.net`** — for both gift cards and VTU; internally backed by Prestmit + Tremendous for gift cards specifically (per product owner), plus whatever underlying VTU providers it aggregates (Lizzysub/Zendit/Accragh per Task 48/b, staying internal to `telcos.opik.net` same as before) |
+| Fallback 1 (VTU only) | **Flutterwave** — stated by the product owner as the fallback for VTU services specifically. **Not yet implemented** (`providers/flutterwave.js` does not exist; still blocked on the v3-vs-v4 decision, Task 48/e) — must be built before it can actually serve as a fallback, same caveat as every other Flutterwave fallback listing in this file (Task 51/b-1, b-2) |
+| Fallback (gift cards) | **Not stated this session — open item.** The product owner named a VTU fallback (Flutterwave) but not a gift-card fallback; not assumed here. Flag for a future session to confirm rather than defaulting to Flutterwave for gift cards too |
+| Changelog | 2026-09-07 (later same day) — table created this session, per product-owner direction (this task); first time Gift Cards and VTU are given their own routing table, previously only covered narratively (Task 44, 45, 48) |
+
+### c. Prestmit demoted from standalone provider list
+
+**Stated directly by the product owner this session:** Prestmit is
+**not** one of this repo's standalone providers going forward — it is
+one of the underlying providers `telcos.opik.net` aggregates for gift
+cards (alongside Tremendous, per (b) above), consistent with Task
+47/48's identity-concealment posture (Prestmit was already never named
+to end users) and with `telcos.opik.net`'s own existing treatment of
+its other internal VTU providers (Lizzysub/Zendit/Accragh, Task 48/b).
+
+This **does not delete** Task 0/a-9's Prestmit discovery audit or Task
+48/a's scope-confirmation record — per this file's own history
+discipline (preserve what was found and decided, don't overwrite), 
+those entries stay as the record of what was researched and when.
+**What changes going forward:** any future task, routing table, or
+provider count in this file should treat Prestmit as internal to
+`telcos.opik.net`'s gift-card capability, not as a candidate for its
+own `providers/prestmit.js`. No code exists for Prestmit today (`ls
+providers/` confirms only `juicyway.js`/`korapay.js`/`paystack.js`
+exist), so this is a documentation-scope correction only, not a code
+removal.
+
+**Real open item, not resolved by this decision:** if `telcos.opik.net`
+itself is ever audited (Task 0/a-10, still not started), that audit
+should confirm whether Prestmit/Tremendous are reachable as distinct
+gift-card sub-choices through `telcos.opik.net`'s own API (e.g. a
+provider-select field) or whether `telcos.opik.net` picks between them
+internally with no visibility to this platform — undecided until that
+audit happens.
+
+### d. Not yet done, this session, deliberately
+
+No code, no schema, no `providers/*.js` changes, no `ROUTING_RULES`
+changes. This task exists so the next session has all three decisions
+(KYC/KYB fallback model, Gift Cards & VTU domain routing, Prestmit's
+demotion) on record before picking up implementation. Task 52's `X`
+marker (Juicyway `processPayout`, Task 52/a-1) is unaffected and
+remains the current single atomic unit of work on the board.
 
 ---

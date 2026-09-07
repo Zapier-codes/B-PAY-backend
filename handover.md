@@ -3,7 +3,43 @@
 > **▶ START HERE — read this box only, then go straight to work. Skip
 > everything else below unless you get stuck.**
 >
-> **Newest note (2026-09-07, latest of all) — Task 48 written: full
+> **Newest note (2026-09-07, latest of all) — Task 49 written: product
+> owner directly resolves two of this file's own open conflicts —
+> JuicyWay's stablecoin question and Remita's base-URL ambiguity.**
+> Both doc-only, no code this session. **(1)** JuicyWay's three-way
+> currency conflict (Task 0/a-4 area, see "Three different currency
+> lists" above) is resolved **in favor of stablecoin support**: the
+> product owner confirms directly that JuicyWay does support
+> stablecoins, backing source 2's wider list (`NGN, USD, CAD, USDT,
+> USDC`) over source 1's narrower `NGN, CAD` and source 3's
+> stablecoin-excluding error-message text. **Not yet added to
+> `CONFIRMED_PROVIDER_CURRENCIES.juicyway` in code this session** —
+> `getAmountFormat` still throws for `juicyway` today; a future
+> session should add the entry and, per this file's own Discovery
+> Convention, still confirm the exact amount-unit rule for stablecoin
+> amounts specifically (base units vs. subunits is a separate question
+> from which currencies are accepted at all, and no source audited so
+> far has addressed it for USDT/USDC on this provider). **(2)** Remita's
+> three-way base-URL conflict (see Remita's own research section
+> above: `remitademo.net`/`login.remita.net` vs. `demo.remita.net`/
+> `login.remita.net` vs. `www.remitademo.net`) is now given a **fourth
+> answer directly by the product owner: `https://api.remita.net/`** —
+> which matches none of the three previously-documented host families.
+> Per this file's own stated resolution path for that conflict ("get
+> this directly from the product owner... rather than guessing"),
+> the product owner's direct statement is treated as authoritative.
+> **Flagged, not resolved:** the product owner supplied a bare host,
+> not confirmed endpoint paths for RRR generation vs. status-check
+> (which, per the existing research, have historically lived on
+> *different* paths/hosts from each other even within a single source)
+> — a future implementation session needs the actual path suffixes
+> and current auth scheme (classic hash-in-URL vs. header-based) from
+> the product owner too before `providers/remita.js` can be written,
+> not just the base host. Full detail under Task 49 below. **Patch for
+> this session covers `handover.md` only**, per this repo's own Patch
+> Handoff Convention.
+>
+> **Newest note (2026-09-07, previous) — Task 48 written: full
 > public-facing service/rail catalog assembled as "the vision doc,"
 > gift cards confirmed in scope, and Remita/Flutterwave's rails
 > cataloged from this file's own existing research.** Three things,
@@ -7281,5 +7317,60 @@ service vision, the confirmed country list, and both providers' rail
 catalogs in one place — with the genuinely-open items (Remita's
 auth/base-URL ambiguity, Flutterwave's v3-vs-v4 choice, JuicyWay/
 Prestmit geography) called out explicitly rather than assumed away.
+
+---
+
+## Task 49 — Product owner resolves JuicyWay's stablecoin question and Remita's base-URL ambiguity [ ]
+
+**Scope note, read first:** decision-record only, per this file's own
+established pattern (Task 0/45/46/47/48). No code, no
+`CONFIRMED_PROVIDER_CURRENCIES` edit, no `providers/remita.js` created
+this session.
+
+**a. JuicyWay — stablecoin support confirmed.** Task 0/a-4's own "Three
+different currency lists" finding above left this genuinely open
+between three JuicyWay doc pages that disagreed with each other. The
+product owner has now confirmed directly that JuicyWay does support
+stablecoins — resolving the conflict in favor of `payments/initialize-
+payment.md`'s and `.../cards.md`'s parameter-docs list (`NGN, USD, CAD,
+USDT, USDC`) over `overview.md`'s narrower `NGN, CAD` and over the same
+cards.md page's own contradictory 422-error text. **Not yet done:**
+adding this list to `CONFIRMED_PROVIDER_CURRENCIES.juicyway` in
+`utils/helpers.js` (still throws today, per Task 9's own guard against
+silently guessing on real money) — and, separately, confirming the
+amount-unit rule (base units vs. subunits) specifically for a
+stablecoin-denominated JuicyWay charge, which no source audited so far
+has addressed; currency-list confirmation and amount-unit confirmation
+are two different questions and only the first is resolved by this
+note.
+
+**b. Remita — base URL supplied directly by the product owner:
+`https://api.remita.net/`.** Remita's own research section above found
+three mutually-inconsistent host/path families across official and
+community sources (`remitademo.net`+`login.remita.net`, `demo.remita.net`
++`login.remita.net`, and `www.remitademo.net`'s older `.reg`-style
+paths) and explicitly deferred to the product owner's own onboarding
+material rather than guessing among them. **`api.remita.net` matches
+none of the three** — a fourth answer, not a confirmation of any
+previously-documented candidate. Treated as authoritative per this
+file's own stated resolution path for that conflict (get it from the
+product owner directly). **Genuinely still open, not resolved by this
+note:** a bare host isn't enough to implement against — the existing
+research shows RRR *generation* and *status-checking* have
+historically lived on different paths, sometimes different hosts
+entirely, even within a single official source, so a future
+implementation session still needs (i) the actual endpoint paths for
+both operations under this host, and (ii) which of the two documented
+auth schemes (classic hash-embedded-in-URL/body vs. newer
+`remitaConsumerKey`/`remitaConsumerToken` header) this host expects —
+neither was supplied alongside the base URL.
+
+**Not yet done, this session, deliberately:** no
+`CONFIRMED_PROVIDER_CURRENCIES` edit, no `providers/remita.js`, no
+sandbox call made against `api.remita.net` to verify it responds as
+expected. This task exists so the next session has both resolutions on
+record, plus the specific follow-up questions (JuicyWay stablecoin
+amount-unit rule; Remita's actual paths and auth scheme under the new
+host) called out explicitly.
 
 ---

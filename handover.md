@@ -3,7 +3,47 @@
 > **▶ START HERE — read this box only, then go straight to work. Skip
 > everything else below unless you get stuck.**
 >
-> **Newest note (2026-09-07, latest of all) — Task 49 written: product
+> **Newest note (2026-09-07, latest of all) — Task 50 written: the
+> product owner supplied the real Remita public API docs (a Postman
+> "public documentation" export, hosted at `api.remita.net`), and it
+> substantially corrects this file's own prior Remita research.**
+> Doc-only, no code this session. **The core correction: Remita is not
+> one API with a base-URL ambiguity — it is (at least) three parallel
+> API generations plus a fourth standalone token type**, none of which
+> match any of the three host families this file previously guessed
+> among. **(1) New APIs (RemitaConnect, Public/Secret key pair)** —
+> covers Agency Banking, Collections, **Vending (airtime/data/
+> electricity/utilities)**, Funds Transfer, and Verification; entirely
+> new surface area, not previously on this file's radar at all — and
+> the Vending line overlaps directly with this product's own VTU/
+> reseller business. **(2) First Gen — "Accept Online Payments"
+> (Checkout Solutions)** — the one that actually matches this repo's
+> single-call `processPayment`/`verifyTransaction` shape, and the only
+> one confirmed with a real worked example: flat `secretKey` header
+> (not either hash scheme previously guessed), `POST .../payment/
+> charge` returning a **hosted paymentLink** (same redirect-checkout
+> model as Korapay/Paystack, not a raw synchronous charge), and
+> `GET .../payment/merchant/verify/{{transRef}}` — **verifiable by the
+> merchant's own reference**, unlike JuicyWay's confirmed
+> reference-lookup gap above. **A real, confirmed inconsistency within
+> this doc's own two sections**, same class of finding as everywhere
+> else in this file: the charge endpoint's stated path
+> (`.../payment/charge`) doesn't match its own curl example's path
+> (`.../payment-engine/payment/charge`). **(3) First Gen — Invoice
+> Generation** — this is what all of this file's prior Remita research
+> was actually about (the classic RRR flow); the supplied snapshot only
+> captured its intro paragraph, not endpoint detail, so its own
+> base-URL/hash-scheme questions from the research above remain open.
+> **(4) A separate v3-engine bearer-token scheme** (`username`/
+> `password` → 1-hour access token, `demo.remita.net/remita/exapp/
+> api/v1/send/api/uaasvc/uaa/token`) for unspecified "other first-gen
+> services." Full detail, including what's still genuinely unresolved
+> (amount-unit rule for the Checkout charge; the split-payment
+> sub-account schema; Invoice Generation's own base URL), under Task
+> 50 below. **Patch for this session covers `handover.md` only**, per
+> this repo's own Patch Handoff Convention.
+>
+> **Newest note (2026-09-07, previous) — Task 49 written: product
 > owner directly resolves two of this file's own open conflicts —
 > JuicyWay's stablecoin question and Remita's base-URL ambiguity.**
 > Both doc-only, no code this session. **(1)** JuicyWay's three-way
@@ -7372,5 +7412,101 @@ expected. This task exists so the next session has both resolutions on
 record, plus the specific follow-up questions (JuicyWay stablecoin
 amount-unit rule; Remita's actual paths and auth scheme under the new
 host) called out explicitly.
+
+---
+
+## Task 50 — Real Remita public API docs supplied; corrects prior base-URL research, reveals three parallel API generations [ ]
+
+**Scope note, read first:** decision-record only, per this file's own
+established pattern. No code, no `providers/remita.js` created this
+session — this is documentation correction, not implementation.
+
+**a. Source.** The product owner supplied a Postman "public
+documentation" page snapshot, hosted at `api.remita.net` (this is
+where a Postman-generated docs page lives, not a raw API base URL
+itself — a distinction worth keeping straight, since Task 49 recorded
+`api.remita.net` as "the base URL," which this task now refines: it is
+the docs host, and the doc reveals several *different* actual API base
+URLs underneath it, none of which is `api.remita.net` itself).
+
+**b. Three parallel API generations, plus a fourth standalone
+scheme — corrects this file's prior three-way base-URL guess
+entirely.** The prior research (Remita's own research section above,
+and Task 49/b) treated this as one product with an unresolved base
+URL. The real docs describe Remita as mid-migration, running old and
+new side by side:
+- **New APIs (RemitaConnect)** — sign up separately at RemitaConnect
+  for a Public/Secret key pair. Covers **Agency Banking, Collections
+  (billers), Vending (airtime/data/electricity/other utilities),
+  Funds Transfer, and Verification.** Entirely new surface area not
+  previously on this file's radar — **the Vending line is a direct
+  overlap with this product's own VTU/reseller business**, worth a
+  separate look independent of whichever payment-collection surface
+  gets implemented first.
+- **First Gen — "Accept Online Payments" (Checkout Solutions)** — see
+  (c) below; the one that actually matches this repo's existing
+  provider shape.
+- **First Gen — Invoice Generation** — the classic RRR flow that all
+  of this file's *prior* Remita research (base-URL conflict, two hash
+  schemes, `statuscode` ambiguity, unsigned-redirect confirmation
+  model) was actually describing. The supplied snapshot captured only
+  this section's intro paragraph, not its endpoint detail — so
+  **everything already on record about the classic RRR flow's base
+  URL and auth scheme is still unresolved**, not answered by this
+  task. Do not assume Task 49/(c) below or the Checkout findings apply
+  to this surface.
+- **A fourth, standalone v3-engine bearer-token scheme** — `POST
+  https://demo.remita.net/remita/exapp/api/v1/send/api/uaasvc/uaa/
+  token` with a `username`/`password` body, returning an access token
+  valid **one hour**. Documented under "Other First Gen Services,"
+  without specifying which endpoints actually require it — genuinely
+  unresolved which of (First Gen Invoice Generation / something else)
+  this token gates.
+
+**c. First Gen — Accept Online Payments — CONFIRMED with a real worked
+example, the best fit for this repo's existing shape.**
+- `POST https://api-demo.systemspecsng.com/services/connect-gateway/
+  api/v1/payment/charge` — **note: the same doc's own curl example
+  shows a different path**, `.../payment-engine/payment/charge` — a
+  real, confirmed inconsistency within this single doc's own two
+  sections, same class of finding as Flutterwave's inverted env-select
+  ternary and PaymentPoint's duplicated example values above.
+- Auth: a flat `secretKey` header — not either of the two hash schemes
+  Remita's classic-flow research guessed at; this surface needs none
+  of that complexity.
+- Request body: `firstName`, `lastName`, `email`, `phoneNumber`,
+  `paymentIdentifier` (merchant-generated reference — maps onto this
+  repo's `generateReference()` the same way every other provider
+  does), `currency`, `narration`, `amount`, plus an optional `split`
+  object (`bearerSubAccountId` + `subAccountIds` with per-account
+  `share` values) whose full schema isn't explained anywhere in the
+  supplied snapshot.
+- Response: `{ status: "00", message: "Approved or Completed
+  Successfully.", data: { paymentLink: "https://payment-qa...
+  " } }` — **this is a hosted-checkout-link model**, the same
+  redirect-based shape already established for Korapay/Paystack in
+  this file, not a raw synchronous card charge.
+- `GET .../payment/merchant/verify/{{transRef}}`, same `secretKey`
+  header, **verifiable by the merchant's own `paymentIdentifier`
+  reference** — a real advantage over JuicyWay, whose own confirmed
+  gap (above) is that it has no documented way to verify by reference
+  alone.
+- **Not resolved by the supplied snapshot:** whether `amount` is base
+  units or subunits (the one worked example uses `10000` for a "Test
+  Transaction" with no stated currency-unit rule — the same class of
+  guess-worthy gap Task 9's `getAmountFormat` guard exists to prevent);
+  the full `split` schema; and the complete set of `status`/`message`
+  values beyond the one success case shown.
+
+**d. Not yet done, this session, deliberately:** no
+`providers/remita.js`, no `CONFIRMED_PROVIDER_CURRENCIES.remita` entry,
+no sandbox call made against either the Checkout or classic-RRR
+surfaces. This task exists so the next session knows **which of
+Remita's several surfaces** any future implementation should target
+(Accept Online Payments / Checkout Solutions, per (c), is the
+recommended first target — closest fit to this repo's existing
+provider shape and the only one with a confirmed working example) —
+and so it doesn't conflate this task's findings with the still-open
+classic-RRR-flow questions already on record from earlier research.
 
 ---

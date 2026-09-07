@@ -3,7 +3,39 @@
 > **▶ START HERE — read this box only, then go straight to work. Skip
 > everything else below unless you get stuck.**
 >
-> **Newest note (2026-09-07, latest of all) — Task 51 written:
+> **Newest note (2026-09-07, latest of all) — Task 52 written: full
+> implementation breakdown of every gap Task 51's capability matrix
+> surfaced, so a session can actually build this out instead of just
+> routing tables against providers that don't have the methods yet.
+> Doc-only, no code this session — product owner's own words: this is
+> payment infrastructure, it needs to be completed, not left as
+> tables pointing at gaps.** Task 52 below splits into five branches
+> (a–e), each following this file's own Task Numbering & Workflow
+> Convention (a/b/c/d → 1/2/3 → i/ii → X): **(a)** Juicyway needs
+> `processPayout`/`verifyPayout`/`getBanks`-equivalents built from
+> scratch — today it only has `processPayment`/`verifyTransaction`/
+> `verifyWebhookSignature`, yet Task 51 made it the international-rails
+> default for payout/verify-payout/bank-list too; **(b)** Korapay's
+> existing payout/verify-payout/bank-list methods are African-rails-
+> scoped and need confirming or extending before they're a genuine
+> international fallback per Task 51/b-1; **(c)** Paystack's payout/
+> verify-payout/bank-list are still stubs (Task 43's own "stub until
+> fully integrated" state) and need real implementations to be a
+> genuine fallback in either domain; **(d)** Flutterwave has no
+> provider file at all — blocked first on the v3-vs-v4 version
+> decision this file's own research flagged, then full implementation;
+> **(e)** once (a)-(d) exist, `ROUTING_RULES`/`getProvider()` in
+> `routes.js` still need rewriting to actually implement Task 51's
+> domain model, plus new currency/country domain-detection logic that
+> doesn't exist yet. **Exactly one leaf is marked `X`, per this file's
+> own convention** — Task 52/a-1 (Juicyway `processPayout`) — chosen as
+> the single most acute gap, since Juicyway is now the default for the
+> entire international domain but cannot currently process a payout at
+> all. **Per the Patch Handoff Convention, a patch file covering this
+> handover.md update was generated and handed to the product owner
+> directly — not applied or pushed by this session.**
+>
+> **Newest note (2026-09-07, previous) — Task 51 written:
 > product owner has decided the routing model this repo has been
 > waiting on since Task 10/49. Payscribe is fully removed from the
 > codebase this session (code done: `providers/payscribe.js` deleted,
@@ -7785,5 +7817,156 @@ match afterward, not the other way around.
   (international vs. African) an incoming request belongs to — that
   detection logic is itself unscoped work, needed before the tables
   above can drive real routing decisions.
+
+---
+
+## Task 52 — Implement every gap Task 51's capability matrix flagged: build out Juicyway/Korapay/Paystack/Flutterwave fully so the domain-based routing model is real, not aspirational [ ] (a-1 is X — see Task Numbering & Workflow Convention above)
+
+**Scope note, read first:** this task exists because Task 51 recorded
+a *decision* (Juicyway defaults for every international-rails
+capability, Korapay for every African-rails capability, all
+overlapping providers are full fallbacks) without the underlying
+provider code to back most of it up. Per direct product-owner
+instruction this session: **this is payment infrastructure — it needs
+to be built completely, not left as a routing table pointing at
+providers that can't yet do the thing the table says they default (or
+fall back) to.** This task's job is to break that gap into atomic,
+assignable leaves using this file's own Task Numbering & Workflow
+Convention, not to close the gap itself (no code was written this
+session — decision/scoping record only, same as Task 51).
+
+**Exactly one leaf below carries the `X` marker at any time, per the
+Workflow Convention.** Right now that is **Task 52/a-1**. Whichever
+session picks this up next works ONLY on a-1 until it's solved, then
+moves the `X` to the next unsolved leaf in reading order (a-2, then
+b, then c, then d-1, then d-2, then e-1, then e-2) — unless the
+product owner explicitly reprioritizes, in which case update this
+line to say so and move `X` accordingly.
+
+### a. Juicyway — build the missing international-rails methods [ ]
+
+Today `providers/juicyway.js` only implements `processPayment`,
+`verifyTransaction`, and `verifyWebhookSignature`. Task 51 made
+Juicyway the *default* for every capability in the international-rails
+domain, not just collection — these three sub-leaves are what's
+missing to make that true in code, not just on paper.
+
+#### a-1. `processPayout` — international payout/disbursement [X]
+
+**This is the current single atomic unit of work for this whole
+task board.** Needs: confirming Juicyway's actual payout/disbursement
+endpoint against a primary source (same bar Task 7/49 applied to
+Korapay/JuicyWay's other endpoints — no guessing a path or payload
+shape), then implementing `processPayout(data)` on the `Juicyway`
+class matching the existing `Korapay.processPayout` shape so
+`routes.js`'s `/payout` route can dispatch to it once (e) rewires
+routing. Currency/amount-unit handling for payouts specifically should
+be checked against Task 49/a's existing citation (JuicyWay's
+"Universal Parameters" subunit rule) rather than assumed to be the
+same rule as collection, since payout and collection are documented
+as separate surfaces on other providers (see Korapay's own split
+between accept-payments docs and payout-via-api docs, Task 7).
+
+#### a-2. `verifyPayout` — international verify-payout [ ]
+
+Needs Juicyway's payout-verification endpoint confirmed (by reference?
+by provider-side transaction ID? — this file's own JuicyWay research
+above already flagged a reference-lookup gap on the collection side;
+check whether the same gap exists on payout before assuming it
+doesn't), then implemented matching `Korapay.verifyPayout`'s shape.
+
+#### a-3. `getBanks` — international bank/institution list lookup [ ]
+
+Needs Juicyway's bank/institution-list endpoint (if one exists — flag
+to the product owner if JuicyWay's docs don't expose one at all,
+rather than guessing a shape) confirmed and implemented matching
+`Korapay.getBanks`'s shape.
+
+**Cross-reference, not a duplicate:** Juicyway's amount-unit rule for
+*collection* (base vs. subunits) is already tracked as its own open
+item under Task 49/a — do not re-open that question here; a-1/a-2/a-3
+above are about payout-side endpoints existing at all, a distinct gap
+from the collection-side amount-unit question.
+
+### b. Korapay — confirm or extend payout/verify-payout/bank-list beyond African rails [ ]
+
+Korapay's `processPayout`/`verifyPayout`/`getBanks` already exist and
+work for African rails (Task 42's own history confirms `processPayout`
+was fixed and verified). Task 51/b-1 lists Korapay as international
+rails' Fallback 1 for payout/verify-payout/bank-list, but that's
+currently unconfirmed — Korapay's own currency list
+(`CONFIRMED_PROVIDER_CURRENCIES.korapay`) is African-currency-focused
+(NGN/GHS/KES/ZAR/USD/XAF/XOF/EGP/TZS), so before this can honestly be
+called a working international fallback, confirm whether Korapay's
+payout API even accepts a non-African-rail destination (a different
+country's bank account, a card, a wallet) at all — this may turn out
+to be a hard "no," not just an extension task, in which case Task
+51/b-1's Fallback 1 entry needs correcting to say so rather than
+implying it just needs more code.
+
+### c. Paystack — build real (non-stub) payout/verify-payout/bank-list [ ]
+
+Paystack's payout/verify-payout/bank-list are stubs today (Task 43's
+"stub until fully integrated" state, confirmed still true as of this
+session). Needs implementing against Paystack's own transfer/recipient
+API (paystack.com/docs — a primary source this file hasn't audited yet
+for the transfer surface specifically, only the charge surface per
+Task 8) so Paystack can be a genuine fallback in both the African-rails
+domain (per Task 51/b-2) and, per Task 51/b-1, a currency-limited
+fallback in the international domain too.
+
+### d. Flutterwave — full provider build, from zero [ ]
+
+No `providers/flutterwave.js` exists. This file's own prior research
+(search "Flutterwave — FULL API discovery pass" above) already did the
+doc-audit; this branch is about turning that research into working
+code, which is a different kind of work and should stay its own leaf.
+
+#### d-1. Resolve the v3-vs-v4 version decision [ ]
+
+Blocks every other Flutterwave leaf. This file's research found
+Flutterwave "currently publishes two overlapping API generations" with
+the older v3 matching this repo's existing provider shape and v4 being
+actively promoted as the new default — this is a product decision
+(which version to build against), not something resolvable from docs
+alone. Needs the product owner's direct input, same pattern as Task 49
+resolved JuicyWay's stablecoin question.
+
+#### d-2. Implement `providers/flutterwave.js` against whichever version d-1 picks [ ]
+
+`processPayment`, `verifyTransaction`, `processPayout`, `verifyPayout`,
+`getBanks`, `verifyWebhookSignature` — full parity with Korapay's
+method set, since Task 51 lists Flutterwave as a fallback candidate in
+*both* domains. This file's own Flutterwave research above already has
+confirmed findings for several of these (webhook header name,
+OAuth/bearer-token flow for v4, base-URL env-select bug to avoid
+copying) — reread that section before starting, don't re-research from
+scratch.
+
+### e. Routing-layer rewrite — make `routes.js` actually use the Task 51 model [ ]
+
+Only makes sense to pick up once enough of (a)-(d) exist that there's
+something real to route to — attempting this first would just be
+rewiring `ROUTING_RULES` to point at methods that still throw/501.
+
+#### e-1. Domain-detection logic — decide international vs. African per request [ ]
+
+Nothing today inspects an incoming `/pay`, `/payout`, `/verify`, or
+`/banks` request and classifies it as "international" or "African
+rails" — Task 51's tables assume that classification already happened.
+Needs a real rule (by currency? by destination country? by an explicit
+client-supplied field?) — this is itself a product decision, not
+purely an engineering one, and should be confirmed with the product
+owner before implementing rather than guessed.
+
+#### e-2. Rewrite `ROUTING_RULES`/`getProvider()` to route by domain, with explicit fallback/promote-to-default support [ ]
+
+Once e-1 exists: replace the current flat `action -> provider` map
+with domain-aware routing that picks the Task 51 default, and exposes
+a way to explicitly request a fallback or (per the product owner's own
+stated reason for keeping fallbacks fully built) promote a fallback to
+default without a code deploy — whether that's an env var, a config
+file, or an admin-dashboard toggle (Task 46 already scoped an admin
+dashboard) is an open design question for this leaf, not decided here.
 
 ---

@@ -368,12 +368,24 @@ const CONFIRMED_PROVIDER_CURRENCIES = {
   // /docs/payout-via-api (both primary/official). Cross-checked against
   // Mavins-web's reconciled list, Task 9b — see comment above.
   korapay: ['NGN', 'GHS', 'KES', 'ZAR', 'USD', 'XAF', 'XOF', 'EGP', 'TZS'],
+  // Task 49/a: three JuicyWay doc pages disagreed with each other
+  // (Task 0/a-4's "Three different currency lists" finding) — the
+  // product owner has now directly confirmed stablecoin support,
+  // resolving the conflict in favor of payments/initialize-payment.md's
+  // and cards.md's parameter-docs list over overview.md's narrower
+  // NGN/CAD-only list and cards.md's own contradictory 422-error text.
+  // This resolves the CURRENCY-LIST question only. The amount-unit rule
+  // (base units vs. subunits, specifically for a stablecoin-denominated
+  // charge) is a separate, still-unconfirmed question — see
+  // getAmountFormat below, which deliberately keeps throwing for
+  // 'juicyway' until that gets its own confirmation pass.
+  juicyway: ['NGN', 'USD', 'CAD', 'USDT', 'USDC'],
 };
 
 // Returns the confirmed supported-currency list for a provider, or null
 // if that provider's list hasn't been confirmed against a primary
-// source yet (JuicyWay, Payscribe). Callers MUST treat null as "can't
-// validate yet" — not as "anything goes" — see routes.js's
+// source yet (Payscribe). Callers MUST treat null as "can't validate
+// yet" — not as "anything goes" — see routes.js's
 // assertCurrencySupported for how this is actually enforced.
 export function getSupportedCurrencies(provider) {
   return CONFIRMED_PROVIDER_CURRENCIES[(provider || '').toLowerCase()] || null;
@@ -409,15 +421,17 @@ export function getAmountFormat(provider, currency) {
 
     case 'juicyway':
     case 'payscribe':
-      // Not yet confirmed for either provider — see handover.md's
-      // "Confirmed research findings" section (Payscribe is also
-      // waiting on a docs link; JuicyWay's webhook scheme is
-      // confirmed but its amount-unit rule for processPayment was
-      // never separately checked). Throw instead of assuming ×100 or
-      // ×1 — a silent wrong guess here is a real-money bug, not a
+      // Not yet confirmed for either provider. Payscribe is still
+      // waiting on a docs link. JuicyWay's CURRENCY LIST was confirmed
+      // by the product owner (Task 49/a, see CONFIRMED_PROVIDER_CURRENCIES
+      // above) but that is a separate question from the amount-unit
+      // rule below — no source audited so far has addressed base units
+      // vs. subunits for a JuicyWay charge (stablecoin-denominated or
+      // otherwise), so this still throws rather than assuming ×100 or
+      // ×1. A silent wrong guess here is a real-money bug, not a
       // cosmetic one.
       throw new Error(
-        `getAmountFormat: amount-unit rule for "${provider}" is not yet confirmed — see handover.md Task 9 note before adding one`
+        `getAmountFormat: amount-unit rule for "${provider}" is not yet confirmed — see handover.md Task 49/a note before adding one`
       );
 
     default:

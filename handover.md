@@ -3,7 +3,35 @@
 > **▶ START HERE — read this box only, then go straight to work. Skip
 > everything else below unless you get stuck.**
 >
-> **Newest note (2026-09-07, latest of all) — Task 50 written: the
+> **Newest note (2026-09-07, latest of all) — Task 49/a's
+> currency-list half implemented in code; its amount-unit half and
+> Task 49/b (Remita) remain open.** Per the standing mandatory
+> task-splitting rule, Task 49 splits into its own existing a
+> (JuicyWay) / b (Remita) parts; part a itself splits further into a
+> currency-list edit (resolved by the product owner, ready to build)
+> and an amount-unit-rule confirmation (still genuinely open — no
+> source has addressed base-vs-subunits for a JuicyWay charge). This
+> session built only the currency-list edit, the one unblocked leaf:
+> added `juicyway: ['NGN', 'USD', 'CAD', 'USDT', 'USDC']` to
+> `CONFIRMED_PROVIDER_CURRENCIES` in `utils/helpers.js`, matching the
+> product owner's direct confirmation recorded under Task 49/a below.
+> **Deliberately not touched:** `getAmountFormat`'s `juicyway` case
+> still throws — the amount-unit question is a separate, still-open
+> question from the currency list, and this session found no new
+> source to resolve it, so guessing a multiplier here would risk a
+> real-money bug. Verified with `node --check utils/helpers.js` plus a
+> throwaway `node -e` sanity check (`getSupportedCurrencies('juicyway')`
+> returns the new list; `getAmountFormat('juicyway', 'USD')` still
+> throws) — deleted after use. Task 49/b (Remita paths/auth scheme)
+> and the JuicyWay amount-unit question are both left explicitly
+> not-started for the next session. **Patch for this session covers
+> `utils/helpers.js` and this `handover.md` note, in one commit**, per
+> the Patch Handoff Convention below — generated as a `git
+> format-patch` file, not applied or pushed by this session; the
+> product owner applies and pushes it themselves from their own
+> device, per that convention.
+>
+> **Newest note (2026-09-07, previous) — Task 50 written: the
 > product owner supplied the real Remita public API docs (a Postman
 > "public documentation" export, hosted at `api.remita.net`), and it
 > substantially corrects this file's own prior Remita research.**
@@ -7360,12 +7388,16 @@ Prestmit geography) called out explicitly rather than assumed away.
 
 ---
 
-## Task 49 — Product owner resolves JuicyWay's stablecoin question and Remita's base-URL ambiguity [ ]
+## Task 49 — Product owner resolves JuicyWay's stablecoin question and Remita's base-URL ambiguity [ ] (a's currency-list edit done; a's amount-unit question + b still open)
 
-**Scope note, read first:** decision-record only, per this file's own
-established pattern (Task 0/45/46/47/48). No code, no
-`CONFIRMED_PROVIDER_CURRENCIES` edit, no `providers/remita.js` created
-this session.
+**Scope note, read first:** this task was originally written as a
+decision-record only, per this file's own established pattern (Task
+0/45/46/47/48) — no code, no `CONFIRMED_PROVIDER_CURRENCIES` edit, no
+`providers/remita.js`, that session. **Update (2026-09-07):** the
+`CONFIRMED_PROVIDER_CURRENCIES` edit called out as "not yet done"
+below has now been made — see the "Newest note" at the top of this
+file and part **a**'s own note below for what changed and what
+deliberately didn't.
 
 **a. JuicyWay — stablecoin support confirmed.** Task 0/a-4's own "Three
 different currency lists" finding above left this genuinely open
@@ -7374,15 +7406,16 @@ product owner has now confirmed directly that JuicyWay does support
 stablecoins — resolving the conflict in favor of `payments/initialize-
 payment.md`'s and `.../cards.md`'s parameter-docs list (`NGN, USD, CAD,
 USDT, USDC`) over `overview.md`'s narrower `NGN, CAD` and over the same
-cards.md page's own contradictory 422-error text. **Not yet done:**
-adding this list to `CONFIRMED_PROVIDER_CURRENCIES.juicyway` in
-`utils/helpers.js` (still throws today, per Task 9's own guard against
-silently guessing on real money) — and, separately, confirming the
+cards.md page's own contradictory 422-error text. **Done (2026-09-07):**
+this list is now in `CONFIRMED_PROVIDER_CURRENCIES.juicyway` in
+`utils/helpers.js`. **Still not done, deliberately:** confirming the
 amount-unit rule (base units vs. subunits) specifically for a
 stablecoin-denominated JuicyWay charge, which no source audited so far
-has addressed; currency-list confirmation and amount-unit confirmation
-are two different questions and only the first is resolved by this
-note.
+has addressed — `getAmountFormat`'s `juicyway` case still throws for
+exactly this reason (still throws today, per Task 9's own guard against
+silently guessing on real money); currency-list confirmation and
+amount-unit confirmation are two different questions and only the
+first is resolved by this note.
 
 **b. Remita — base URL supplied directly by the product owner:
 `https://api.remita.net/`.** Remita's own research section above found

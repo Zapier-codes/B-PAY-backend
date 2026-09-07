@@ -7712,23 +7712,23 @@ box) is to preserve what changed and when, not just the current state.
 
 | Field | Value |
 |---|---|
-| Domain covers | Cross-border collection, international bank transfer/receive, stablecoin (USDT/USDC), any currency outside NGN/GHS/KES/ZAR/XAF/XOF/EGP/TZS |
-| **Default** | **Juicyway** |
-| Fallback 1 | Korapay (covers NGN/GHS/KES/ZAR/USD/XAF/XOF/EGP/TZS overlap only — not CAD/USDT/USDC) |
-| Fallback 2 | Paystack (NGN/GHS/ZAR/KES/USD overlap only) |
+| Domain covers | Cross-border collection, international bank transfer/receive (e.g. **ACH** and other non-African transfer rails), international payout/disbursement, international verify-payout, international bank/institution list lookup, stablecoin (USDT/USDC), any currency outside NGN/GHS/KES/ZAR/XAF/XOF/EGP/TZS |
+| **Default** | **Juicyway** — default for every capability in this domain (collection, local-transfer/ACH-equivalent, payout, verify payout, bank-list lookup), not collection-only |
+| Fallback 1 | Korapay (covers NGN/GHS/KES/ZAR/USD/XAF/XOF/EGP/TZS overlap only — not CAD/USDT/USDC; today only has payout/verify-payout/bank-list built for African rails, so would need those extended to cover non-African currencies/rails before it's a full fallback here) |
+| Fallback 2 | Paystack (NGN/GHS/ZAR/KES/USD overlap only; payout/verify-payout/bank-list are still stubs — not a full fallback for those capabilities yet) |
 | Fallback 3 | Flutterwave — **not yet implemented** (`providers/flutterwave.js` does not exist; blocked on the v3-vs-v4 version decision, see this file's own Flutterwave research section above) — must be built before it can actually serve as a fallback, not just be listed as one |
-| Changelog | 2026-09-07 — table created this session, per product-owner direction (this task). |
+| Changelog | 2026-09-07 — table created this session, per product-owner direction (this task). 2026-09-07 (later same day) — domain coverage expanded per product-owner direction: Juicyway is now default for local-transfer/ACH-equivalent, payout, verify-payout, and bank-list lookup within this domain too, not collection-only. Rule stated as "anything not African rails defaults to Juicyway." |
 
 #### b-2. African rails
 
 | Field | Value |
 |---|---|
-| Domain covers | Local NGN/GHS/KES/ZAR/XAF/XOF/EGP/TZS collection, local bank transfer, payout/disbursement, bank-list lookup |
-| **Default** | **Korapay** |
+| Domain covers | Local NGN/GHS/KES/ZAR/XAF/XOF/EGP/TZS collection, local bank transfer (**mobile money and traditional bank rails**), African payout/disbursement, African verify-payout, African bank-list lookup |
+| **Default** | **Korapay** — default for every capability in this domain (collection, mobile-money/bank transfer, payout, verify payout, bank-list lookup) |
 | Fallback 1 | Paystack (collection overlap only — no payout/bank-transfer/bank-list today; would need `processPayout`/`verifyPayout`/`getBanks` built to be a full fallback for those) |
-| Fallback 2 | Juicyway (NGN overlap only, collection-side; no payout/bank-transfer/bank-list support at all) |
+| Fallback 2 | Juicyway (NGN overlap only, collection-side; no African-rails payout/bank-transfer/bank-list support at all) |
 | Fallback 3 | Flutterwave — **not yet implemented**, same blocker as b-1 |
-| Changelog | 2026-09-07 — table created this session, per product-owner direction (this task). |
+| Changelog | 2026-09-07 — table created this session, per product-owner direction (this task). 2026-09-07 (later same day) — domain-covers wording clarified (mobile money + traditional banks named explicitly) per product-owner direction; no default/fallback provider changed here, this domain's boundary was already Korapay-default. |
 
 ### c. Capability matrix (cross-cutting reference — do not treat as a third routing table)
 
@@ -7741,10 +7741,14 @@ match afterward, not the other way around.
 |---|:---:|:---:|:---:|:---:|
 | International collection | Default | Fallback | Fallback | Fallback (not implemented) |
 | African-rails collection | Fallback | Default | Fallback | Fallback (not implemented) |
-| Local bank transfer | — | Default | — | Fallback (not implemented) |
-| Payout / disbursement | — | Default | Stub (not a real fallback yet) | Fallback (not implemented) |
-| Verify payout | — | Default | Stub | Fallback (not implemented) |
-| Bank list lookup | — | Default | — | Fallback (not implemented) |
+| International transfer (ACH-equivalent, etc.) | Default | Fallback (needs non-African rails extended) | Fallback (stub) | Fallback (not implemented) |
+| African-rails transfer (mobile money, traditional banks) | Fallback (no African-rails transfer support) | Default | Fallback (stub) | Fallback (not implemented) |
+| International payout / disbursement | Default | Fallback (needs extending beyond African rails) | Fallback (stub) | Fallback (not implemented) |
+| African-rails payout / disbursement | — (no African-rails payout support) | Default | Fallback (stub) | Fallback (not implemented) |
+| International verify payout | Default | Fallback (needs extending) | Fallback (stub) | Fallback (not implemented) |
+| African-rails verify payout | — | Default | Fallback (stub) | Fallback (not implemented) |
+| International bank-list lookup | Default | Fallback (needs extending) | Fallback (stub) | Fallback (not implemented) |
+| African-rails bank-list lookup | — | Default | Fallback (stub) | Fallback (not implemented) |
 | Webhook verification | Done | Done | Done | Not implemented |
 | Confirmed amount-unit rule | Still unconfirmed (Task 49/a) | Confirmed | Confirmed | Unconfirmed |
 
@@ -7763,6 +7767,20 @@ match afterward, not the other way around.
   called full fallbacks until that changes — flagging this explicitly
   so a future session doesn't assume "fallback" in this table means
   "already works."
+- **Newly flagged this update:** per the product-owner direction that
+  Juicyway must default for every non-African-rails capability (not
+  just collection), `providers/juicyway.js` itself does not yet have
+  `processPayout`/`verifyPayout`/`getBanks` equivalents for
+  international rails (ACH-equivalent transfer, international payout,
+  international verify-payout, international bank-list lookup) — none
+  of that exists in the provider file today, only `processPayment` /
+  `verifyTransaction` / `verifyWebhookSignature`. Korapay's own
+  payout/verify-payout/bank-list methods are also African-rails-scoped
+  today (see `providers/korapay.js`) and would need to be confirmed or
+  extended before they can genuinely fall back for the international
+  domain, per b-1's Fallback 1 note. Both are real implementation gaps
+  the capability matrix above now surfaces row-by-row — not resolved
+  in this update, which is decision-record only.
 - No currency/country logic was added to auto-detect which domain
   (international vs. African) an incoming request belongs to — that
   detection logic is itself unscoped work, needed before the tables

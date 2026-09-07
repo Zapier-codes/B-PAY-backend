@@ -6615,13 +6615,12 @@ against without that verification step.
 
 ## Task Numbering & Workflow Convention (read before Task 0)
 
-Adopted this session (product owner direction), applies to every task
-from this point forward. Every task decomposes on up to four levels:
-**a/b/c/d → 1/2/3 → i/ii → X**. `X` is not a literal fifth tier — it
-is a marker, not a number: whichever leaf node is the current, single
-atomic unit of work carries the label `X`. **Exactly one node on the
-whole board should carry `X` at any given time** — that is the only
-thing whichever session picks this up next should actually work on.
+**Superseded 2026-09-07 (below) — kept here only as a record of the
+prior scheme, since some already-written task entries below still use
+it and haven't been migrated yet.** Adopted the session before this
+one: every task decomposed on up to four levels: **a/b/c/d → 1/2/3 →
+i/ii → X**, `X` being a marker (not a literal tier) for whichever leaf
+was the single current atomic unit of work.
 
 - When the node marked `X` is solved, the next unsolved leaf at that
   same level becomes the new `X`.
@@ -6635,6 +6634,56 @@ thing whichever session picks this up next should actually work on.
   never work on a non-`X` node "while it's convenient" — if something
   outside the current `X` needs attention, flag it in that node's own
   entry for a future session rather than context-switching mid-task.
+
+### Deeper split, effective 2026-09-07 — supersedes the four-level scheme above for every task from this point forward
+
+Direct product-owner instruction this session: the four-level split
+(a/b/c/d → 1/2/3 → i/ii → X) wasn't fine-grained enough — every task
+now decomposes on **six** levels instead:
+
+**a/b/c/d/e → 1/2/3/4 → i/ii/iii → zi/zo → X**
+
+- **a–e** (max 5): the task's top-level parts, same idea as the old
+  a–d tier, just one slot wider.
+- **1–4** (max 4) under each letter: that part's own sub-parts.
+- **i/ii/iii** (max 3) under each number: that sub-part's own steps.
+- **zi/zo** (max 2, always exactly these two labels — not a third
+  `zi`/`zo`/`zu` or similar) under each roman-numeral step: the
+  smallest still-not-atomic split of that step. `zi` and `zo` are
+  fixed names, not a running letter sequence — every step that goes
+  this deep has exactly a `zi` branch and a `zo` branch, no more.
+- **X** — same marker convention as before, not a literal seventh
+  tier: whichever `zi` or `zo` leaf is the single current atomic unit
+  of work carries the label `X` in place of `zi`/`zo`. A leaf that
+  turns out to be genuinely atomic without needing a `zi`/`zo` split
+  can carry `X` directly at the i/ii/iii level instead — don't invent
+  a fake `zi`/`zo` split just to reach the letter before writing `X`.
+- **Exactly one node on the whole board carries `X` at any given
+  time**, same rule as before, and it's still the only thing the next
+  session should work on.
+- **Only the patch file for the current `X` node is ever produced.**
+  A session's output is one patch, covering one `X`'s worth of change
+  (or, when the `X` is itself a documentation/decision node with no
+  code, whatever `handover.md` edit that decision requires) — never a
+  patch bundling multiple leaves, even if adjacent leaves look small
+  enough to combine.
+- **When `X` is resolved and its patch is applied/pushed, the next
+  unsolved leaf in reading order (down through zo before moving to the
+  next i/ii/iii, down through iii before moving to the next 1–4, and
+  so on) becomes the new `X`.** This repeats leaf by leaf until every
+  leaf under a task is solved, at which point that task's branch gets
+  deleted from this board per the collapse rule above, same as before.
+- **Migration of already-written tasks is itself incremental, not a
+  one-shot rewrite:** re-splitting every existing task (Task 0 through
+  54) into the full six-level shape in a single session would violate
+  the one-`X`-at-a-time rule this same convention exists to enforce.
+  Instead: the task currently holding the board's `X` gets migrated
+  first (see Task 52/a-1's retrofit immediately below, done this
+  session as the worked example), and every other task keeps its old
+  a/1/i/X labels, read as shorthand for a/1/i(-only, no zi/zo split
+  written out yet)/X, until whichever future session's `X` lands
+  inside that task and migrates it as part of doing that work — not
+  before, and not as a separate bulk-relabeling pass.
 
 ---
 
@@ -7874,7 +7923,7 @@ match afterward, not the other way around.
 
 ---
 
-## Task 52 — Implement every gap Task 51's capability matrix flagged: build out Juicyway/Korapay/Paystack/Flutterwave fully so the domain-based routing model is real, not aspirational [ ] (a-1 is X — see Task Numbering & Workflow Convention above)
+## Task 52 — Implement every gap Task 51's capability matrix flagged: build out Juicyway/Korapay/Paystack/Flutterwave fully so the domain-based routing model is real, not aspirational [ ] (a-1-i-zi is X, per the 2026-09-07 six-level retrofit — see Task Numbering & Workflow Convention above)
 
 **Scope note, read first:** this task exists because Task 51 recorded
 a *decision* (Juicyway defaults for every international-rails
@@ -7890,12 +7939,16 @@ Convention, not to close the gap itself (no code was written this
 session — decision/scoping record only, same as Task 51).
 
 **Exactly one leaf below carries the `X` marker at any time, per the
-Workflow Convention.** Right now that is **Task 52/a-1**. Whichever
-session picks this up next works ONLY on a-1 until it's solved, then
-moves the `X` to the next unsolved leaf in reading order (a-2, then
-b, then c, then d-1, then d-2, then e-1, then e-2) — unless the
-product owner explicitly reprioritizes, in which case update this
-line to say so and move `X` accordingly.
+Workflow Convention.** As of the 2026-09-07 six-level retrofit, that
+is **Task 52/a-1-i-zi** (see a-1's own retrofit below) — a research
+leaf, currently unsolved: no primary source for JuicyWay's payout
+endpoint was found this session, so a-1-ii/a-1-iii and a-2/a-3 all
+stay blocked behind it. Whichever session picks this up next works
+ONLY on a-1-i-zi until it's solved, then moves `X` to a-1-i-zo, then
+a-1-ii, then a-1-iii, then a-2 (itself to be split into the same
+i/zi/zo shape when its turn comes), then a-3, then b, then c, then d,
+then e — unless the product owner explicitly reprioritizes, in which
+case update this line to say so and move `X` accordingly.
 
 ### a. Juicyway — build the missing international-rails methods [ ]
 
@@ -7905,11 +7958,13 @@ Juicyway the *default* for every capability in the international-rails
 domain, not just collection — these three sub-leaves are what's
 missing to make that true in code, not just on paper.
 
-#### a-1. `processPayout` — international payout/disbursement [X]
+#### a-1. `processPayout` — international payout/disbursement [ ]
 
-**This is the current single atomic unit of work for this whole
-task board.** Needs: confirming Juicyway's actual payout/disbursement
-endpoint against a primary source (same bar Task 7/49 applied to
+**Retrofitted 2026-09-07 into the new six-level split
+(a/b/c/d/e → 1/2/3/4 → i/ii/iii → zi/zo → X) — this is the worked
+migration example the convention above points to.** Original scope,
+unchanged: confirming Juicyway's actual payout/disbursement endpoint
+against a primary source (same bar Task 7/49 applied to
 Korapay/JuicyWay's other endpoints — no guessing a path or payload
 shape), then implementing `processPayout(data)` on the `Juicyway`
 class matching the existing `Korapay.processPayout` shape so
@@ -7920,6 +7975,40 @@ be checked against Task 49/a's existing citation (JuicyWay's
 same rule as collection, since payout and collection are documented
 as separate surfaces on other providers (see Korapay's own split
 between accept-payments docs and payout-via-api docs, Task 7).
+
+##### a-1-i. Locate and confirm JuicyWay's payout/disbursement endpoint against a primary source [ ]
+
+###### a-1-i-zi. Find JuicyWay's own API reference for payout/disbursement [X]
+
+**Current board `X`, as of this session.** A web search this session
+for JuicyWay's payout/disbursement API turned up only the
+`juicyway_flutter` package (a client-side checkout SDK for
+card-present payment collection, not a payout/disbursement API) and
+unrelated providers (Worldpay, Mastercard, NicePay). **No primary
+source for a JuicyWay payout/disbursement REST endpoint was found
+this session.** Per this file's own no-guessing rule (Task 7/49's bar,
+restated in a-1 above), nothing was implemented against a guessed path
+or payload shape. This leaf stays `X` and unsolved: whichever session
+picks this up next should either (a) find JuicyWay's actual developer/
+API-reference portal (likely gated behind a merchant dashboard login
+rather than public docs, going by how the checkout SDK's own
+`accountId`/`key` fields are structured) or (b) get the endpoint
+confirmed directly by the product owner/JuicyWay's own support channel,
+same escalation path Task 49 used for JuicyWay's stablecoin question.
+**No patch file accompanies this leaf** — there is no code or decision
+to hand off yet, only a negative research result.
+
+###### a-1-i-zo. Confirm the payout payload shape once zi's endpoint is found [ ]
+
+Blocked on a-1-i-zi. Not started.
+
+##### a-1-ii. Implement `processPayout(data)` on the `Juicyway` class per the confirmed shape [ ]
+
+Blocked on a-1-i. Not started.
+
+##### a-1-iii. Verify payout-specific amount-unit handling against Task 49/a's subunit citation [ ]
+
+Blocked on a-1-i/a-1-ii. Not started.
 
 #### a-2. `verifyPayout` — international verify-payout [ ]
 

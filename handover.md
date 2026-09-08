@@ -79,18 +79,22 @@
 > its top-level status line updated to `[x]`. Per the No-skip-ahead
 > rule, this was the next unchecked buildable part after d-4.
 >
-> **Next up, in document order, not yet started: Task 6 — Payscribe
-> webhook: find the real scheme + implement.** Flagging rather than
-> starting it in this same session, per this file's own one-part-per-
-> session discipline.
->
-> **Per rule 6, this part was folded into the same still-unapplied
-> commit as d-4 and the Patch Handoff Convention rule changes** — one
-> combined patch file still covers everything since the last applied
-> commit (`356645b`). **Per rule 7, the exact apply/push command block
-> is restated directly in this session's own reply, with the real
-> patch filename filled in — not left to the product owner to
-> remember from an earlier session.**
+> **Newest note (2026-09-08, latest of all) — Task 6 struck, not
+> started: it was already moot.** The previous version of this box
+> pointed the next session at "Task 6 — Payscribe webhook," but
+> Task 51/a (earlier in this file's own history) already removed
+> Payscribe entirely — `providers/payscribe.js` deleted, and every
+> reference stripped from `routes.js`, `utils/helpers.js`, and
+> `render.yaml`. Confirmed again this session via
+> `grep -rin payscribe` across `.js`/`.json`/`.yaml`: zero live
+> references. Task 6's own entry in the Task queue below has been
+> updated from `[ ]` to `[x] (struck — moot, Payscribe removed by
+> Task 51/a)` so no future session mistakes it for pending work.
+> Nothing in the codebase changed this session — this was a
+> handover.md-only correction. Per the No-skip-ahead rule, the next
+> genuinely open, unblocked task is **Task 8c** (fix `GET /api/verify`
+> to surface Paystack's real per-transaction status) — not started
+> yet, flagged for whichever session picks this up next.
 >
 > *(Superseded note, kept for its own record below rather than
 > deleted.)*
@@ -5561,7 +5565,16 @@ of PR #2, **not yet merged by Phoenix-Boss** (see "Outstanding PRs
 status" above — check it's still current as of whichever session reads
 this next).
 
-### Task 6 — Payscribe webhook: find the real scheme + implement [ ]
+### Task 6 — Payscribe webhook: find the real scheme + implement [x] (struck — moot, Payscribe removed entirely by Task 51/a; do not implement)
+**STRUCK 2026-09-08: do not pick this up.** Payscribe was fully
+removed from this codebase by Task 51/a (`providers/payscribe.js`
+deleted; all references stripped from `routes.js`,
+`utils/helpers.js`, `render.yaml`). Re-confirmed via
+`grep -rin payscribe` across `.js`/`.json`/`.yaml`: zero live
+references remain. The research below is kept only as a historical
+record of what was learned before the removal decision — it does not
+describe anything that still needs building.
+**(Original entry, kept for record:)**
 **Docs blocker resolved 2026-09-06 — the signature scheme itself is
 now fully confirmed (doc-research only this session, no code changed;
 see "Confirmed research findings" above, search "Payscribe — FULL API

@@ -3,7 +3,138 @@
 > **▶ START HERE — read this box only, then go straight to work. Skip
 > everything else below unless you get stuck.**
 >
-> **Newest note (2026-09-08, latest of all) — Task 56/d-4 built:
+> **Newest note (2026-09-08, latest of all) — `git am` failure fixed,
+> and rule 8 (⭐ starred) added to prevent a repeat.** A prior session's
+> handed-over patch had silently gone stale: it kept amending one
+> local commit across several turns without ever re-checking whether
+> an earlier version of it had already been applied+pushed upstream,
+> so the "combined" patch no longer matched the real `origin/main`
+> and `git am` failed with `patch does not apply`. **Fixed this
+> session:** `git fetch origin` confirmed `origin/main` was actually
+> at `a4e5bce` (the original standalone d-4 patch, already applied);
+> a fresh commit was built directly on top of `a4e5bce` containing
+> only the genuinely-still-missing delta (d-5's migration + SCHEMA.md
+> + the handover.md rule/DB-Ops-table changes — confirmed via `git
+> diff origin/main` that routes.js/utils/supabase.js needed no changes
+> at all, already identical upstream), and **the resulting patch was
+> test-applied against a clean throwaway clone of the real
+> `origin/main` before being handed over** — confirmed clean.
+>
+> **New rule 8, Patch Handoff Convention:** `git fetch origin` and
+> check for drift before generating any patch, every time — if
+> `origin/main` moved since the local work's own known base, rebuild
+> on the real current `origin/main` and test-apply against a fresh
+> clone before handing anything over, rather than trusting an
+> assumption that nothing changed.
+>
+> *(Superseded note, kept for its own record below rather than
+> deleted.)*
+>
+> **Previous newest note (2026-09-08, latest of all) — DB-Ops connection
+> parameters recorded, per direct product-owner instruction: `host`
+> `aws-1-eu-west-1.pooler.supabase.com`, `port` `5432`, `database`
+> `postgres`, `user` `postgres.mfekzzwsoiezqkovabmp` — see the
+> confirmed-values table in the DB-Ops Handoff Process section. Only
+> these four non-secret parameters are recorded; the password is
+> still never written here, still entered interactively at the `psql`
+> prompt. Every handed-over DB-Ops command block (rule 7, and the
+> section's own example) now uses these real values instead of `...`
+> placeholders, so every future session's command is correct without
+> the product owner having to fill anything in by hand.
+>
+> **Per rule 6, this was folded into the same still-unapplied commit
+> as d-4/d-5/the rule-7 fix** — one combined patch file still covers
+> everything since the last applied commit (`356645b`).
+>
+> *(Superseded note, kept for its own record below rather than
+> deleted.)*
+>
+> **Previous newest note (2026-09-08, latest of all) — Patch Handoff Convention
+> rule 7 amended again: now explicitly requires BOTH command blocks
+> (Patch Handoff + DB-Ops) whenever a session's diff touches
+> `db/migrations/`, per direct product-owner instruction, after a
+> session (this one) handed over only the `git am`/`git push` block
+> for a session that also added a migration file, omitting the DB-Ops
+> block needed to actually run it.** The concrete trigger is now
+> spelled out: check `git diff --stat` for the session's own commit —
+> if `db/migrations/` appears, both blocks are owed, every time, in
+> the same reply. **This session's own Task 56/d-5 migration
+> (`0002_transactions_rls.sql`) is the case that exposed the gap** —
+> the DB-Ops block for it is restated below, together with the
+> Patch Handoff block, per the newly-amended rule.
+>
+> **Per rule 6, this rule-change was folded into the same
+> still-unapplied commit as d-4/d-5** — one combined patch file still
+> covers everything since the last applied commit (`356645b`).
+>
+> *(Superseded note, kept for its own record below rather than
+> deleted.)*
+>
+> **Previous newest note (2026-09-08, latest of all) — Task 56/d-5 built:
+> `db/migrations/0002_transactions_rls.sql` enables RLS on
+> `transactions` with one explicit `service_role`-scoped policy;
+> `anon`/`authenticated` get no policy (deny-by-default), a deliberate
+> safe-default choice flagged in d-5's own write-up below. **This
+> completes Task 56/d (d-1 through d-5) and Task 56 as a whole** —
+> its top-level status line updated to `[x]`. Per the No-skip-ahead
+> rule, this was the next unchecked buildable part after d-4.
+>
+> **Next up, in document order, not yet started: Task 6 — Payscribe
+> webhook: find the real scheme + implement.** Flagging rather than
+> starting it in this same session, per this file's own one-part-per-
+> session discipline.
+>
+> **Per rule 6, this part was folded into the same still-unapplied
+> commit as d-4 and the Patch Handoff Convention rule changes** — one
+> combined patch file still covers everything since the last applied
+> commit (`356645b`). **Per rule 7, the exact apply/push command block
+> is restated directly in this session's own reply, with the real
+> patch filename filled in — not left to the product owner to
+> remember from an earlier session.**
+>
+> *(Superseded note, kept for its own record below rather than
+> deleted.)*
+>
+> **Previous newest note (2026-09-08, latest of all) — Patch Handoff Convention
+> amended again: rule 7 (⭐ starred) added per direct product-owner
+> instruction, after a session handed over a patch file but did not
+> restate the actual apply/push commands alongside it.** Every patch
+> handoff, from here on, must include the literal copy-pasteable
+> command block for whichever environment/repo it targets (this
+> repo's `git am` + `git push` block, or the DB-Ops block below) —
+> restated in that session's own reply every time, with the real
+> patch filename filled in, not assumed already known from an earlier
+> session. **Per rule 6 (added the same day), this rule-change was
+> folded into the same still-unapplied Task 56/d-4 commit rather than
+> stacked as a new one** — one combined patch file still covers
+> everything since the last applied commit. No other task's code was
+> touched this session.
+>
+> *(Superseded note, kept for its own record below rather than
+> deleted.)*
+>
+> **Previous newest note (2026-09-08, latest of all) — Patch Handoff Convention
+> amended: two new mandatory rules added (items 5 and 6) per direct
+> product-owner instruction.** (5) A patch file must actually be
+> produced and attached every session that does work — description in
+> the write-up alone is not sufficient — covering whichever handoff
+> process the task touched (this convention, the DB-Ops Handoff
+> Process below, or both). (6) While a prior patch is still unapplied,
+> a session builds on that same unapplied commit (amend/fixup) rather
+> than stacking a second independent one, so the handoff stays a
+> single patch file to `git am`, not a growing stack. **This session's
+> own Task 56/d-4 commit (still unapplied) was itself amended per the
+> new rule (6)** — folded this handover.md rule-change into that same
+> commit rather than creating a second one, so only one combined patch
+> file is being handed over for both changes. No other task's code was
+> touched this session — this is a convention-only update, same
+> discipline as Tasks 46/47/51/53/54/55/56's own decision-record
+> entries.
+>
+> *(Superseded note, kept for its own record below rather than
+> deleted.)*
+>
+> **Previous newest note (2026-09-08, latest of all) — Task 56/d-4 built:
 > `GET /payout/verify` now looks the original payout's `currency` up
 > from the `transactions` table by `reference` (via the new
 > `getTransactionByReference()` in `utils/supabase.js`) and routes via
@@ -7633,6 +7764,128 @@ repo's handover.md (including mavins-web's):**
    payment providers with no database of its own — there is no local
    transaction record to fall back on if an unreviewed change goes
    wrong, so the human review step is not optional.
+5. **Patch file must actually be produced and handed over, every
+   time — MANDATORY, effective 2026-09-08, product-owner instruction.**
+   A session's write-up is not allowed to say "a patch file was
+   generated and handed to the product owner" as a description of
+   what happened without a real, attached patch file the product
+   owner can download and run `git am` on — the write-up's own prose
+   is not a substitute for the artifact. This applies whichever
+   handoff process the task touched — this convention ("handoff 1"),
+   the DB-Ops Handoff Process below ("handoff 2"), or both in the same
+   session (e.g. a session that both edits code/handover.md AND runs
+   a live DB command) — produce and hand over whichever patch file(s)
+   the task actually needs, every session, no exceptions.
+6. **Combine, don't stack, while a prior patch is still unapplied —
+   MANDATORY, effective 2026-09-08, product-owner instruction.** If
+   the product owner hasn't yet applied a previous session's patch
+   (confirm by asking, don't assume), a session builds on top of that
+   same unapplied local commit — amend it or add a fixup commit on
+   top, as appropriate — rather than creating a second, independent
+   commit against the same unapplied base. The handoff is still a
+   single `git format-patch` output covering everything since the
+   last **applied** commit, not one file per session. This keeps the
+   product owner's `git am` step to one file at a time instead of
+   requiring them to track and apply a growing stack in order.
+7. **⭐ STARRED — print the exact command(s) for EVERY handoff process
+   the session's work actually touched, MANDATORY, effective
+   2026-09-08, product-owner instruction, amended after this rule was
+   missed twice: once for omitting the commands entirely, once more
+   for handing over only the Patch Handoff (`git am`/`git push`)
+   commands on a session that also added/changed a migration file
+   under `db/migrations/`, silently leaving the DB-Ops half out.**
+   Handing over the patch file alone is never enough — the product
+   owner needs the literal, copy-pasteable command block(s) every
+   time, not just once somewhere back in this file, and not just for
+   whichever one process is top-of-mind that session.
+
+   **How to decide which command block(s) a session owes, every
+   time, no exceptions:**
+   - **Patch Handoff (`git am`/`git push`) — always**, for any
+     session that changed any file in this repo (code, docs,
+     `handover.md`, migration files themselves included — the
+     migration `.sql` file has to land in the repo via `git am` the
+     same as any other file, that's a separate step from actually
+     *running* it).
+   - **DB-Ops Handoff (the `proot-distro` preamble + the actual live
+     command) — additionally, whenever this session's diff touches
+     `db/migrations/`**, or otherwise needs a live `psql`/Supabase-CLI/
+     RPC action against the real project. A new or changed migration
+     file is the concrete, checkable trigger for this — a session
+     doesn't need to guess or remember to think about it separately;
+     if `db/migrations/` shows up in `git diff --stat` for the
+     session's own commit, the DB-Ops block is owed **in addition to**
+     the Patch Handoff block, not instead of it. Landing the `.sql`
+     file in the repo and actually running it against the live
+     database are two different, both-necessary actions with two
+     different command blocks — one is not a substitute for the
+     other.
+   - **Both, in the same reply, when both apply** — most migration-
+     adding sessions owe both blocks every time: Patch Handoff to land
+     the file, DB-Ops to run it. Neither is optional just because the
+     other one was already given.
+
+   For this repo, the Patch Handoff block is:
+   ```
+   cd ~/B-PAY-backend
+   git am ~/storage/downloads/<patch-file-name>
+   git push
+   ```
+   and, when a migration is included, the DB-Ops block (mandatory
+   preamble first, per that section above) is:
+   ```
+   proot-distro login ubuntu
+   cd ~/B-Pay-backend
+   git pull
+   psql "host=aws-1-eu-west-1.pooler.supabase.com port=5432 dbname=postgres user=postgres.mfekzzwsoiezqkovabmp sslmode=require" -f db/migrations/<migration-file-name>
+   ```
+   with `<patch-file-name>` / `<migration-file-name>` filled in for
+   the actual files just handed over — never left as a placeholder —
+   and the connection's `host`/`port`/`database`/`user` taken directly
+   from the confirmed-values table in the DB-Ops section above (the
+   password stays interactive at the `psql` prompt either way, never
+   written here or in chat). **No exceptions, and no assuming the
+   product owner already has any of this memorized from a previous
+   session** — that assumption is exactly what caused this rule to be
+   added, twice.
+8. **⭐ STARRED — `git fetch origin` and check for drift BEFORE
+   generating any patch, MANDATORY, effective 2026-09-08,
+   product-owner instruction, added after a `git am` failed
+   (`patch does not apply`) because a session kept amending its own
+   local commit across several turns without ever re-checking whether
+   an earlier version of that same patch had already been applied and
+   pushed upstream in the meantime — the local commit and
+   `origin/main` had quietly diverged, so the "combined" patch no
+   longer matched what the product owner's tree actually looked
+   like.** Concretely, immediately before running `git format-patch`
+   to hand anything over:
+   1. Run `git fetch origin`, then compare `origin/main` to whatever
+      commit this session's own local work is currently built on top
+      of (`git log --oneline origin/main -5` vs. the session's own
+      local log, or `git diff origin/main -- <files>` for a direct
+      check).
+   2. **If `origin/main` has NOT moved past the session's own known
+      base** — nothing else applied and pushed since this session (or
+      a prior unapplied one) last checked — proceed exactly as rule 6
+      already says: amend/build on the existing unapplied local
+      commit, and hand over one combined patch as usual.
+   3. **If `origin/main` HAS moved** — some prior patch landed since
+      the local commit was last built or amended — the session does
+      **not** hand over a patch built on the old, now-stale base.
+      Instead: reset/rebuild the local commit on top of the real,
+      current `origin/main` (a fresh branch off `origin/main` with
+      only the genuinely-still-missing file changes copied in is the
+      reliable way to do this — diff each changed file against
+      `origin/main` first and confirm the delta actually is what's
+      still missing, don't assume), regenerate the patch from that,
+      and **test-apply it against a clean, fresh clone of `origin/main`
+      before handing it over** — `git am` against a throwaway clone,
+      not just eyeballing the diff. Only a patch that has actually
+      been proven to apply cleanly gets handed to the product owner.
+   This check costs one `git fetch` and is mandatory every single time
+   a patch is about to be generated, not just when something feels
+   like it might have changed — that assumption is exactly what
+   caused the failure this rule exists to prevent.
 
 ---
 
@@ -7677,18 +7930,37 @@ something that actually touches production data is a worse failure
 mode than a stale clone sitting idle doing nothing. **No session hands
 over a live-DB command without this preamble in front of it.**
 
-**Credentials are never written into this file.** The Supabase
-Postgres connection's host, port, database name, and pooler-specific
-username aren't secrets on their own and can be quoted directly in a
+**Credentials are never written into this file — except the
+non-secret connection parameters below, confirmed and recorded
+directly by the product owner (2026-09-08).** The Supabase Postgres
+connection's host, port, database name, and pooler-specific username
+aren't secrets on their own and can be quoted directly in a
 handed-over command; the password is entered interactively by the
 product owner at the `psql` prompt — the same "manual step, not
 stored in the repo" pattern this file already uses for every provider
-API key (see the Unified hand-off command format section above). A
-session hands over a connection command with the password *omitted*
-(`psql "host=... port=5432 dbname=postgres user=... sslmode=require"`,
-letting `psql` prompt for it) — never a full connection string with a
-password embedded, and never a password pasted into this file or into
-chat.
+API key (see the Unified hand-off command format section above). This
+project's own confirmed values, for project ref `mfekzzwsoiezqkovabmp`
+(Task 56/c):
+
+| Parameter | Value |
+|---|---|
+| `host` | `aws-1-eu-west-1.pooler.supabase.com` |
+| `port` | `5432` |
+| `database` | `postgres` |
+| `user` | `postgres.mfekzzwsoiezqkovabmp` |
+
+A session hands over a connection command built from exactly these
+four values, with the password *omitted* —
+```
+psql "host=aws-1-eu-west-1.pooler.supabase.com port=5432 dbname=postgres user=postgres.mfekzzwsoiezqkovabmp sslmode=require"
+```
+letting `psql` prompt for the password interactively — never a full
+connection string with a password embedded, and never a password
+pasted into this file or into chat. **This table is the one and only
+place these four values are recorded; if any of them ever change
+(e.g. the project moves pooler regions), update this table in the
+same session that discovers the change, don't let a stale copy drift
+into a handed-over command elsewhere in this file.**
 
 **Optional convenience, product owner's own device only, never this
 repo:** to stop `psql` prompting for the password on every run, the
@@ -9933,7 +10205,7 @@ where actual Flutterwave code gets written.
 
 ---
 
-## Task 56 — Incremental, on-the-go Supabase schema convention adopted; `transactions` table resolves `GET /payout/verify`'s currency gap; unblocks Task 52/e-2b-ii [ ]
+## Task 56 — Incremental, on-the-go Supabase schema convention adopted; `transactions` table resolves `GET /payout/verify`'s currency gap; unblocks Task 52/e-2b-ii [x] (a/b/c resolved; d-1 through d-5 all built — fully complete as of 2026-09-08)
 
 **Scope note, read first:** decision-record + convention-setting task
 only, same discipline as Tasks 46/47/51/53/54/55. **No code, no
@@ -10307,7 +10579,7 @@ changes (routes.js, utils/supabase.js, this handover.md update) was
 generated and handed to the product owner directly — not applied or
 merged by this session.**
 
-#### d-5. RLS policy design for the `transactions` table [ ]
+#### d-5. RLS policy design for the `transactions` table [x]
 
 A placeholder/permissive policy is acceptable for now, since this
 backend talks to Supabase with a service-role key (which bypasses RLS)
@@ -10316,6 +10588,56 @@ not silently skipped, per Task 53/54's own already-flagged "no RLS
 design exists yet" gap. Real per-business RLS only matters once a
 dashboard with business-level logins (Task 46) actually reads from
 this table directly.
+
+**Built (2026-09-08):** `db/migrations/0002_transactions_rls.sql`
+enables RLS on `transactions` and adds one explicit policy,
+`transactions_service_role_all` (`for all`, `using (true)`, `with
+check (true)`), scoped only to `service_role`.
+
+**Design choice, flagged plainly:** "placeholder/permissive" is read
+here as "the policy object itself is a simple placeholder", not as
+"leave every role open". The `service_role` grant is redundant today
+(that role already carries BYPASSRLS in Supabase and ignores RLS
+regardless of any policy) but is written explicitly anyway, so this
+table's RLS intent lives in a migration file rather than staying
+implicit — and so behavior doesn't silently change if BYPASSRLS is
+ever revoked from that role at the project level. No policy is
+created for `anon`/`authenticated`: under Postgres RLS, enabling RLS
+with no matching policy for a role denies that role by default, which
+is the safe posture (there is no end-user-facing read path into this
+table yet — Task 46's dashboard hasn't landed — so there's nothing for
+a permissive `anon`/`authenticated` policy to usefully enable today).
+An alternative reading of "permissive" — actually opening
+`anon`/`authenticated` access now — was considered and rejected: this
+table holds real payment/payout data across ten providers, and nothing
+currently needs that access, so opening it now would be exposure with
+no corresponding benefit.
+
+**Verified:** migration reviewed manually for syntax (`alter table
+... enable row level security` + `create policy ... for all to
+service_role using (true) with check (true)` — standard Postgres/
+Supabase RLS syntax, matching the pattern in Supabase's own RLS docs).
+**Not run against any database** — no local Postgres is available in
+this sandbox to `psql -f` it against, and per the Patch Handoff
+Convention no session applies a migration to a live project on its own
+authority regardless. Same unverified-until-applied status as
+migration `0001` had before the product owner ran it.
+
+`db/SCHEMA.md` updated in the same session: `transactions`' own entry
+now documents the RLS policy, the migration-status note flags `0002`
+as not yet confirmed live (mirroring `0001`'s own now-resolved note),
+and the "Not yet in this schema" section is updated to reflect that
+Task 56/d (a through e) is fully built.
+
+**This completes Task 56/d (d-1 through d-5 all built).** Task 56 as
+a whole is now fully built — see the top-level status line update
+below.
+
+**Per the Patch Handoff Convention, a patch file covering this part's
+changes (the new migration, `db/SCHEMA.md`, this handover.md update)
+was generated and handed to the product owner directly, together with
+the exact apply/push command block per rule 7 — not applied or merged
+by this session.**
 
 ### e. Not yet done, this session, deliberately [ ]
 

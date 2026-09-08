@@ -14,6 +14,7 @@ confirmation the same way before this file should be treated as
 describing live state for it — check `handover.md`'s per-migration
 notes, or run `\dt`/`\d <table>` yourself, rather than assuming
 everything in this directory has been applied just because `0001` has.
+Migration `0002` (RLS) is not yet confirmed live as of this update.
 
 ## Shared conventions (locked in by migration `0001`, followed by every migration after)
 
@@ -45,6 +46,15 @@ no `business_id` column just because Task 46 mentions a future
 `businesses` table. Added in a later migration once that table
 actually exists.
 
+**Row Level Security:** enabled (migration `0002`). One explicit
+policy, `transactions_service_role_all`, scoped to `service_role`
+only (this backend's own connection role — redundant with
+`service_role`'s own BYPASSRLS, written explicitly anyway so intent
+is documented in-migration). No policy for `anon`/`authenticated` —
+under RLS, no matching policy means no access, which is the safe
+default until Task 46's dashboard actually needs a real,
+per-business-scoped policy here.
+
 ## Functions
 
 - **`set_updated_at()`** — trigger function (migration `0001`). Keeps
@@ -55,8 +65,10 @@ actually exists.
 
 ## Not yet in this schema
 
-Task 56/d-3 (a/b/c) is fully built as of this update — `/pay` and
-`/payout` both write `'pending'` rows here. What's left of Task 56/d:
-the read path at `/payout/verify` (d-4), and RLS policy design (d-5)
-— neither is schema, so neither belongs in this file until it
-produces its own migration or a schema-relevant change.
+Task 56/d (a through e) is fully built as of this update — `/pay` and
+`/payout` write `'pending'` rows (d-3), `/payout/verify` reads them
+back by reference (d-4), and RLS is enabled with an explicit
+placeholder policy (d-5). Nothing currently queued needs a new
+migration; the next schema change is whatever a future task actually
+requires (e.g. Task 46's dashboard, once it needs a `businesses`
+table or per-business RLS).

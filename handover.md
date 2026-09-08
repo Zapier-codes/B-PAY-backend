@@ -7923,7 +7923,7 @@ match afterward, not the other way around.
 
 ---
 
-## Task 52 — Implement every gap Task 51's capability matrix flagged: build out Juicyway/Korapay/Paystack/Flutterwave fully so the domain-based routing model is real, not aspirational [ ] (a-1-iv is X, per the 2026-09-08 session's resolution of a-1-i/ii/iii — see Task Numbering & Workflow Convention above)
+## Task 52 — Implement every gap Task 51's capability matrix flagged: build out Juicyway/Korapay/Paystack/Flutterwave fully so the domain-based routing model is real, not aspirational [ ] (a-2 is X, per the 2026-09-08 session's resolution of a-1 in full — see Task Numbering & Workflow Convention above)
 
 **Scope note, read first:** this task exists because Task 51 recorded
 a *decision* (Juicyway defaults for every international-rails
@@ -7939,17 +7939,16 @@ Convention, not to close the gap itself (no code was written this
 session — decision/scoping record only, same as Task 51).
 
 **Exactly one leaf below carries the `X` marker at any time, per the
-Workflow Convention.** This session (2026-09-08) found JuicyWay's real
-payout docs and resolved a-1-i/a-1-ii/a-1-iii — see a-1's own section
-below for the citations and the accompanying code patch. That research
-surfaced a new dependency (JuicyWay payouts need a pre-created
-beneficiary resource, which nothing in this codebase creates yet), so
-`X` moves to the new leaf **a-1-iv**, not to a-2. Whichever session
-picks this up next works ONLY on a-1-iv until it's solved, then moves
-`X` to a-2 (itself to be split into the same i/zi/zo shape when its
-turn comes), then a-3, then b, then c, then d, then e — unless the
-product owner explicitly reprioritizes, in which case update this line
-to say so and move `X` accordingly.
+Workflow Convention.** This session (2026-09-08) closed out all of
+a-1 (i through iv) — see a-1's own section below for citations and
+the accompanying code patch, including one carried-forward caveat
+(a-1-iv's endpoint path feeds into Task 45a rather than blocking this
+board). `X` now moves to **a-2**, to be split into the same i/zi/zo
+shape as a-1 was once someone picks it up. Whichever session picks
+this up next works ONLY on a-2 until it's solved, then moves `X` to
+a-3, then b, then c, then d, then e — unless the product owner
+explicitly reprioritizes, in which case update this line to say so
+and move `X` accordingly.
 
 ### a. Juicyway — build the missing international-rails methods [ ]
 
@@ -7959,7 +7958,7 @@ Juicyway the *default* for every capability in the international-rails
 domain, not just collection — these three sub-leaves are what's
 missing to make that true in code, not just on paper.
 
-#### a-1. `processPayout` — international payout/disbursement [ ]
+#### a-1. `processPayout` — international payout/disbursement [x]
 
 **Retrofitted 2026-09-07 into the new six-level split
 (a/b/c/d/e → 1/2/3/4 → i/ii/iii → zi/zo → X) — this is the worked
@@ -8064,7 +8063,7 @@ does) — callers are expected to already pass minor units, matching
 that convention changes for one method it should change for both, as
 its own future leaf, not silently diverge between them.
 
-##### a-1-iv. Create-or-resolve a JuicyWay beneficiary from raw account details [X]
+##### a-1-iv. Create-or-resolve a JuicyWay beneficiary from raw account details [x]
 
 **New leaf, split off from a-1-i-zo's finding above (not part of the
 original a-1 scope written before this session).** `routes.js`'s
@@ -8076,23 +8075,64 @@ happen to hold a JuicyWay beneficiary id, which is not yet anything in
 this codebase — so a-1 as a whole is NOT fully wired end-to-end yet
 despite a-1-i/ii/iii all being resolved.
 
-**Current board `X`.** Needs, in order: (1) confirm
-`docs.juicyway.com/transfers/beneficiaries/create-beneficiary.md`'s
-exact request/response shape against its own primary source — not
-fetched yet this session, so nothing about its field names should be
-assumed even though the sibling Beneficiaries list/fetch pages this
-session did see in passing suggest a `bank_account` type consistent
-with a-1-i-zo's response shape; (2) decide, and document the decision
-here, whether `Juicyway.processPayout(data)` should create-a-beneficiary
-inline on every call when no `beneficiary_id` is supplied (extra
-JuicyWay API round-trip per payout, but zero caller changes needed) or
-whether resolving/caching a beneficiary is pushed up to the caller
-(matches Korapay's flatter interface less, but avoids creating a
-throwaway beneficiary resource on every single payout call — worth
-checking whether JuicyWay's beneficiary list is de-duplicated
-server-side or whether repeated calls pile up redundant records,
-since that affects which choice is actually cheaper); (3) implement
-whichever shape (2) settles on.
+**Resolved this session, with one honest caveat carried forward
+rather than hidden:**
+
+1. **Field shape — confirmed against a primary source.**
+   `docs.juicyway.com/transfers/beneficiaries` (the Beneficiaries
+   overview page itself, fetched directly this session) documents the
+   required fields for all three beneficiary types in its own
+   "Beneficiary Information" section: bank account
+   (`account_details.{account_number, account_name, bank_code,
+   currency}`), crypto address (`crypto_details.{address, chain,
+   currency}`), and Interac (`interac_details.{email, name.first_name,
+   name.last_name, phone_number (optional)}`). This is what
+   `createBeneficiary()`'s per-type payload building is built against.
+2. **Exact endpoint path — NOT confirmed, flagged rather than
+   guessed-and-hidden.** The dedicated
+   `transfers/beneficiaries/create-beneficiary` sub-page (linked from
+   the overview page as "See Create Beneficiary") could not be
+   fetched this session — repeated attempts were blocked by the
+   fetch tool's own same-session-search-result requirement, and no
+   search query surfaced its exact HTTP method/path as a primary-source
+   citation (the openapi.json tag list this session already confirmed
+   for a-1-i-zi has no `beneficiaries` tag at all, meaning — like
+   `transfers/transfers/initiate-bank-transfer.md` turned out to
+   actually be `POST /payouts`, not something under `/transfers/...`
+   — the real path likely doesn't match the doc site's own URL/folder
+   naming). Rather than block this whole leaf on that one unconfirmed
+   detail (which would just recreate a-1-i-zi's original stuck state,
+   now one level deeper), this follows the exact precedent this same
+   file already set for `processPayment()`'s `/v1/charges` — implement
+   against the confirmed field shape, mark the path itself with an
+   explicit "not confirmed, verify before relying on this outside a
+   sandbox smoke test" comment, same wording pattern. **Whoever next
+   touches this file should treat `POST /beneficiaries` in
+   `createBeneficiary()` as no more trustworthy than
+   `processPayment()`'s own long-standing `/v1/charges` placeholder
+   — both need the same escalation (JuicyWay support / dashboard) that
+   Task 45a already exists to do for the collection side. This does
+   NOT close Task 45a's scope; Task 45a should now also cover this
+   path once someone picks it up.**
+3. **Design decision (documented here per this leaf's own instruction
+   to record it): beneficiary creation is a separate, explicit
+   `createBeneficiary()` call, NOT auto-invoked inline inside
+   `processPayout()` when no `beneficiary_id` is supplied.** Reasoning:
+   JuicyWay's own "Transfers Overview" guide documents beneficiary
+   creation as its own numbered step 1, ahead of "Initiate Transfer"
+   step 2 — treating the two as separate calls matches JuicyWay's own
+   documented mental model rather than fighting it. It also avoids
+   creating a throwaway beneficiary resource on every retried/failed
+   payout attempt (auto-create-inline would do this on every call
+   that doesn't already have an id, including retries), and lets a
+   caller cache a `beneficiary_id` across repeated payouts to the same
+   recipient. Whether JuicyWay's beneficiary list de-dupes server-side
+   was NOT confirmed either way this session, but that question no
+   longer matters much given this decision — it would only have mattered
+   for the auto-create-inline path, which wasn't chosen. Wiring
+   `routes.js`'s `/payout` route to call `createBeneficiary()` before
+   `processPayout()` when it only has raw account details is (e)'s job
+   (routing rewire), not this leaf's.
 
 
 

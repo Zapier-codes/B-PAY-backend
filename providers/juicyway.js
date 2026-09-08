@@ -16,6 +16,96 @@ export class Juicyway {
     log(`Juicyway provider initialized (${process.env.NODE_ENV || 'development'} mode)`);
   }
 
+  // ==================================================
+  // 👤 CREATE BENEFICIARY (required before processPayout)
+  // ==================================================
+  // Task 52/a-1-iv (2026-09-08). Field shapes below are confirmed
+  // against a primary source: docs.juicyway.com/transfers/beneficiaries
+  // (the Beneficiaries overview page's own "Beneficiary Information"
+  // section documents all three required shapes directly). The exact
+  // endpoint PATH is the one thing here that is NOT confirmed —
+  // `/beneficiaries` is a same-file precedent placeholder, in the same
+  // spirit as processPayment()'s own long-standing `/v1/charges`
+  // comment below: verify against Juicyway support/dashboard before
+  // relying on this outside a sandbox smoke test. See handover.md
+  // Task 52/a-1-iv for the full reasoning and Task 45a for the
+  // existing open item this feeds into.
+  //
+  // Deliberately NOT called automatically from processPayout() when a
+  // beneficiary_id is missing -- see handover.md Task 52/a-1-iv point
+  // 3 for why this is a separate, explicit call instead.
+  async createBeneficiary(data) {
+    const type = data.type || 'bank_account';
+    let details;
+
+    if (type === 'bank_account') {
+      if (!data.account_number || !data.account_name || !data.bank_code || !data.currency) {
+        throw providerError('Juicyway bank_account beneficiary requires account_number, account_name, bank_code, currency');
+      }
+      details = {
+        account_details: {
+          account_number: data.account_number,
+          account_name: data.account_name,
+          bank_code: data.bank_code,
+          currency: data.currency,
+        },
+      };
+    } else if (type === 'crypto_address') {
+      if (!data.address || !data.chain || !data.currency) {
+        throw providerError('Juicyway crypto_address beneficiary requires address, chain, currency');
+      }
+      details = {
+        crypto_details: {
+          address: data.address,
+          chain: data.chain,
+          currency: data.currency,
+        },
+      };
+    } else if (type === 'interac') {
+      if (!data.email || !data.first_name || !data.last_name) {
+        throw providerError('Juicyway interac beneficiary requires email, first_name, last_name');
+      }
+      details = {
+        interac_details: {
+          email: data.email,
+          name: { first_name: data.first_name, last_name: data.last_name },
+          ...(data.phone_number && { phone_number: data.phone_number }),
+        },
+      };
+    } else {
+      throw providerError(`Unsupported Juicyway beneficiary type: ${type}`);
+    }
+
+    const payload = { type, ...details };
+
+    log(`Juicyway Create Beneficiary Request: ${formatPayload(payload)}`);
+
+    const result = await handleApiCall(async () => {
+      // ⚠️ Verify exact endpoint path in Juicyway docs -- see this
+      // method's own docblock above, same caveat processPayment()
+      // carries for /v1/charges.
+      const response = await fetch(`${this.baseUrl}/beneficiaries`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${this.apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+      });
+
+      const responseData = await response.json();
+
+      if (!response.ok) {
+        throw providerError(responseData.message || 'Juicyway beneficiary creation failed');
+      }
+
+      return responseData;
+    }, 'juicyway');
+
+    log(`Juicyway Create Beneficiary Response: ${formatPayload(result)}`);
+    return result;
+  }
+
   async processPayment(data) {
     const ref = data.reference || generateReference('juicyway');
 

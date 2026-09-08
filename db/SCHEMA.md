@@ -6,11 +6,14 @@ is a short, current index so a session doesn't have to reconstruct the
 schema by reading every migration in order. **Update this file in the
 same session as any migration that changes it.**
 
-No migration has been applied to any live Supabase project yet —
-this describes what the migration files in this directory *would*
-create, not confirmed live state. See the "DB-Ops Handoff Process"
-section in `handover.md` for how a live check (`psql` + `\dt`) is
-actually run, and by whom.
+**Migration `0001` is confirmed live** (2026-09-08) — applied by the
+product owner via `psql -f`, from the second (proot-distro Ubuntu)
+environment, against project ref `mfekzzwsoiezqkovabmp`. Every
+migration after `0001` in `db/migrations/` still needs its own
+confirmation the same way before this file should be treated as
+describing live state for it — check `handover.md`'s per-migration
+notes, or run `\dt`/`\d <table>` yourself, rather than assuming
+everything in this directory has been applied just because `0001` has.
 
 ## Shared conventions (locked in by migration `0001`, followed by every migration after)
 

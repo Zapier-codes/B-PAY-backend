@@ -3,7 +3,23 @@
 > **▶ START HERE — read this box only, then go straight to work. Skip
 > everything else below unless you get stuck.**
 >
-> **Newest note (2026-09-08, latest of all) — Task 56/d-2 built: a
+> **Newest note (2026-09-08, latest of all) — Migration `0001` is now
+> LIVE. The product owner ran it themselves, from the second
+> environment, per the DB-Ops Handoff Process — `transactions` table,
+> its index, and its `set_updated_at()` trigger all confirmed created
+> against project ref `mfekzzwsoiezqkovabmp`. This also resolves Task
+> 56/c (which Supabase project) — see that entry's own update.
+> `db/SCHEMA.md`'s "not yet applied" caveat corrected to match. DB-Ops
+> Handoff Process section gained an optional `~/.pgpass` convenience
+> note (product owner's own device only, never this repo). No new
+> code this note — documentation/status update only, reacting to
+> something the product owner did outside any session's own authority
+> to do themselves.**
+>
+> *(Superseded note, kept for its own record below rather than
+> deleted.)*
+>
+> **Previous newest note (2026-09-08) — Task 56/d-2 built: a
 > Supabase client is now wired into this backend
 > (`@supabase/supabase-js`, `utils/supabase.js`, `render.yaml` env-var
 > entries). Per the No-skip-ahead rule, this was the next unchecked
@@ -7420,6 +7436,16 @@ letting `psql` prompt for it) — never a full connection string with a
 password embedded, and never a password pasted into this file or into
 chat.
 
+**Optional convenience, product owner's own device only, never this
+repo:** to stop `psql` prompting for the password on every run, the
+product owner can create `~/.pgpass` **inside the proot-distro Ubuntu
+container** (`/root/.pgpass`, one line, `hostname:port:database:
+username:password`, `chmod 600` — `psql` silently ignores this file if
+its permissions are looser than `600`). This is standard `psql`
+behavior, not something this repo's tooling depends on — a session
+should never write, read, or assume the existence of this file, and
+it is never mentioned in a patch or committed anywhere.
+
 **This does not change who is allowed to run a migration, a Supabase
 CLI deploy, or an RPC call against the live database.** Per Task
 56/b's own table, that step belongs to the product owner alone,
@@ -9719,7 +9745,7 @@ across sessions:**
 | No placeholder FKs | A table doesn't get a foreign key to a table that doesn't exist yet just because a future task is expected to add it (e.g. `transactions` does **not** get a `business_id` column now just because Task 46 mentions a future `businesses` table) — same "don't guess ahead" rule this file already applies to provider code and routing |
 | Landing a migration | Same Patch Handoff Convention as every other change in this repo — a session writes the migration file(s) and hands over a patch; the product owner applies it and runs it against the real Supabase project themselves. No session runs a migration against a live database on its own authority |
 
-### c. Still open, not resolved by this task: which Supabase project [ ]
+### c. Which Supabase project [x]
 
 **Carried over, unresolved, from Task 47/b** — same project as Task
 45's Reseller/VTU product, or a separate project for this backend.
@@ -9730,16 +9756,29 @@ confirmed by the product owner **before** migration `0001` (Task
 56/d-1) is applied to any live project — it doesn't block *writing*
 the migration file, only applying it.
 
-**Update (2026-09-08), fact only, not a resolution:** live Supabase
+**Update (2026-09-08), fact only, not yet a resolution:** live Supabase
 Postgres connectivity was verified from the second (Termux →
 proot-distro Ubuntu) environment against project ref
 `mfekzzwsoiezqkovabmp` (see the newest note at the top of this file
 and the new "DB-Ops Handoff Process" section, both added this
-session) — `\dt` showed no tables, so this is only a reachability
+session) — `\dt` showed no tables, so this was only a reachability
 check, not a claim that this ref is the confirmed project for this
-backend. The same-project-vs-separate-project question above is still
-open and still needs the product owner's explicit call before
-migration `0001` is applied here.
+backend.
+
+**Resolved (2026-09-08, later the same day) — by the product owner's
+own action, not this session's assumption:** the product owner ran
+migration `0001` against project ref `mfekzzwsoiezqkovabmp` themselves,
+from the second environment, per the DB-Ops Handoff Process —
+`CREATE EXTENSION` / `CREATE TABLE` / `CREATE INDEX` / `CREATE
+FUNCTION` / `CREATE TRIGGER` all confirmed. Running a real DDL change
+against a specific project **is** the confirmation Task 47/b's
+risk-profile note asked for — this project ref is this backend's
+Supabase project going forward. Task 47/b's own risk-profile note
+(mixing a real-money backend with the Reseller/VTU product's project,
+if that's what this ref turns out to be) is not independently
+re-litigated here; if that's a live concern, it's now about which
+project ref `mfekzzwsoiezqkovabmp` actually is, not an open schema
+question.
 
 ### d. Buildable sub-tasks — one per session, per the mandatory splitting rule [ ]
 
@@ -9782,6 +9821,18 @@ Handoff Process, no session applies a migration to a live Supabase
 project on its own authority; that step is the product owner's, from
 the second environment, once Task 56/c's still-open "which project"
 question is answered.
+
+**Applied live (2026-09-08, later the same day), by the product owner
+themselves, from the second environment:** `psql -f
+db/migrations/0001_create_transactions_table.sql` against project ref
+`mfekzzwsoiezqkovabmp` — `CREATE EXTENSION` (pgcrypto already present,
+harmless notice), `CREATE TABLE`, `CREATE INDEX`, `CREATE FUNCTION`,
+`CREATE TRIGGER` (the `DROP TRIGGER IF EXISTS` notice is expected on a
+first run — nothing to drop yet) all confirmed. The `transactions`
+table now exists on this project for real — this also resolves Task
+56/c, see that entry's own update. `db/SCHEMA.md`'s "no migration
+applied yet" caveat was stale after this and has been corrected in
+this same session.
 
 **Per the Patch Handoff Convention, a patch file covering this
 migration, `db/SCHEMA.md`, and this `handover.md` update was generated

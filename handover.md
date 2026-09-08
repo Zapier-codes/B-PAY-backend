@@ -3,7 +3,46 @@
 > **▶ START HERE — read this box only, then go straight to work. Skip
 > everything else below unless you get stuck.**
 >
-> **Newest note (2026-09-08, latest of all) — Task 57/b built (all 4
+> **Newest note (2026-09-08, latest of all) — Task 57/c built:
+> `customers` table (the "Customer Vault", Task 57 Piece 2) + RLS,
+> migrations `0003`/`0004`.** `0003_create_customers_table.sql` adds
+> `first_name`/`last_name`/`phone_number`/`billing_address`/
+> `customer_type` (plus `id`/`created_at`/`updated_at`, reusing
+> migration `0001`'s shared `set_updated_at()` trigger); `0004`
+> enables RLS with one explicit `customers_service_role_all` policy,
+> `service_role`-only, no `anon`/`authenticated` policy — same
+> deny-by-default treatment Task 56/d-5 gave `transactions`.
+> **Deliberately excluded, flagged rather than silently omitted:**
+> `email` (always supplied fresh via the canonical `customer.email`,
+> never vaulted) and `ip_address` (request-time network context, not a
+> durable customer attribute — Task 57's own "important nuance"
+> paragraph names exactly four durable fields, and IP isn't one of
+> them). `customer_type`, not `type`, to avoid clashing with
+> `transactions.type`'s unrelated meaning; no `CHECK` constraint on it
+> yet — its full allowed-value set hasn't been confirmed against
+> provider docs. Every column but `id`/timestamps is nullable — this
+> is a general-purpose vault, not scoped to one provider's exact
+> requirements; Task 57/d's own resolution order is what will actually
+> enforce "required," not a `NOT NULL` here. No foreign keys yet.
+> **Verified:** both migrations parsed successfully against real
+> Postgres grammar via `pglast` (3 statements in `0003`, 2 in `0004`,
+> no syntax errors) — same method Task 56/d-1 used for migration
+> `0001`. **Not run against any live database** — that step is the
+> product owner's, from the second (proot-distro Ubuntu) environment,
+> per the DB-Ops Handoff Process. `db/SCHEMA.md` updated in the same
+> session with `customers`' own entry and the updated
+> not-yet-confirmed-live list. Full write-up in Task 57/c's own entry
+> below, `[x]`. Per rule 8, drift-checked first — `git fetch origin`
+> confirmed `origin/main` unmoved from this session's own known base
+> (the just-landed Task 57/b part 4/4 write-up), so this is a fresh
+> commit on top of it. **Per rule 7, this part owes BOTH the Patch
+> Handoff and DB-Ops command blocks** — this diff touches
+> `db/migrations/` (two new files).
+>
+> *(Superseded note, kept for its own record below rather than
+> deleted.)*
+>
+> **Previous newest note (2026-09-08, latest of all) — Task 57/b built (all 4
 > parts): field-requirements registry, now wired into `/pay`.**
 > `utils/fieldRequirements.js` (new file, split 1-2/4) declares
 > required/optional fields per provider — JuicyWay (1/4, closing the
@@ -11185,12 +11224,76 @@ merged by any of those sessions. Part 1/4 was already applied to
 `origin/main` before parts 2/4 onward began (confirmed via the rule-8
 drift check at the start of each subsequent part).**
 
-### c. `customers` table migration + RLS [ ]
-Mirrors migration `0001`/`0002`'s own pattern and conventions (see
-`db/SCHEMA.md`) — new `customers` table, deny-by-default RLS,
-service-role-only policy, no `anon`/`authenticated` policy. Per the
-Patch Handoff Convention rule 7, a session landing this owes both the
-Patch Handoff and DB-Ops command blocks in the same reply.
+### c. `customers` table migration + RLS [x]
+**Built 2026-09-08.** Two new migrations, mirroring `0001`/`0002`'s own
+split (one schema object per file, per `db/SCHEMA.md`'s convention):
+`0003_create_customers_table.sql` creates `customers` (`id`,
+`first_name`, `last_name`, `phone_number`, `billing_address`,
+`customer_type`, `created_at`/`updated_at`, the shared
+`set_updated_at()` trigger reused from migration `0001`);
+`0004_customers_rls.sql` enables RLS with one explicit
+`customers_service_role_all` policy scoped to `service_role` only, no
+`anon`/`authenticated` policy — same deny-by-default treatment Task
+56/d-5 gave `transactions`.
+
+**Deliberately excluded, flagged rather than silently omitted:**
+`email` (always supplied fresh via the canonical `customer.email`,
+never vaulted, per Task 57's own Piece 1 writeup) and `ip_address`
+(JuicyWay's own required `provider_data.juicyway.customer.ip_address`
+field) — Task 57's own "important nuance" paragraph names exactly four
+durable, vaultable customer fields (name, phone, billing address,
+customer type); IP address is request-time network context, not a
+durable customer attribute, so vaulting it risks serving a stale/wrong
+value on a future call from a different network. Same "don't vault
+per-transaction context" principle Task 57 already applies to
+`order`/`description`, extended here for a request-context reason
+rather than a per-purchase-content one — this wasn't in the task's own
+explicit exclusion list, so flagging the reasoning rather than
+silently applying it.
+
+**Naming note:** JuicyWay's own field is `customer.type` — stored here
+as `customer_type`, not `type`, to avoid confusion with
+`transactions.type` (`payment`/`payout`, migration `0001`), an
+unrelated concept that happens to share the bare word. No `CHECK`
+constraint on `customer_type` (unlike `transactions.status`/`.type`) —
+this session hasn't independently confirmed the field's full allowed-
+value set against provider docs, so it's left unconstrained rather
+than guessed; flagged as an open item for whoever next has a confirmed
+list in hand.
+
+**Every column except `id`/timestamps is nullable.** This is a
+general-purpose vault, not scoped to one provider's exact requirement
+set — it must be able to hold a partially-populated profile. Task
+57/d's own resolution order (request field → vaulted row → 400 naming
+the still-missing field) is what enforces "required for this
+provider", not a `NOT NULL` constraint here.
+
+**No foreign keys yet**, per the "no placeholder FKs" convention —
+nothing in this repo currently references `customers.id` from another
+table (Task 57/d, not this migration, will be the first thing that
+reads/writes it).
+
+**Verified:** both migrations parsed successfully against real
+Postgres grammar via `pglast` (`parse_sql`) — 3 statements in `0003`,
+2 in `0004`, no syntax errors. Same verification method Task 56/d-1
+used for migration `0001`. **Not run against any live database** — per
+the Patch Handoff Convention and the DB-Ops Handoff Process, no
+session applies a migration to a live Supabase project on its own
+authority; that step is the product owner's, from the second
+environment.
+
+`db/SCHEMA.md` updated in the same session: `customers`' own entry
+added (columns, exclusions, RLS, "not yet wired to anything" note),
+the migration-confirmed-live note extended to flag `0002`-`0004` as
+all not yet confirmed live, and the "Not yet in this schema" section
+updated to record (c) as built and (d)/(e) as the remaining open work.
+
+**Per the Patch Handoff Convention, a patch file covering this part's
+changes (both new migrations, `db/SCHEMA.md`, this handover.md update)
+was generated and handed to the product owner directly, together with
+both the Patch Handoff and DB-Ops command blocks per rule 7 (this
+part's diff touches `db/migrations/`) — not applied, and no migration
+run against the live project, by this session.**
 
 ### d. Vault read/write logic + resolution order [ ]
 Implements the three-step resolution order above (request field →

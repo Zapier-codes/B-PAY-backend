@@ -10,22 +10,41 @@
 // convention). Adding a field or a new provider means adding an
 // entry here, not editing conditionals spread across routes.js.
 //
-// THIS PART (57/b, split 1 of 4): the registry's shape + accessor
+// Split 1 of 4 (done, prior session): the registry's shape + accessor
 // helpers, and JuicyWay's own entry only — the provider Task 57/a
 // already migrated onto the `provider_data` envelope, so it's the
 // one with a real gap to close (see routes.js's own `/pay` handler:
 // nothing today stops a caller from omitting JuicyWay's required
 // nested fields and reaching JuicyWay's API with an incomplete
-// payload). Deliberately NOT in this part, left for the remaining
-// 3/4 of this split:
-//   - Paystack / Korapay / Flutterwave registry entries (their
-//     existing inline assertValid* checks in routes.js keep running
-//     unchanged until they do)
+// payload).
+//
+// THIS PART (57/b, split 2 of 4): Paystack, Korapay, and Flutterwave
+// registry entries, added below so `/pay` validation doesn't end up
+// half-migrated once (3/4) wires this registry in — JuicyWay alone on
+// the registry while everyone else stayed on inline checks would just
+// recreate the unmaintainable-branching problem this registry exists
+// to fix. Each entry is sourced from that provider's own
+// `processPayment()` (what it actually reads off the request body
+// today), cross-referenced against the doc citations already in that
+// file, not guessed — same sourcing bar Split 1 held JuicyWay's entry
+// to. Universal fields already enforced unconditionally for every
+// provider (`amount`, `currency` shape) are deliberately NOT
+// repeated here, same convention Split 1 established by omitting them
+// from JuicyWay's entry too — this registry only records
+// provider-*specific* requirements. Flutterwave's entry is added even
+// though `providers/flutterwave.js` isn't wired into routes.js's
+// `getProvider()` yet (see that file's own top comment) — Task 57/b's
+// own scope says existing providers get entries too, and there's no
+// reason for this registry to lag behind whenever that separate
+// wiring (Task 52/e) lands.
+//
+// Deliberately NOT in this part, left for the remaining 2/4 of this
+// split:
 //   - Wiring this registry into routes.js's `/pay` handler (nothing
-//     calls getMissingFields() yet — this file is inert until that
-//     lands)
+//     calls getMissingFields() yet — this file is still inert; that's
+//     3/4)
 //   - node --check / throwaway-script verification and the
-//     handover.md write-up marking this part done
+//     handover.md write-up marking the whole 57/b split done (4/4)
 //
 // Each field descriptor:
 //   path      — dot path into the request body, e.g.
@@ -107,10 +126,115 @@ export const FIELD_REQUIREMENTS = {
     ],
   },
 
-  // paystack / korapay / flutterwave: intentionally not added yet —
-  // see this part's own note above. Task 57/b's remaining 3/4 covers
-  // adding them so `/pay` validation doesn't end up half-migrated
-  // (JuicyWay on the registry, everyone else still on inline checks).
+  paystack: {
+    // providers/paystack.js#processPayment reads only email, amount,
+    // currency, reference off the request — no provider_data.paystack
+    // namespace exists or is read anywhere. amount/currency are
+    // universal fields (see this file's own top note), so the only
+    // provider-specific requirement left to record is the email.
+    fields: [
+      {
+        path: 'customer.email',
+        required: true,
+        label: 'customer.email',
+        note: 'canonical field — already enforced separately by assertValidCustomerEmail in routes.js (Paystack is in PROVIDERS_REQUIRING_EMAIL, utils/helpers.js), listed here too so a single registry lookup returns Paystack\'s full requirement set. No provider_data.paystack fields exist — Paystack\'s payload is built from email/amount/currency/reference only.',
+      },
+    ],
+  },
+
+  korapay: {
+    // providers/korapay.js#processPayment — customer must be nested
+    // (developers.korapay.com/docs/checkout-redirect: "a flat
+    // top-level `email` field is rejected", per that file's own
+    // comment). payment_currency/settlement_currency/channels/
+    // default_channel are the existing top-level optional fields
+    // Task 57/a's own writeup explicitly left un-migrated into
+    // provider_data (see handover.md, Task 57/a) — recorded here at
+    // their current top-level paths, not under provider_data.korapay,
+    // to match what routes.js's /pay handler and providers/korapay.js
+    // actually read today.
+    fields: [
+      {
+        path: 'customer.email',
+        required: true,
+        label: 'customer.email',
+        note: 'canonical field — already enforced separately by assertValidCustomerEmail in routes.js (Korapay is in PROVIDERS_REQUIRING_EMAIL, utils/helpers.js). Must resolve under customer, not as a flat top-level field — see providers/korapay.js\'s own comment citing developers.korapay.com/docs/checkout-redirect.',
+      },
+      {
+        path: 'customer.name',
+        required: false,
+        label: 'customer.name',
+        note: 'forwarded if present (providers/korapay.js builds customer: { email, name }); not stated as required in the doc excerpt already cited in that file, so left optional here rather than guessed.',
+      },
+      {
+        path: 'payment_currency',
+        required: false,
+        label: 'payment_currency',
+        note: 'Dynamic Currency Conversion (DCC), Korapay-specific — developers.korapay.com/docs/dynamic-currency-conversion. Only meaningful together with settlement_currency (Korapay requires both or neither); this registry records each independently as optional, since a simple required flag can\'t express "required together" — the actual pairing is still enforced only by providers/korapay.js\'s own `if (data.payment_currency && data.settlement_currency)` check, not by getMissingFields() as of this part.',
+      },
+      {
+        path: 'settlement_currency',
+        required: false,
+        label: 'settlement_currency',
+        note: 'see payment_currency\'s note above — same DCC pairing, same "not independently enforced as a pair" caveat.',
+      },
+      {
+        path: 'channels',
+        required: false,
+        label: 'channels',
+        note: 'array of Korapay channel strings (bank_transfer, card, pay_with_bank, mobile_money) — developers.korapay.com/docs/checkout-redirect.',
+      },
+      {
+        path: 'default_channel',
+        required: false,
+        label: 'default_channel',
+        note: 'only meaningful when channels is also supplied — providers/korapay.js drops it otherwise per Korapay\'s own docs. Same "pairing not independently enforced by this registry yet" caveat as payment_currency/settlement_currency above.',
+      },
+    ],
+  },
+
+  flutterwave: {
+    // providers/flutterwave.js#processPayment (v3 Standard checkout,
+    // Task 52/d-2). Not wired into routes.js's getProvider() yet (see
+    // that file's own top comment: "NOT wired into routes.js's
+    // getProvider() or ROUTING_RULES — that's Task 52/e's job"), so
+    // getMissingFields('flutterwave', ...) has no live caller from
+    // /pay until both that routing wiring and this registry's own
+    // (3/4) wiring land — added now anyway per this task's own scope
+    // ("Existing providers... get registry entries too").
+    fields: [
+      {
+        path: 'customer.email',
+        required: true,
+        label: 'customer.email',
+        note: 'providers/flutterwave.js forwards data.customer?.email straight through with no fallback default — same no-default shape as Paystack/Korapay/JuicyWay\'s email handling (see PROVIDERS_REQUIRING_EMAIL, utils/helpers.js), though Flutterwave is not itself in that list yet since routes.js\'s assertValidCustomerEmail is only reached for providers getProvider() can resolve.',
+      },
+      {
+        path: 'redirect_url',
+        required: true,
+        label: 'redirect_url',
+        note: 'confirmed required per developer.flutterwave.com/docs/flutterwave-standard-1 — providers/flutterwave.js\'s own comment above its payload construction states this directly.',
+      },
+      {
+        path: 'customer.name',
+        required: false,
+        label: 'customer.name',
+        note: 'forwarded if present; not confirmed required by the doc citation already in providers/flutterwave.js.',
+      },
+      {
+        path: 'customer.phone',
+        required: false,
+        label: 'customer.phone',
+        note: 'providers/flutterwave.js reads data.customer?.phone with a data.customer?.phonenumber fallback — either request key works; not confirmed required.',
+      },
+      {
+        path: 'customizations',
+        required: false,
+        label: 'customizations',
+        note: 'optional checkout-page branding, forwarded only if the caller supplies it (providers/flutterwave.js).',
+      },
+    ],
+  },
 };
 
 // Resolves a dot path (e.g. 'provider_data.juicyway.order.identifier')

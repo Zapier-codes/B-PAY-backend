@@ -3,7 +3,43 @@
 > **▶ START HERE — read this box only, then go straight to work. Skip
 > everything else below unless you get stuck.**
 >
-> **Newest note (2026-09-08, latest of all) — Task 57/d built: vault
+> **Newest note (2026-09-08, latest of all) — Task 57/e built: `/pay`
+> wired end-to-end, closing the whole a–e split — Task 57 itself is
+> now `[x]`.** `routes.js`'s `/pay` handler now calls Task 57/d's
+> `resolveCustomer()` right after `getProvider()` resolves; the
+> returned `resolvedBody` (not raw `req.body`) is what
+> `getMissingFields()` checks and what `paymentData.provider_data` is
+> built from — a `customer_id`-resolved vault field now correctly
+> counts as present for both the 400 check and the real provider call.
+> `customer` (canonical `{ email }`) is untouched, still read straight
+> off `req.body` — never vaulted, per Task 57's own rule. The 200
+> response gets a `customer_id` field only when `save_customer: true`
+> actually produced a new vault row this call; every other response
+> shape is unchanged. A failed vault save still never blocks or fails
+> the payment, same non-blocking posture Task 56/d-3 established for
+> `recordTransaction()`. **Verified:** `node --check`, plus a
+> throwaway live Express server against the real `POST /api/pay`
+> route — 5/5 assertions passed (missing-fields regression unaffected;
+> an unreachable/miss `customer_id` degrades gracefully instead of
+> crashing; a full valid body with and without `save_customer` both
+> reach the provider call without a 400; Paystack, which the vault
+> never touches, is unaffected). **Not verified against a real
+> provider sandbox or a real Supabase project** — no live credentials
+> in this environment for either, same pre-existing blocker every
+> prior task here has noted. Full write-up in Task 57/e's own entry
+> below, `[x]`. **Per rule 8, `origin/main` had moved (`eaa5f91` →
+> `367f1b3`) since this session's own previous handoff — the product
+> owner had applied and pushed the Task 57/d patch in the meantime.
+> Confirmed byte-identical via `git diff` (not just a matching commit
+> message) before resetting this session's checkout onto the real
+> `origin/main` and building this part fresh on top of it**, per rule
+> 8's own procedure. Per rule 7, only the Patch Handoff block is owed
+> this time — no `db/migrations/` file touched.
+>
+> *(Superseded note, kept for its own record below rather than
+> deleted.)*
+>
+> **Previous newest note (2026-09-08, latest of all) — Task 57/d built: vault
 > read/write logic + the three-step resolution order, NOT wired into
 > `/pay` yet.** New `utils/customerVault.js` exports
 > `applyVaultedCustomer()` (pure — fills a provider's
@@ -11064,7 +11100,7 @@ actually lands.**
 
 ---
 
-## Task 57 — Canonical request envelope (`provider_data`, namespaced) + field-requirements registry + Customer Vault; resolves Task 45b's blocking design decision via a third option, neither pure flatten-onto-`/pay` nor pure own-route [ ]
+## Task 57 — Canonical request envelope (`provider_data`, namespaced) + field-requirements registry + Customer Vault; resolves Task 45b's blocking design decision via a third option, neither pure flatten-onto-`/pay` nor pure own-route [x]
 
 **Added 2026-09-08, per direct product-owner instruction, applying the
 new Stripe-as-Reference-Model Convention (above) for the first time.**
@@ -11474,10 +11510,97 @@ under `db/migrations/`, so no DB-Ops command block applies.** Per rule
 live-confirmation commit), unmoved, so this is a fresh commit on top
 of it.
 
-### e. `/pay` end-to-end wiring [ ]
-Wires `customer_id` support and `save_customer` into the live `/pay`
-handler, on top of (a)–(d). This is the part where a first real
-end-to-end JuicyWay call (assuming sandbox keys are available by then)
-becomes possible.
+### e. `/pay` end-to-end wiring [x]
+**Built 2026-09-08 — closes the whole a–e split.** `routes.js`'s
+`/pay` handler now calls Task 57/d's `resolveCustomer(providerName,
+req.body)` right after `getProvider(providerName)` resolves (same
+placement rationale (b)'s own call site already uses: an unrecognized
+provider name should still fail with the pre-existing "not supported"
+error first, unaffected by any of this). The returned `resolvedBody`
+— not raw `req.body` — is what `getMissingFields()` (57/b) now checks,
+and what `paymentData.provider_data` (forwarded to the provider's own
+`processPayment()`) is now built from. This is the change that
+actually makes resolution-order step 2 real: a `provider_data.<provider>
+.customer.*` field the vault filled in from a `customer_id` now
+correctly counts as present for both the 400 check and the real
+provider call, instead of only ever being checked against whatever the
+caller repeated on that specific request.
+
+**`customer` (canonical `{ email }` core) is untouched by any of
+this** — still read straight off `req.body`, same as before this
+part — per Task 57's own rule that email is always supplied fresh and
+never vaulted; `resolveCustomer()` never touches it.
+
+**Response shape:** `customer_id` is added to the 200 response body,
+but *only* when `resolveCustomer()` actually returned a new id this
+call (i.e. `save_customer: true` was set and something vaultable was
+present and the save succeeded) — per Task 57's own "on save, the
+response returns the new customer_id" text. Every other call (no
+`save_customer`, nothing vaultable, a failed save, or a call that only
+read an existing `customer_id`) gets the exact same response shape as
+before this task, no new field for callers to learn to ignore.
+
+**A failed vault save deliberately never fails or blocks the
+payment** — `resolveCustomer()`'s own save path (57/d) already never
+throws, and this wiring doesn't add an `await`-then-branch around it
+either; the payment proceeds and returns its normal 200/error
+regardless of whether the vault write succeeded, same non-blocking
+posture Task 56/d-3 already established for `recordTransaction()`, now
+extended to this second Supabase write.
+
+**Verified:** `node --check` on `routes.js`. A throwaway, live,
+in-process Express server (this repo's own already-declared
+dependencies installed temporarily for the check only, then removed —
+no `package.json`/`package-lock.json` change) exercising the real
+`POST /api/pay` route end-to-end, 5/5 assertions passed: (1) JuicyWay
+missing required fields, no `customer_id` involved — still a 400
+naming them, confirming 57/b's own check is unaffected; (2) a
+`customer_id` supplied while Supabase is unconfigured in this
+environment — the vault lookup misses gracefully (logged, not
+thrown), same missing-fields 400 as (1), confirming the "vault
+unavailable" fallback doesn't crash the request; (3) a full, valid
+JuicyWay body with no `customer_id` — passes validation and reaches
+the provider call (this session's own egress allowlist blocks the
+actual JuicyWay host, so the call itself 500s downstream — expected
+and unrelated to this part, same as every prior JuicyWay verification
+in this file); (4) the same full body plus `save_customer: true` —
+also reaches the provider call without crashing on the (silently
+failing, Supabase unconfigured) save, and the 500 response correctly
+carries no `customer_id` field; (5) Paystack with no `customer.email`
+— still 400s, confirming providers untouched by the vault (no nested
+`provider_data.<provider>.customer` paths) are completely unaffected.
+
+**Not verified end-to-end against any real provider sandbox or a real
+Supabase project** — no live credentials in this environment for
+either, same pre-existing blocker every prior provider- and
+Supabase-touching task in this file has noted. A first genuine
+end-to-end JuicyWay call with a real vaulted `customer_id` — the
+scenario this whole task exists to enable — still needs both a real
+Supabase project with sandbox keys and a real JuicyWay sandbox key
+present in some environment before it can be exercised for real; this
+part only confirms the code path is wired correctly and degrades
+safely without either.
+
+**Per the Patch Handoff Convention, a patch file covering this part's
+changes (`routes.js`, this handover.md update) was generated and
+handed to the product owner directly, together with the Patch Handoff
+command block per rule 7 — not applied, and no code merged into
+`origin/main`, by this session. Per rule 7, only the Patch Handoff
+block is owed this time — this part's diff touches no file under
+`db/migrations/`.** Per rule 8, drift-checked first — `git fetch
+origin` showed `origin/main` had moved past this session's own
+previously-known base (`eaa5f91`, this session's own unapplied Task
+57/d commit) to `367f1b3` — the product owner had applied and pushed
+that exact patch in the meantime. Confirmed via `git diff eaa5f91
+origin/main` (empty — byte-identical, not just a matching commit
+message) before resetting this session's local checkout onto
+`origin/main` and building this part fresh on top of the real current
+base, per rule 8's own procedure — not on top of the old, now-applied
+local commit.
+
+**This closes the full a–e split — Task 57's own top-level entry
+above is now marked `[x]`.** Task 45b's blocking design decision
+remains resolved-via-cross-reference to Task 57/a, unchanged by this
+part.
 
 ---

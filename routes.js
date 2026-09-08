@@ -5,6 +5,7 @@ import { Korapay } from './providers/korapay.js';
 import { log, formatPayload, generateReference, getSupportedCurrencies, isValidCurrencyCode, isValidEmail, providerRequiresEmail, requireInternalApiKey, classifyDomain } from './utils/helpers.js';
 import { recordTransaction, getTransactionByReference } from './utils/supabase.js';
 import { getMissingFields } from './utils/fieldRequirements.js';
+import { resolveCustomer } from './utils/customerVault.js';
 import { handleGatewayEvent } from './webhookGateway.js';
 
 const router = express.Router();
@@ -615,7 +616,17 @@ router.post('/pay', requireInternalApiKey, async (req, res) => {
     // to read from its own namespaced key. Harmless no-op for any
     // provider that doesn't look at it, same as payment_currency/
     // channels below already are for non-Korapay providers.
-    const { action, provider, amount, customer, currency, reference, payment_currency, settlement_currency, channels, default_channel, provider_data } = req.body;
+    //
+    // Task 57/e: `provider_data` is deliberately NOT destructured here
+    // anymore -- it's read off `resolvedBody` (below, after
+    // resolveCustomer() runs) instead of raw `req.body`, since the
+    // Customer Vault may fill in some of its nested `customer.*`
+    // fields between here and the field-requirements check. `customer`
+    // (the canonical `{ email }` core) is unaffected by any of that --
+    // Task 57's own envelope rule is that email is always supplied
+    // fresh and never vaulted -- so it's still read straight off
+    // `req.body` same as before.
+    const { action, provider, amount, customer, currency, reference, payment_currency, settlement_currency, channels, default_channel } = req.body;
 
     log(`Payment Request Received: ${formatPayload(req.body)}`);
 
@@ -683,27 +694,57 @@ router.post('/pay', requireInternalApiKey, async (req, res) => {
 
     const providerInstance = getProvider(providerName);
 
+    // Task 57/e: run the Customer Vault's resolution order (Task
+    // 57/d's resolveCustomer()) before the field-requirements check
+    // below, not after -- the whole point of the vault is that a
+    // field it fills in should count as "present" for that check, the
+    // same way an explicit request field already does. Placed after
+    // getProvider() above for the same reason (b)'s own comment
+    // already gives: an unrecognized provider name should still fail
+    // with the pre-existing "not supported" error first, unaffected
+    // by any of this. `req.body.customer_id` (if supplied) is looked
+    // up against the `customers` table and merged into a *new*
+    // `resolvedBody`, filling only whichever provider_data.<provider>.
+    // customer.* fields the caller didn't already supply -- resolution
+    // order step 1 (explicit request field always wins) still holds,
+    // enforced inside resolveCustomer() itself, not re-checked here.
+    // `req.body.save_customer === true` (if present) persists a new
+    // vault row from the resolved fields; `savedCustomerId` is the new
+    // row's id, or `null` if `save_customer` wasn't set, had nothing
+    // vaultable to save, or the save itself failed -- a failed save
+    // must not fail or block this payment (same non-blocking posture
+    // Task 56/d-3 already established for recordTransaction()), so it
+    // is deliberately never awaited into a thrown error here.
+    const { resolvedBody, customerId: savedCustomerId } = await resolveCustomer(providerName, req.body);
+    const providerData = resolvedBody.provider_data;
+
     // Task 57/b (3/4): field-requirements registry wired in. Placed
     // after getProvider() above (not before) so a provider name
     // getProvider() itself doesn't recognize still fails with that
     // pre-existing "not supported" error first, unchanged — this
     // check only ever runs for a provider that already resolved.
-    // Checked against req.body directly (not paymentData below),
-    // since the registry's own `path` values (utils/fieldRequirements.js)
-    // are documented as dot-paths into the request body, including
-    // `provider_data.<provider>.*` fields exactly as the caller sent
-    // them. Closes the gap Task 57/a's own writeup flagged as still
-    // open: previously nothing stopped an incomplete request (e.g.
-    // JuicyWay missing its required order/customer fields) from
-    // reaching the provider's API and failing there with a less
-    // specific error — this returns a clean 400 naming every missing
-    // field instead, per Task 57's own "name exactly which field is
-    // missing" design. Now enforces something real for Paystack and
-    // Korapay too (not just JuicyWay), since (2/4) gave them registry
-    // entries first — a provider with no entry at all still gets an
-    // empty array back (see getMissingFields's own doc comment) and
-    // is completely unaffected, same as before this part.
-    const missingFields = getMissingFields(providerName, req.body);
+    // Checked against `resolvedBody` (Task 57/e), not raw `req.body`
+    // anymore -- since the registry's own `path` values
+    // (utils/fieldRequirements.js) are dot-paths that include
+    // `provider_data.<provider>.customer.*` fields, and those are
+    // exactly the fields the Customer Vault (Task 57/d, just above)
+    // may have already filled in from a vaulted row. A field the
+    // vault filled in now correctly counts as present here, instead of
+    // still being reported missing just because the caller didn't
+    // repeat it explicitly on this particular call -- that's the
+    // entire point of resolution-order step 2. Closes the gap Task
+    // 57/a's own writeup flagged as still open: previously nothing
+    // stopped an incomplete request (e.g. JuicyWay missing its
+    // required order/customer fields) from reaching the provider's
+    // API and failing there with a less specific error — this returns
+    // a clean 400 naming every missing field instead, per Task 57's
+    // own "name exactly which field is missing" design. Now enforces
+    // something real for Paystack and Korapay too (not just
+    // JuicyWay), since (2/4) gave them registry entries first — a
+    // provider with no entry at all still gets an empty array back
+    // (see getMissingFields's own doc comment) and is completely
+    // unaffected, same as before this part.
+    const missingFields = getMissingFields(providerName, resolvedBody);
     if (missingFields.length > 0) {
       const err = new Error(
         `Missing required field(s) for provider '${providerName}': ${missingFields.map((f) => f.label).join(', ')}`
@@ -740,7 +781,11 @@ router.post('/pay', requireInternalApiKey, async (req, res) => {
       default_channel,
       // Task 57/a: namespaced provider-specific envelope -- see the
       // destructuring comment above for what this carries and why.
-      provider_data,
+      // Task 57/e: sourced from `resolvedBody` (above), not the raw
+      // request body, so any Customer Vault fill-ins actually reach
+      // the provider's processPayment(), not just the missing-fields
+      // check above.
+      provider_data: providerData,
     };
 
     const result = await providerInstance.processPayment(paymentData);
@@ -775,13 +820,26 @@ router.post('/pay', requireInternalApiKey, async (req, res) => {
       status: 'pending',
     });
 
-    return res.status(200).json({
+    // Task 57/e: `customer_id` only appears when this call actually
+    // saved a new vault row -- per Task 57's own "on save, the
+    // response returns the new customer_id so the caller can reuse it
+    // next time" text. Omitted (not `null`) on every other call --
+    // no `save_customer`, nothing vaultable to save, a save failure,
+    // or a call that only *read* an existing customer_id -- rather
+    // than adding a field callers would otherwise have to learn to
+    // ignore on the common case.
+    const responseBody = {
       status: true,
       message: 'Payment initiated successfully',
       provider: providerName,
       reference: ref,
       data: result,
-    });
+    };
+    if (savedCustomerId) {
+      responseBody.customer_id = savedCustomerId;
+    }
+
+    return res.status(200).json(responseBody);
 
   } catch (error) {
     log(`Payment Error: ${error.message}`, 'error');

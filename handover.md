@@ -3,7 +3,48 @@
 > **▶ START HERE — read this box only, then go straight to work. Skip
 > everything else below unless you get stuck.**
 >
-> **Newest note (2026-09-08, latest of all) — Task 57/c's migrations
+> **Newest note (2026-09-08, latest of all) — Task 57/d built: vault
+> read/write logic + the three-step resolution order, NOT wired into
+> `/pay` yet.** New `utils/customerVault.js` exports
+> `applyVaultedCustomer()` (pure — fills a provider's
+> `provider_data.<provider>.customer.*` fields from a vaulted row,
+> only where the request itself left them blank) and
+> `resolveCustomer()` (adds the I/O: looks up `customer_id` via the
+> two new `utils/supabase.js` exports `getCustomerById()`/
+> `saveCustomer()`, handles `save_customer: true`, returns `{
+> resolvedBody, customerId }`). `email`/`ip_address` are never
+> vaultable — same exclusion Task 57/c's migration already established
+> — so those two always still have to come from the request itself.
+> Deliberately does **not** compute or throw the final "still missing"
+> 400 itself — that stays `getMissingFields()`'s (Task 57/b) job,
+> against `resolvedBody`, at whichever call site Task 57/e wires this
+> into. **Nothing in `routes.js` calls any of this yet** — per the
+> standing mandatory task-splitting rule, wiring `resolveCustomer()`
+> into the live `/pay` handler is explicitly Task 57/e's job, next in
+> the a–e split, not absorbed into this part. **Verified:** `node
+> --check` on all three touched files (two of `fieldRequirements.js`'s
+> internal helpers, `getAtPath`/`isPresent`, were exported rather than
+> duplicated for reuse here); a throwaway script (deleted, not
+> committed; temporary `npm install`, removed after, no
+> `package.json`/lockfile change) ran 7 assertions covering the pure
+> merge logic, explicit-field-always-wins, a no-nested-paths provider
+> being a no-op, and `resolveCustomer()` degrading gracefully (never
+> throwing) with Supabase unconfigured in this environment — all 7
+> passed. **Not verified end-to-end against a real Supabase project**
+> — no live credentials in this environment, same pre-existing blocker
+> every prior Supabase-touching task has noted. Full write-up in Task
+> 57/d's own entry below, `[x]`. Per rule 8, drift-checked first —
+> `git fetch origin` confirmed `origin/main` at `d652b68` (this
+> session's own known base, the just-landed Task 57/c live-confirmation
+> commit), unmoved, so this is a fresh commit on top of it. Per rule 7,
+> only the Patch Handoff block is owed this time — no
+> `db/migrations/` file touched.
+>
+> *(Superseded note, kept for its own record below rather than
+> deleted.)*
+>
+> **Previous newest note (2026-09-08, latest of all) — Task 57/c's
+> migrations
 > confirmed live: `customers` table + RLS now exist in this backend's
 > Supabase project.** The product owner ran both `psql -f
 > db/migrations/0003_create_customers_table.sql` and `psql -f
@@ -11333,12 +11374,105 @@ both the Patch Handoff and DB-Ops command blocks per rule 7 (this
 part's diff touches `db/migrations/`) — not applied, and no migration
 run against the live project, by this session.**
 
-### d. Vault read/write logic + resolution order [ ]
-Implements the three-step resolution order above (request field →
-vaulted row → 400 naming the missing field), plus `save_customer`
-handling and returning the new `customer_id` on save. Depends on (b)
-for the "name exactly which field is missing" behavior and (c) for the
-table to read/write against.
+### d. Vault read/write logic + resolution order [x]
+**Built 2026-09-08.** Two new exports on `utils/supabase.js`, mirroring
+`recordTransaction()`/`getTransactionByReference()`'s own shape and
+"never throws" posture directly above them: `getCustomerById(customerId)`
+(reads the five vaultable columns from migration 0003 by `id`, `null`
+on any miss/failure/not-configured) and `saveCustomer({ first_name,
+last_name, phone_number, billing_address, customer_type })` (inserts a
+new row, returns the new `id`, `null` on any failure — a failed vault
+write must not block or fail the underlying payment, same reasoning
+`recordTransaction()` already applies). New file
+`utils/customerVault.js` implements the actual three-step resolution
+order and `save_customer` handling on top of those two:
+- `applyVaultedCustomer(providerName, body, vaultedRow)` — pure, no
+  I/O. For every registry field path (`utils/fieldRequirements.js`)
+  under this provider's own `provider_data.<provider>.customer.`
+  namespace, fills it from the vaulted row's mapped column *only* if
+  the request itself didn't already supply it (resolution-order step
+  1 — explicit always wins), and only if the vault actually has a
+  non-empty value for it. Returns a clone; the caller's own body is
+  never mutated in place. A provider with no such nested customer
+  paths at all (Paystack, Flutterwave, Korapay's flat top-level
+  `customer.name` — none migrated onto `provider_data.<provider>.customer`
+  by Task 57/a) is an untouched no-op, not an error.
+- `resolveCustomer(providerName, body)` — the full order, adding the
+  I/O steps `applyVaultedCustomer()` itself deliberately stays free
+  of: looks up `body.customer_id` (if present) via `getCustomerById`,
+  merges via `applyVaultedCustomer()` on a hit, logs and falls through
+  unchanged on a miss; separately, if `body.save_customer === true`,
+  collects whichever vaultable fields ended up present on the
+  *resolved* body and calls `saveCustomer()` — skipping the save
+  entirely (logged, not silently) if nothing vaultable is actually
+  present, so an all-null row is never inserted. Returns `{
+  resolvedBody, customerId }`, where `customerId` is only ever the
+  *new* id from a save this call, never an id the caller already
+  supplied.
+
+**Column-to-field mapping, spelled out once rather than re-derived at
+each call site:** `first_name`/`last_name`/`phone_number`/
+`billing_address` map to themselves; `customer_type` (the table's own
+name, chosen in Task 57/c to avoid clashing with `transactions.type`)
+maps to `type` (JuicyWay's own request-shape field name, per Task
+57/b's registry entry). `email` and `ip_address` are absent from the
+mapping entirely — Task 57/c never vaults either one, so neither is
+ever fillable from the vault; both must always come from the request,
+unchanged from today.
+
+**Deliberately does NOT compute a final "still missing" list or throw
+a 400 itself** — that remains `getMissingFields()`'s (Task 57/b) job,
+against `resolvedBody`, at whichever call site Task 57/e wires this
+into. This part's own responsibility stops at resolution-order steps
+1–2 (fill from the vault) and the `save_customer` side effect; step 3
+(name what's still missing) is intentionally left to the existing,
+already-verified check rather than duplicated here.
+
+**Not wired into routes.js's `/pay` handler by this part** — per this
+task's own a–e split and the standing mandatory task-splitting rule,
+that's explicitly (e)'s job, on top of this. `resolveCustomer()` and
+`applyVaultedCustomer()` currently have no live caller; they exist and
+are verified, not yet invoked from any route.
+
+**Verified:** `node --check` on `utils/customerVault.js`,
+`utils/supabase.js`, and `utils/fieldRequirements.js` (whose
+`getAtPath`/`isPresent` helpers were exported, not duplicated, for
+this file to reuse — same functions the registry itself already
+relies on). A throwaway script (deleted, not committed; temporary
+`npm install` for `@supabase/supabase-js` to resolve, removed
+afterward, no `package.json`/`package-lock.json` change) ran 7
+assertions: vault fills exactly the missing vaultable fields and never
+touches `ip_address`/`email` (1); an explicit request field always
+wins over a conflicting vaulted value (2); a provider with no nested
+`provider_data.<provider>.customer` paths (Paystack) is an untouched
+no-op (3); a `null` vaulted row is a no-op (4); `resolveCustomer()`
+with a `customer_id` degrades gracefully — falls through to the
+request fields unchanged, `customerId: null` — when Supabase isn't
+configured in this environment (5); the `save_customer: true` path
+never throws under the same not-configured condition (6); and a
+`save_customer: true` request with zero vaultable fields present skips
+the save cleanly, logged, without attempting an empty insert (7) — all
+7 passed.
+
+**Not verified end-to-end against a real Supabase project** — no
+`SUPABASE_URL`/`SUPABASE_SERVICE_ROLE_KEY` in this environment, same
+pre-existing blocker every prior Supabase-touching task in this file
+has noted; the throwaway script's own assertions 5–7 above are
+specifically testing that this exact "not configured" condition is
+handled gracefully rather than working around it.
+
+**Per the Patch Handoff Convention, a patch file covering this part's
+changes (`utils/customerVault.js`, `utils/supabase.js`,
+`utils/fieldRequirements.js`, this handover.md update) was generated
+and handed to the product owner directly, together with the Patch
+Handoff command block per rule 7 — not applied, and no code merged
+into `origin/main`, by this session. Per rule 7, only the Patch
+Handoff block is owed this time — this part's diff touches no file
+under `db/migrations/`, so no DB-Ops command block applies.** Per rule
+8, drift-checked first — `git fetch origin` confirmed `origin/main` at
+`d652b68` (this session's own known base, the just-landed Task 57/c
+live-confirmation commit), unmoved, so this is a fresh commit on top
+of it.
 
 ### e. `/pay` end-to-end wiring [ ]
 Wires `customer_id` support and `save_customer` into the live `/pay`

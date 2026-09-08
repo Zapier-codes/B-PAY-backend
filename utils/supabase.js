@@ -170,3 +170,99 @@ export async function getTransactionByReference(reference) {
     return null;
   }
 }
+
+// ==================================================
+// 🧑‍💼 CUSTOMER VAULT — READ/WRITE (Task 57/d)
+// ==================================================
+// The read/write halves of the `customers` table (migrations 0003/
+// 0004, Task 57/c). Both mirror recordTransaction()/
+// getTransactionByReference()'s own "never throws" posture directly
+// above — a vault miss or failure must not become an unhandled
+// exception, since Task 57's own resolution order treats "no vaulted
+// row" as simply falling through to the next step (a 400 naming the
+// missing field, via the existing field-requirements registry), not
+// a server error.
+//
+// The actual resolution-order logic (request field -> vaulted row ->
+// name-what's-missing) and the `save_customer` decision live in
+// utils/customerVault.js, not here — this file stays scoped to raw
+// table access only, same division of concerns Task 56/d already
+// established for `transactions` (this file does the query,
+// routes.js decides what the result means for the request).
+
+// Reads a single vaulted customer row by its `customers.id`. Returns
+// `null` on any miss (no such id, Supabase not configured, a
+// Postgres/PostgREST-level error) — never throws, never returns a
+// partial/guessed row.
+export async function getCustomerById(customerId) {
+  let client;
+  try {
+    client = getSupabaseClient();
+  } catch (err) {
+    log(`getCustomerById skipped — Supabase not available: ${err.message}`, 'warn');
+    return null;
+  }
+
+  try {
+    const { data, error } = await client
+      .from('customers')
+      .select('id, first_name, last_name, phone_number, billing_address, customer_type')
+      .eq('id', customerId)
+      .maybeSingle();
+
+    if (error) {
+      log(`getCustomerById lookup failed for id '${customerId}': ${error.message}`, 'warn');
+      return null;
+    }
+
+    // maybeSingle() resolves data: null (no error) for a genuine miss
+    // — an unrecognized or since-deleted customer_id, not itself a
+    // warning-worthy condition (a caller may simply have a stale id).
+    return data || null;
+  } catch (err) {
+    log(`getCustomerById failed for id '${customerId}': ${err.message}`, 'warn');
+    return null;
+  }
+}
+
+// Inserts a new vaulted customer row from whichever of the four
+// durable fields (Task 57's own "important nuance" list: name, phone,
+// billing address, customer type) are actually present on this call
+// — never `email`/`ip_address`, which this table has no column for at
+// all (see migration 0003's own comment). Returns the new row's `id`
+// on success, or `null` on any failure — a failed save must not block
+// or fail the underlying payment, same non-blocking posture
+// recordTransaction() already takes for the same reason (this
+// backend's core job is moving money; a vault write is a convenience
+// on top of that, not a precondition for it). Deliberately no
+// upsert-by-id or update path here — every save is a brand-new row,
+// matching Task 57's own text ("the response returns the new
+// customer_id"); updating an existing vaulted profile is not part of
+// this task's scope and is left as its own open item.
+export async function saveCustomer({ first_name, last_name, phone_number, billing_address, customer_type } = {}) {
+  let client;
+  try {
+    client = getSupabaseClient();
+  } catch (err) {
+    log(`saveCustomer skipped — Supabase not available: ${err.message}`, 'warn');
+    return null;
+  }
+
+  try {
+    const { data, error } = await client
+      .from('customers')
+      .insert({ first_name, last_name, phone_number, billing_address, customer_type })
+      .select('id')
+      .single();
+
+    if (error) {
+      log(`saveCustomer insert failed: ${error.message}`, 'warn');
+      return null;
+    }
+
+    return data?.id || null;
+  } catch (err) {
+    log(`saveCustomer failed: ${err.message}`, 'warn');
+    return null;
+  }
+}

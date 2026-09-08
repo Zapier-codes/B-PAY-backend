@@ -240,7 +240,12 @@ export const FIELD_REQUIREMENTS = {
 // against a request body. Returns undefined for any missing segment
 // rather than throwing, so callers can treat "not present" uniformly
 // regardless of how deep the missing segment is.
-function getAtPath(body, path) {
+//
+// Exported as of Task 57/d: utils/customerVault.js reuses this same
+// path-resolution logic against both the request body and a
+// candidate merged/resolved body, rather than re-implementing dot-path
+// lookup a second time.
+export function getAtPath(body, path) {
   return path.split('.').reduce((value, segment) => {
     if (value === null || value === undefined) return undefined;
     return value[segment];
@@ -254,7 +259,12 @@ function getAtPath(body, path) {
 // per Task 57/b's own description is presence/absence, not full shape
 // validation; shape-specific checks stay the provider's own concern
 // (or a later, separately-scoped task) same as today.
-function isPresent(value) {
+//
+// Exported as of Task 57/d, same reason as getAtPath above —
+// utils/customerVault.js needs the identical "is this field actually
+// usable" definition when deciding whether a vaulted column, or a
+// request field, counts as filled.
+export function isPresent(value) {
   if (value === undefined || value === null) return false;
   if (typeof value === 'string' && value.trim() === '') return false;
   return true;

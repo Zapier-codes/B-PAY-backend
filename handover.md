@@ -3,7 +3,35 @@
 > **▶ START HERE — read this box only, then go straight to work. Skip
 > everything else below unless you get stuck.**
 >
-> **Newest note (2026-09-08, latest of all) — `git am` failure fixed,
+> **Newest note (2026-09-08, latest of all) — Task 57 created
+> (canonical `provider_data` envelope + field-requirements registry +
+> Customer Vault), and the new Stripe-as-Reference-Model Convention
+> added — read that section before touching any future design
+> blocker.** Per direct product-owner instruction, Task 45b's blocking
+> design decision (does `/pay`'s body grow JuicyWay-specific optional
+> fields, or does JuicyWay get its own route?) is resolved via a third
+> option neither of those two: a namespaced `provider_data` object on
+> the existing `/pay` route, governed by a data-driven registry,
+> mirroring how Stripe's `PaymentIntent` nests method-specific fields.
+> **Task 45b now points to Task 57/a as the part that unblocks it —
+> Task 45b itself is not built by this session, only documented as
+> resolved-via-cross-reference the same way Task 52's `e-2b-ii`
+> pointed at Task 56/d-4.** Full writeup, including the Customer Vault
+> (Piece 2, additive, its own tracked follow-on — not blocking Piece
+> 1) and the a–e split, in Task 57's own entry below. **This session
+> did documentation only — no code changed, no migration added, no
+> part of the a–e split built yet.** Per rule 8, drift-checked first —
+> `git fetch origin` showed `origin/main` unmoved from this session's
+> own known base (`cb7f005`, the last-applied Task 45a partial fix),
+> so this is a fresh commit on top of it. Per rule 7, only the Patch
+> Handoff block is owed this time (no `db/migrations/` file touched —
+> Task 57/c will be the one that owes the DB-Ops block too, once it's
+> built).
+>
+> *(Superseded note, kept for its own record below rather than
+> deleted.)*
+>
+> **Previous newest note (2026-09-08, latest of all) — `git am` failure fixed,
 > and rule 8 (⭐ starred) added to prevent a repeat.** A prior session's
 > handed-over patch had silently gone stale: it kept amending one
 > local commit across several turns without ever re-checking whether
@@ -2375,6 +2403,54 @@ task turns out to have exactly one indivisible unit of work (rare, but
 possible for something truly small), that's fine — say so explicitly
 in the write-up ("not split further, this is a single atomic change")
 rather than leaving it looking like a part was skipped.
+
+---
+
+## Stripe-as-Reference-Model Convention — MANDATORY, this repo, effective 2026-09-08
+
+**Direct product-owner instruction, same standing weight as No-skip-
+ahead / Build-focus / Patch Handoff — added the same session Task 57
+was created, which is this rule's first real application.**
+
+**The rule:** Stripe is now this repo's explicit reference model for
+resolving design ambiguity. When a session hits a genuine design
+blocker — not a simple code fix, but a real "how should this be
+shaped" question (a request-body contract, where a piece of state
+lives, how to handle a field that's required for one provider and
+irrelevant to nine others, how an error surface should look, how
+resource ownership/consent should work, etc.) — the default move is:
+
+1. **Research how Stripe solves that exact problem** (its public API
+   reference and docs — e.g. `PaymentIntent`'s method-specific nesting,
+   the `Customer`/`PaymentMethod` attach model, its error-object
+   shape) before proposing anything from scratch.
+2. **Mirror Stripe's shape**, adapted to this repo's own scope — not a
+   copy-paste of Stripe's actual fields/endpoints where they don't
+   apply, but the same *pattern* for solving the same *kind* of
+   problem.
+3. **Still write up the blocker and the Stripe-derived answer for the
+   product owner to confirm before building** — this rule narrows the
+   space of options a session proposes down to "here's what Stripe
+   does, here's how it maps onto B-Pay," it does not remove the
+   confirm-before-building discipline every other decision in this
+   file already requires. A session does not get to skip the
+   product-owner checkpoint just because it found a Stripe precedent.
+
+**Explicitly scoped to genuine design gaps, not a license to import
+Stripe functionality this platform doesn't need.** B-Pay is a
+10-provider aggregation layer, not a payments processor in Stripe's
+own sense — the rule is "mirror Stripe's shape where a real gap
+exists," not "add whatever Stripe has." If a session can't point to an
+actual open design question this resolves, this rule doesn't apply and
+isn't a justification to go build something extra.
+
+**First application:** Task 57 (below) — the canonical envelope +
+`provider_data` mirrors `PaymentIntent`'s pattern of nesting
+method-specific requirements under a named key instead of flattening
+them onto the shared object; the Customer Vault mirrors Stripe's
+`Customer` object plus its explicit attach-a-payment-method step
+(nothing gets persisted without the caller opting in), not automatic
+persistence on every call.
 
 ---
 
@@ -10791,5 +10867,140 @@ and a lettered, buildable list of parts on record — starting with
 (d-1) — before any of it gets built. **Task 52's `e-2b-ii` leaf stays
 marked as blocked-via-cross-reference, not `[x]`, until (d-4) above
 actually lands.**
+
+---
+
+## Task 57 — Canonical request envelope (`provider_data`, namespaced) + field-requirements registry + Customer Vault; resolves Task 45b's blocking design decision via a third option, neither pure flatten-onto-`/pay` nor pure own-route [ ]
+
+**Added 2026-09-08, per direct product-owner instruction, applying the
+new Stripe-as-Reference-Model Convention (above) for the first time.**
+This is a new subsystem, not a tweak to Task 45b — Task 45b stays
+blocked-via-cross-reference until Part (a) below lands, the same
+pattern this file already uses elsewhere (e.g. Task 52's `e-2b-ii`
+against Task 56/d-4).
+
+**The shape, in full, before any part gets built:**
+
+**Piece 1 — canonical envelope + namespaced `provider_data`.** Every
+`/pay` request keeps a small, provider-agnostic core —
+`amount`/`currency`/`reference`/`customer` (still just `email` at
+minimum, unchanged from today). Anything a specific provider
+additionally requires goes into a `provider_data` object, namespaced
+by provider name (`provider_data.juicyway.customer.first_name`, etc.)
+— mirrors Stripe's `PaymentIntent` nesting method-specific fields
+(`klarna`, `boleto`, `ideal`) under their own key instead of
+flattening everything onto the top level. This is what a first-time or
+guest caller uses — nothing assumed or looked up, everything needed
+supplied explicitly, once, per call. **This is the part that actually
+unblocks Task 45b** — JuicyWay's `processPayment` reads its
+`description`/`payment_method`/`order`/full `customer` block from
+`provider_data.juicyway` instead of the flat body Task 45b's own entry
+flagged as a contract change.
+
+**Piece 2 — Customer Vault (Supabase).** A `customers` table stores
+the durable parts of a customer's profile — name, phone, billing
+address, customer type — keyed by an internal `customer_id`. A caller
+who's charged this customer before can pass `customer_id` instead of
+the full nested `provider_data.<provider>.customer` block; the backend
+resolves the missing fields from the stored profile. Mirrors Stripe's
+`Customer` object + its explicit attach-a-payment-method step.
+
+**Important nuance, on record now rather than discovered mid-build:**
+not everything a provider needs is vaultable. `customer` fields (name,
+phone, billing address, type) are durable — reusable across many
+transactions. `order.identifier`, `order.items`, and `description` are
+per-transaction, not per-customer — every order is a different
+purchase, and vaulting those would be wrong. **The vault only ever
+covers the `customer` sub-object, never `order`.**
+
+**Resolution order for any required field, per call:**
+1. Explicit `provider_data` field in *this* request (always wins —
+   lets a customer update an address for one transaction without
+   touching their stored profile).
+2. Vaulted `customers` row, if `customer_id` was supplied and a record
+   exists.
+3. Missing after both → a 400 naming exactly which field is missing,
+   not a generic error — the field-requirements registry (below) is
+   what makes this possible without hardcoding per-provider checks.
+
+**Consent, deliberately explicit, not automatic:** a request only gets
+vaulted if the caller passes `save_customer: true`. Silently
+persisting PII on every call would be worse practice than Stripe's own
+model. On save, the response returns the new `customer_id` so the
+caller can reuse it next time.
+
+**Security:** the `customers` table gets the same deny-by-default RLS
+treatment Task 56/d-5 already established for `transactions` —
+service-role-only access, no `anon`/`authenticated` policy. Same
+convention, new table.
+
+**Field-requirements registry:** rather than hardcoding
+"JuicyWay needs these five fields" as inline `if` checks in
+`routes.js` (unmaintainable once it's ten providers deep), each
+provider declares its required/optional canonical + `provider_data`
+fields in one small, data-driven registry. Adding a field or a new
+provider means adding an entry, not editing scattered conditionals —
+and the same registry powers the "name exactly which field is missing"
+400 above.
+
+**Why this order, not the reverse:** the envelope/`provider_data`
+shape (Piece 1) has to exist first regardless — it's the only way data
+ever gets *into* the vault in the first place, and it's what Task 45b
+needs unblocked right now. The vault (Piece 2) is additive on top and
+depends on schema decisions already flagged as open elsewhere in this
+file (Task 46's `customers` table was proposed, never built). Build
+the envelope now; build the vault as its own tracked follow-on.
+
+**Split into a–e, per the standing mandatory task-splitting rule — one
+part per session:**
+
+### a. Canonical envelope + `provider_data` on `/pay`, JuicyWay migrated onto it [ ]
+`routes.js`'s `/pay` handler gains a `provider_data` object on the
+request body; `providers/juicyway.js#processPayment` is migrated to
+read its extra required fields (`description`, `payment_method`,
+`order.identifier`, `order.items`, and the full `customer` block —
+first/last name, phone, billing address, type, IP address) from
+`provider_data.juicyway` instead of the flat shape Task 45b's entry
+described. **This is the part that unblocks Task 45b** — Task 45b's
+entry gets updated to point here once this part lands. Existing
+optional fields already on `/pay` today (`payment_currency`,
+`settlement_currency`, `channels`, `default_channel`) are **not**
+migrated into `provider_data` as part of this part — left as their own
+explicit decision (fold into `provider_data.korapay` for consistency,
+or leave as-is since they predate this convention) rather than
+silently expanding this part's scope. Not blocked on API keys to
+write the plumbing; end-to-end confirmation against real JuicyWay
+sandbox keys is still the same pre-existing blocker Task 45b's own
+entry already noted.
+
+### b. Field-requirements registry [ ]
+Data-driven registry (one entry per provider) declaring required/
+optional canonical + `provider_data` fields; wired in to replace the
+inline `assertValid*` checks incrementally, starting with whatever (a)
+needed for JuicyWay. Existing providers (Paystack, Korapay,
+Flutterwave) get registry entries too, so `/pay` validation doesn't
+end up half-migrated — JuicyWay going through the registry while
+everyone else stays on inline checks would recreate the exact
+unmaintainable-branching problem this registry exists to fix.
+
+### c. `customers` table migration + RLS [ ]
+Mirrors migration `0001`/`0002`'s own pattern and conventions (see
+`db/SCHEMA.md`) — new `customers` table, deny-by-default RLS,
+service-role-only policy, no `anon`/`authenticated` policy. Per the
+Patch Handoff Convention rule 7, a session landing this owes both the
+Patch Handoff and DB-Ops command blocks in the same reply.
+
+### d. Vault read/write logic + resolution order [ ]
+Implements the three-step resolution order above (request field →
+vaulted row → 400 naming the missing field), plus `save_customer`
+handling and returning the new `customer_id` on save. Depends on (b)
+for the "name exactly which field is missing" behavior and (c) for the
+table to read/write against.
+
+### e. `/pay` end-to-end wiring [ ]
+Wires `customer_id` support and `save_customer` into the live `/pay`
+handler, on top of (a)–(d). This is the part where a first real
+end-to-end JuicyWay call (assuming sandbox keys are available by then)
+becomes possible.
 
 ---

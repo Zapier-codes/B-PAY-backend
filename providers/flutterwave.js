@@ -827,3 +827,73 @@ export class FlutterwaveV4 {
     return crypto.timingSafeEqual(computedBuffer, signatureBuffer);
   }
 }
+
+// ==================================================
+// Task 52/d-2c (handover.md) — runtime v3/v4 switch, part (3) of the
+// 3-way split (v3 methods [done] / v4 OAuth2 methods [done] / this).
+// Design decision made HERE, per this leaf's own instruction to
+// decide as part of the work rather than leave it open again:
+//
+// **Combines two of the three options this leaf's own entry offered
+// — per-call override AND an env-var default — rather than inventing
+// a fourth mechanism.** The third option (the same promote-to-default
+// config Task 52/e-2 leaves open for routing fallbacks generally)
+// is deliberately NOT built here: that mechanism doesn't exist yet
+// anywhere in this codebase (Task 52/e-2 is still unbuilt), so tying
+// this switch to it would mean inventing that infrastructure early
+// and only for Flutterwave, ahead of the general routing-layer
+// rewrite it's actually supposed to belong to. A future e-2 session
+// can fold this switch into that mechanism once it exists, without
+// changing this function's own external signature (callers already
+// pass `version` as plain data).
+//
+// - **Per-call**: `options.version` ('v3' | 'v4', case-insensitive),
+//   e.g. from an incoming request's own field — highest priority,
+//   since a specific caller's explicit choice should never be
+//   silently overridden by server-side config.
+// - **Per-environment default**: `FLUTTERWAVE_VERSION` env var, same
+//   values — lets the product owner change the default without a
+//   code deploy, satisfying the same "no deploy needed to change
+//   behavior" goal Task 52/e-2's own promote-to-default idea is
+//   ultimately after, just scoped to this one provider for now.
+// - **Hard-coded fallback**: v3, if neither of the above is set.
+//   Chosen deliberately, not arbitrarily: v3 is the fully-built,
+//   19-case-tested path with a stable single-static-key auth model
+//   matching every other provider in this repo; v4 still carries two
+//   unresolved doc inconsistencies (the token-endpoint host, the
+//   swapped-URL sample bug already worked around) plus two
+//   explicitly-inferred, not-fetched-and-confirmed endpoint paths
+//   (verifyTransaction/verifyPayout) and two outright-unimplemented
+//   methods (card charges, getBanks). Defaulting to the less-certain
+//   path would be the wrong failure mode for a payments backend.
+//
+// An explicitly unrecognized `options.version` (anything other than
+// 'v3'/'v4'/unset) THROWS rather than silently falling back — a
+// caller that typo'd or sent a stale value deserves a clear error,
+// not a silent switch to a different provider version than they
+// asked for, which could send a real payment down an unexpected code
+// path.
+//
+// NOT wired into routes.js's getProvider()/ROUTING_RULES — same as
+// both classes above, that remains Task 52/e's job. This factory is
+// the thing a future e-2 session should call instead of `new
+// Flutterwave()` directly, once that rewrite happens.
+export function getFlutterwaveProvider(options = {}) {
+  const VALID_VERSIONS = ['v3', 'v4'];
+  const requested = typeof options.version === 'string' ? options.version.toLowerCase() : undefined;
+
+  if (requested !== undefined && !VALID_VERSIONS.includes(requested)) {
+    throw providerError(
+      `getFlutterwaveProvider: unrecognized version '${options.version}' — expected 'v3' or 'v4' (omit to use the configured/default version).`
+    );
+  }
+
+  const envDefault = (process.env.FLUTTERWAVE_VERSION || '').toLowerCase();
+  const version = requested || (VALID_VERSIONS.includes(envDefault) ? envDefault : 'v3');
+
+  log(
+    `Flutterwave version resolved to '${version}' (${requested ? 'explicit per-call request' : VALID_VERSIONS.includes(envDefault) ? `FLUTTERWAVE_VERSION env default` : 'hard-coded fallback, no per-call or env override set'})`
+  );
+
+  return version === 'v4' ? new FlutterwaveV4() : new Flutterwave();
+}

@@ -3,8 +3,39 @@
 > **▶ START HERE — read this box only, then go straight to work. Skip
 > everything else below unless you get stuck.**
 >
-> **Newest note (2026-09-08, latest of all, supersedes the Task 55
-> note below) — Task 52/d-2b built: `providers/flutterwave.js` gained
+> **Newest note (2026-09-08, latest of all, supersedes the Task
+> 52/d-2b note below) — Task 52/d-2c built: the runtime v3/v4 switch.**
+> `providers/flutterwave.js` gained `getFlutterwaveProvider(options)`,
+> a factory choosing between the v3 `Flutterwave` and v4
+> `FlutterwaveV4` classes: explicit per-call `options.version` wins,
+> then an `FLUTTERWAVE_VERSION` env-var default, then a hard-coded
+> `v3` fallback (deliberately the safer, fully-tested path — v4 still
+> carries unresolved doc inconsistencies and two unimplemented
+> methods). An unrecognized version string throws rather than
+> silently falling back. Verified with `node --check` plus a
+> standalone sanity script (deleted after use) covering all four
+> resolution paths and the throw-on-invalid case. **Task 52/d
+> (Flutterwave — full provider build) is now entirely done** (d-1,
+> d-2a, d-2b, d-2c all `[x]`).
+>
+> **Genuine next blocker in Task 52: e-1 (domain-detection logic —
+> deciding "international" vs. "African rails" per incoming request)
+> is a product decision, not an engineering one** — this file's own
+> e-1 entry says so explicitly, and this session is not overriding
+> that by guessing a rule (by currency? destination country? an
+> explicit client-supplied field?) for code that routes real money.
+> **No `X` is assigned to a codeable leaf in Task 52 right now** — a
+> future session should either get that decision from the product
+> owner and then build e-1/e-2, or pick up a different repo's/task's
+> unblocked work instead (see "Full cross-repo status" further down
+> this box, though it may be stale — check each sibling repo's own
+> handover.md directly). **Per the Patch Handoff Convention, a patch
+> file covering this session's `providers/flutterwave.js` change plus
+> this `handover.md` update was generated and handed to the product
+> owner directly — not applied or pushed by this session.**
+>
+> **Newest note (2026-09-08, previous) — Task 52/d-2b built:
+> `providers/flutterwave.js` gained
 > a `FlutterwaveV4` class, coexisting with the v3 `Flutterwave` class
 > above it (per Task 55/a's build-both decision), with a real OAuth2
 > client-credentials token manager (module-level cache, ~10min TTL).
@@ -7993,7 +8024,7 @@ match afterward, not the other way around.
 
 ---
 
-## Task 52 — Implement every gap Task 51's capability matrix flagged: build out Juicyway/Korapay/Paystack/Flutterwave fully so the domain-based routing model is real, not aspirational [ ] (d-2c is X, per this session's split of d-2 — see Task Numbering & Workflow Convention above)
+## Task 52 — Implement every gap Task 51's capability matrix flagged: build out Juicyway/Korapay/Paystack/Flutterwave fully so the domain-based routing model is real, not aspirational [ ] (e-1 is next, but is a product decision, not code — see that leaf's own entry; no `X` currently assigned to a codeable leaf)
 
 **Scope note, read first:** this task exists because Task 51 recorded
 a *decision* (Juicyway defaults for every international-rails
@@ -8489,15 +8520,33 @@ the existing `Flutterwave` class — an open implementation choice for
 whoever builds this part, not decided here), not a replacement of
 d-2a's work.
 
-##### d-2c. Design and implement the runtime v3/v4 switch [ ] (this is the current X — unblocked now that d-2b exists)
+##### d-2c. Design and implement the runtime v3/v4 switch [x]
 
-An explicit open design question, not decided here: whether the
-version is chosen per-call (a `version` field on the request), per-
-environment (an env var), or via the same promote-to-default
-mechanism Task 52/e-2 already left open for routing in general.
-Whoever picks this up should decide as part of the leaf, not invent a
-fourth option silently. Only makes sense once d-2b exists — nothing to
-switch between otherwise.
+**Done this session (2026-09-08).** Added `getFlutterwaveProvider(options)`
+to `providers/flutterwave.js` — a factory combining two of this leaf's
+own three offered options (per-call `options.version` beats an
+`FLUTTERWAVE_VERSION` env-var default, which beats a hard-coded `v3`
+fallback), not inventing a fourth mechanism. `v3` is the deliberate
+fallback (fully tested, stable single-key auth) over `v4` (still
+carries the unresolved token-host inconsistency, two inferred/
+unconfirmed endpoint paths, and two outright-unimplemented methods —
+see d-2b above). An explicitly unrecognized version string throws
+rather than silently falling back, so a caller's typo can't silently
+redirect a real payment to the wrong code path. The third offered
+option (folding this into Task 52/e-2's own not-yet-built promote-to-
+default routing mechanism) was deliberately deferred — that
+infrastructure doesn't exist yet anywhere in this repo, and building
+it early just for Flutterwave would preempt e-2's own design. Verified
+with `node --check` plus a standalone sanity script (deleted after
+use): default-to-v3, env-default-to-v4, per-call-overrides-env,
+case-insensitivity, and throw-on-invalid-version all confirmed
+working. **Task 52/d (Flutterwave — full provider build) is now fully
+done** (d-1, d-2a, d-2b, d-2c all `[x]`) — not yet wired into
+`routes.js`, which remains Task 52/e's separate job. **Per the Patch
+Handoff Convention, a patch file covering this session's
+`providers/flutterwave.js` change plus this `handover.md` update was
+generated and handed to the product owner directly — not applied or
+pushed by this session.**
 
 ### e. Routing-layer rewrite — make `routes.js` actually use the Task 51 model [ ]
 

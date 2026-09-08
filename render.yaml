@@ -33,3 +33,14 @@ services:
       # of action as every other secret above.
       - key: INTERNAL_API_KEY
         sync: false
+      # Supabase (Task 56/d-2). Service-role key, not the anon/public
+      # key — this backend talks to Supabase as a trusted server, see
+      # utils/supabase.js's own comment. Real values are a manual
+      # product-owner step in Render's dashboard, same class of action
+      # as every other secret above. Which project these point at is
+      # still Task 56/c's own open question — confirm before setting
+      # these for real.
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false

@@ -3,7 +3,53 @@
 > **▶ START HERE — read this box only, then go straight to work. Skip
 > everything else below unless you get stuck.**
 >
-> **Newest note (2026-09-08, latest of all) — Task 56/d-1 built:
+> **Newest note (2026-09-08, latest of all) — Task 56/d-2 built: a
+> Supabase client is now wired into this backend
+> (`@supabase/supabase-js`, `utils/supabase.js`, `render.yaml` env-var
+> entries). Per the No-skip-ahead rule, this was the next unchecked
+> buildable part after d-1. Not connected to any real project yet —
+> no secret values set, nothing calls this client yet either (that's
+> d-3/d-4).**
+>
+> **Before starting:** confirmed the d-1 patch had landed — `git fetch
+> origin` showed `origin/main` at `6883750`, matching this sandbox's
+> own local commit byte-for-byte (`git diff` empty). Local clone reset
+> to `origin/main` before starting new work.
+>
+> **What was built:** `@supabase/supabase-js@^2.116.0` added to
+> `package.json`/`package-lock.json` via `npm install --save` (real
+> resolved version, not guessed). `utils/supabase.js` exports
+> `getSupabaseClient()`, a getter-function matching this repo's
+> existing `getProviderKey()`/`getProviderBaseUrl()` shape — client
+> built lazily on first call (not at import time), cached after that,
+> throws an `isConfigError`-tagged error when `SUPABASE_URL`/
+> `SUPABASE_SERVICE_ROLE_KEY` aren't set so `routes.js`'s existing
+> `clientSafeMessage()` handling already covers it once d-3/d-4 wire
+> it in. `render.yaml` got both env-var entries, `sync: false`, same
+> manual-step pattern as every other secret there, with a comment
+> pointing at Task 56/c's still-open "which project" question.
+>
+> **Verified:** `node --check` passes. Functional check against dummy
+> (not real/live) values: throws `isConfigError: true` when
+> unconfigured; succeeds and returns a real, cached client when
+> configured. **Not connected to any live Supabase project** — that
+> needs real secret values, which is the product owner's own step
+> (per the DB-Ops Handoff Process), once Task 56/c is answered.
+> `npm audit` reported 6 pre-existing/transitive vulnerabilities after
+> this install (1 low, 1 moderate, 4 high) — flagged, not fixed here,
+> out of scope for this one part.
+>
+> **Per the No-skip-ahead rule: no other task was substituted in
+> Task 56/d-2's place.**
+>
+> **Per the Patch Handoff Convention, a patch file covering this
+> session's changes was generated and handed to the product owner
+> directly — not applied, and no secrets set, by this session.**
+>
+> *(Superseded note, kept for its own record below rather than
+> deleted.)*
+>
+> **Previous newest note (2026-09-08) — Task 56/d-1 built:
 > migration `0001` creates the `transactions` table and locks in this
 > repo's shared schema conventions; `db/SCHEMA.md` created. Per the
 > No-skip-ahead rule, this was the next unchecked buildable part in
@@ -9742,7 +9788,7 @@ migration, `db/SCHEMA.md`, and this `handover.md` update was generated
 and handed to the product owner directly — not applied, and not run
 against any database, by this session.**
 
-#### d-2. Wire a Supabase client into this backend [ ]
+#### d-2. Wire a Supabase client into this backend [x]
 
 `@supabase/supabase-js` added to `package.json`; `SUPABASE_URL` and a
 service-role key (name TBD — e.g. `SUPABASE_SERVICE_ROLE_KEY`) added
@@ -9751,6 +9797,41 @@ file already is; a small helper (e.g. `utils/supabase.js`) exporting a
 configured client, matching this repo's existing `getProviderKey()` /
 `getProviderBaseUrl()` pattern rather than inventing a new
 configuration style.
+
+**Built (2026-09-08):** `@supabase/supabase-js@^2.116.0` added via
+`npm install --save` (real `npm view`-checked version, not guessed),
+`package-lock.json` updated. `utils/supabase.js` exports
+`getSupabaseClient()` — a getter, not a client built eagerly at
+import time, so importing this module doesn't crash the server before
+the two env vars are set, matching `getProviderKey()`/
+`getProviderBaseUrl()`'s own shape. Missing config throws an
+`isConfigError`-tagged error, same as those two functions, so
+`routes.js`'s existing `clientSafeMessage()` handling covers it for
+free once d-3/d-4 call it — no new error-handling path needed.
+Service-role key chosen (not anon/public), consistent with d-5's own
+already-recorded RLS note (service-role bypasses RLS; this backend
+isn't an end-user Supabase Auth client). `render.yaml` got
+`SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY`, both `sync: false`, with
+a comment flagging that Task 56/c's "which project" question should
+be answered before setting real values.
+
+**Verified:** `node --check utils/supabase.js` passes. Functional
+check (not against any live project — dummy values only): calling
+`getSupabaseClient()` with no env vars set throws with
+`isConfigError: true`, as designed; calling it with
+`SUPABASE_URL`/`SUPABASE_SERVICE_ROLE_KEY` set to placeholder values
+succeeds, returns a real client (`typeof client.from === 'function'`),
+and a second call returns the exact same cached instance. `npm audit`
+flagged 6 pre-existing/transitive vulnerabilities after this install
+(1 low, 1 moderate, 4 high) — not investigated or fixed here, out of
+scope for this one part per the mandatory splitting rule; flagging so
+a future session doesn't miss it.
+
+**Per the Patch Handoff Convention, a patch file covering
+`utils/supabase.js`, the `package.json`/`package-lock.json` and
+`render.yaml` changes, and this `handover.md` update was generated and
+handed to the product owner directly — not applied, and no secret
+values set, by this session.**
 
 #### d-3. Write path — persist a transaction record at `/pay` and `/payout` time [ ]
 

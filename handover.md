@@ -3,7 +3,71 @@
 > **▶ START HERE — read this box only, then go straight to work. Skip
 > everything else below unless you get stuck.**
 >
-> **Newest note (2026-09-08, latest of all) — Task 52/e-2b-ii's
+> **Newest note (2026-09-08, latest of all) — Second (Termux →
+> proot-distro Ubuntu) environment stood up for live DB operations;
+> Supabase Postgres connectivity confirmed working; schema still
+> empty. New "DB-Ops Handoff Process" convention adopted, MANDATORY
+> going forward for every session that hands the product owner a
+> command touching the live database. No migration written or applied
+> this session — Task 56/d-1 is still the next unchecked buildable
+> part.**
+>
+> **What was verified, in order, from the product owner's own device:**
+> inside `proot-distro login ubuntu`, the container was updated
+> (`apt update`/`upgrade`); a `ca-certificates` postinst failure
+> (its maintainer script's `sort`/`uniq`/`tr` calls were resolving to
+> broken `rust-coreutils` symlinks instead of `gnu-coreutils`) was
+> diagnosed and fixed via `apt install --reinstall rust-coreutils`
+> then `dpkg --configure -a`; `git` and `postgresql-client` were
+> installed; a **fresh clone** of this repo was made **inside the
+> container** at `~/B-Pay-backend` (i.e. `/root/B-Pay-backend`) — a
+> separate checkout from the Termux-level `~/B-PAY-backend` directory
+> the Patch Handoff Convention below already documents; see the new
+> "DB-Ops Handoff Process" section below (before Task 0) for why there
+> are two. From inside that container, `psql` connected successfully
+> to this backend's Supabase Postgres instance via the pooler
+> (`aws-1-eu-west-1.pooler.supabase.com:5432`, project ref
+> `mfekzzwsoiezqkovabmp`, `sslmode=require`, TLSv1.3) — `\dt` returned
+> **no tables**, confirming migration `0001` (Task 56/d-1) genuinely
+> has not been applied to this project yet, not just undocumented.
+>
+> **Recorded as a fact, not a decision:** this connectivity test used
+> project ref `mfekzzwsoiezqkovabmp`. Task 56/c's own open question
+> (same Supabase project as the Reseller/VTU product, or a separate
+> one for this backend) is **not resolved by this note** — that stays
+> an explicit product-owner call per Task 56/c's own text, and this
+> session didn't get that confirmation either way. A future session
+> should ask before treating this ref as "the" answer.
+>
+> **New convention adopted this session — see the "DB-Ops Handoff
+> Process" section below (before Task 0), MANDATORY going forward:**
+> whenever a task needs the product owner to run a command that
+> actually touches the live Supabase project (`psql`, `supabase db
+> push`, `supabase functions deploy`, any RPC call — anything beyond
+> just writing a migration *file*), the command block a session hands
+> over always starts with the same three-line preamble, in this exact
+> order, before the real command: `proot-distro login ubuntu`, then
+> `cd ~/B-Pay-backend` (the container's own clone, not the Termux-level
+> one), then `git pull`. This mirrors the No-skip-ahead rule's own
+> "check `origin/main` before starting" discipline — the container's
+> clone can drift behind `main` between sessions the same way a
+> session's own local clone can, and a stale clone running something
+> that touches production data is a worse failure mode than a stale
+> clone sitting idle. **This does not change who is allowed to run a
+> migration against the live database** — per Task 56/b's own table,
+> that is still the product owner's step alone, done from inside this
+> same second environment; this convention only standardizes the
+> preamble that gets them there safely.
+>
+> **Per the Patch Handoff Convention, a patch file covering this
+> session's `handover.md` update (this note plus the new "DB-Ops
+> Handoff Process" section) was generated and handed to the product
+> owner directly — not applied or pushed by this session.**
+>
+> *(Superseded note, kept for its own record below rather than
+> deleted.)*
+>
+> **Previous newest note (2026-09-08) — Task 52/e-2b-ii's
 > blocking question resolved with the product owner; new Task 56
 > created to unblock it via an incremental, on-the-go Supabase schema
 > convention. Decision/task-creation record only — no code, no
@@ -7206,6 +7270,72 @@ repo's handover.md (including mavins-web's):**
 
 ---
 
+## DB-Ops Handoff Process — second environment, MANDATORY whenever a live Supabase/DB command is needed (effective 2026-09-08)
+
+**Why a second environment exists at all:** the Patch Handoff
+Convention above covers *code* changes — a session writes something,
+hands over a patch, the product owner applies it with `git am` +
+`git push` from Termux directly. That's enough for anything that only
+touches files in this repo. It is **not** enough for anything that
+needs to actually run against the live Supabase project — `psql`,
+the Supabase CLI (`supabase db push`, `supabase functions deploy`,
+etc.), or any RPC call — because Termux's own userland doesn't reliably
+carry these (confirmed this session: no `postgresql-client`, and a
+working `psql` needed a real Debian/Ubuntu environment). The product
+owner's device instead runs a **second, separate checkout of this
+repo**, inside a `proot-distro` Ubuntu container, used only for that
+class of command.
+
+**The two checkouts — not the same directory, do not conflate them:**
+
+| Environment | Path | Used for |
+|---|---|---|
+| Termux itself | `~/B-PAY-backend` (exact case per the Patch Handoff Convention above) | applying/pushing patches (`git am`, `git push`) |
+| `proot-distro login ubuntu` container | `~/B-Pay-backend` (i.e. `/root/B-Pay-backend`) | anything needing `psql`, the Supabase CLI, or any other live-DB tool |
+
+**The mandatory preamble.** Every command block a session hands the
+product owner for this second environment starts with these three
+lines, in this exact order, before the real command:
+```
+proot-distro login ubuntu
+cd ~/B-Pay-backend
+git pull
+```
+Only once that's landed does the actual command follow — a `psql`
+connection, `supabase db push`, `supabase functions deploy`, a direct
+RPC call, whatever the task needs. This mirrors the No-skip-ahead
+rule's own "check `origin/main` before starting" discipline: the
+container's clone can drift behind `main` between sessions the same
+way a session's own local clone can, and a stale clone running
+something that actually touches production data is a worse failure
+mode than a stale clone sitting idle doing nothing. **No session hands
+over a live-DB command without this preamble in front of it.**
+
+**Credentials are never written into this file.** The Supabase
+Postgres connection's host, port, database name, and pooler-specific
+username aren't secrets on their own and can be quoted directly in a
+handed-over command; the password is entered interactively by the
+product owner at the `psql` prompt — the same "manual step, not
+stored in the repo" pattern this file already uses for every provider
+API key (see the Unified hand-off command format section above). A
+session hands over a connection command with the password *omitted*
+(`psql "host=... port=5432 dbname=postgres user=... sslmode=require"`,
+letting `psql` prompt for it) — never a full connection string with a
+password embedded, and never a password pasted into this file or into
+chat.
+
+**This does not change who is allowed to run a migration, a Supabase
+CLI deploy, or an RPC call against the live database.** Per Task
+56/b's own table, that step belongs to the product owner alone,
+run from inside this same second environment — a session still only
+writes the migration/function file and hands it over as a patch, per
+the Patch Handoff Convention above. This section only standardizes
+the preamble that gets the product owner safely to the point of being
+able to run it themselves; it does not grant any session standing
+authority to run it for them.
+
+---
+
 ## Task 0 — Discovery: canonical multi-provider payment orchestration architecture [ ]
 
 **Goal, stated directly by the product owner this session:** turn
@@ -9503,6 +9633,17 @@ the Reseller/VTU product is airtime/gift-card reselling. This must be
 confirmed by the product owner **before** migration `0001` (Task
 56/d-1) is applied to any live project — it doesn't block *writing*
 the migration file, only applying it.
+
+**Update (2026-09-08), fact only, not a resolution:** live Supabase
+Postgres connectivity was verified from the second (Termux →
+proot-distro Ubuntu) environment against project ref
+`mfekzzwsoiezqkovabmp` (see the newest note at the top of this file
+and the new "DB-Ops Handoff Process" section, both added this
+session) — `\dt` showed no tables, so this is only a reachability
+check, not a claim that this ref is the confirmed project for this
+backend. The same-project-vs-separate-project question above is still
+open and still needs the product owner's explicit call before
+migration `0001` is applied here.
 
 ### d. Buildable sub-tasks — one per session, per the mandatory splitting rule [ ]
 

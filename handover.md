@@ -3,7 +3,59 @@
 > **▶ START HERE — read this box only, then go straight to work. Skip
 > everything else below unless you get stuck.**
 >
-> **Newest note (2026-09-08, latest of all) — Landing confirmed + Task
+> **Newest note (2026-09-08, latest of all) — Task 52/e-2b-ii's
+> blocking question resolved with the product owner; new Task 56
+> created to unblock it via an incremental, on-the-go Supabase schema
+> convention. Decision/task-creation record only — no code, no
+> migrations, no Supabase client wired this session.**
+>
+> **What was decided, in order:** the product owner first confirmed
+> Option (a) from the previous session's write-up (add an optional
+> `currency` query param to `GET /payout/verify`, falling back to
+> today's Korapay default when omitted). Before that was built,
+> the product owner raised a better long-term shape — a real
+> Supabase-backed `transactions` table that `/payout/verify` looks up
+> `currency` from via `reference`, no caller cooperation needed. After
+> discussion, **the query-param approach (Option a) is explicitly
+> dropped, not kept as a fallback layer** — the product owner's own
+> reasoning: build the DB incrementally, one schema object per
+> session/task-part, using this repo's existing mandatory splitting
+> discipline, so the whole schema (tables, RPC/functions, foreign key
+> constraints, Supabase Edge Functions, RLS policies) grows the same
+> way the provider code already does — task by task, dumped to a
+> repo-tracked migrations directory every session works from, not
+> built ad hoc.
+>
+> **New Task 56 created** (see below) to hold this convention plus a
+> lettered list of concrete, buildable sub-tasks (write the first
+> migration, wire the Supabase client, write the persist-on-`/payout`
+> path, write the lookup-on-`/payout/verify` path, design RLS) — each
+> to be picked up one at a time, by future sessions, per the standard
+> splitting rule. **Task 52/e-2b-ii's own entry has been updated to
+> point at Task 56 as what unblocks it** (an explicit cross-reference,
+> not a merge of the two tasks) — once Task 56's read-path sub-task
+> lands, a session returns here to close e-2b-ii out. e-2d and e-2e
+> are unaffected by any of this and remain independently blocked/not-
+> actionable exactly as the previous note below describes.
+>
+> **Accepted trade-off, recorded explicitly rather than left implicit:**
+> dropping the query-param fallback means a `reference` with no
+> matching transactions row (write failed, or the payout predates this
+> table) falls straight through to today's existing Korapay default —
+> the same class of bug this whole effort exists to close, just rarer
+> (a DB miss, not every call). The product owner accepted this
+> explicitly in exchange for not carrying two parallel routing paths
+> long-term.
+>
+> **Per the Patch Handoff Convention, a patch file covering this
+> session's `handover.md` update (this note, Task 52's cross-reference,
+> and the new Task 56) was generated and handed to the product owner
+> directly — not applied or pushed by this session.**
+>
+> *(Superseded note, kept for its own record below rather than
+> deleted.)*
+>
+> **Previous newest note (2026-09-08) — Landing confirmed + Task
 > 52/e-2 part c built; Task 52 now genuinely blocked, per this repo's
 > own No-skip-ahead rule.** Checked `origin/main` before starting: the
 > prior session's `e-2b-i` commit had landed. Local clone reset to
@@ -8343,7 +8395,7 @@ match afterward, not the other way around.
 
 ---
 
-## Task 52 — Implement every gap Task 51's capability matrix flagged: build out Juicyway/Korapay/Paystack/Flutterwave fully so the domain-based routing model is real, not aspirational [ ] (e-1, e-2a, e-2b-i, e-2c all done; every remaining leaf — e-2b-ii, e-2d, e-2e — is blocked on a decision or not yet actionable, not code left to write; see this repo's own No-skip-ahead rule before substituting a different top-level task)
+## Task 52 — Implement every gap Task 51's capability matrix flagged: build out Juicyway/Korapay/Paystack/Flutterwave fully so the domain-based routing model is real, not aspirational [ ] (e-1, e-2a, e-2b-i, e-2c all done; e-2b-ii → **unblocked via Task 56** (below), not yet actionable until Task 56's read-path sub-task lands; e-2d, e-2e remain independently blocked/not-actionable; see this repo's own No-skip-ahead rule before substituting a different top-level task)
 
 **Scope note, read first:** this task exists because Task 51 recorded
 a *decision* (Juicyway defaults for every international-rails
@@ -8957,7 +9009,19 @@ untouched (`/banks`, e-2c, still reads it). Verified with `node
 passed (African-rails currencies with no explicit provider → korapay,
 international currencies → juicyway, explicit provider always wins).
 
-###### e-2b-ii. `GET /payout/verify` [ ]
+###### e-2b-ii. `GET /payout/verify` [ ] → **see Task 56 (below): unblocked, resolution path decided, not yet built**
+
+**Superseded 2026-09-08 (later same day): Option (a) below (the
+`currency` query param) was initially confirmed by the product owner,
+then explicitly dropped in favor of a Supabase-backed `transactions`
+table lookup — see Task 56 for the full decision, the accepted
+trade-off (a `reference` with no matching row falls through to
+today's Korapay default, same as now, just rarer), and the lettered
+sub-tasks that actually build it. The (a)/(b) framing immediately
+below is kept verbatim for the record, per this file's own history
+discipline, but only Task 56's path is being built going forward —
+whoever picks this leaf up next should go to Task 56, not implement
+(a) as written here.**
 
 **Not started — real gap found, worth flagging before building it.**
 Unlike `/payout`, this route's request shape is `?reference=...&
@@ -9360,5 +9424,154 @@ changes. This task exists so the next session has both decisions
 (Flutterwave build-both-dynamically-switchable, capability-mix as a
 named principle) on record before picking up Task 52/d-2, which is
 where actual Flutterwave code gets written.
+
+---
+
+## Task 56 — Incremental, on-the-go Supabase schema convention adopted; `transactions` table resolves `GET /payout/verify`'s currency gap; unblocks Task 52/e-2b-ii [ ]
+
+**Scope note, read first:** decision-record + convention-setting task
+only, same discipline as Tasks 46/47/51/53/54/55. **No code, no
+migrations, no Supabase client wired, no `db/` directory created this
+session.** This task exists so future sessions have the convention and
+a lettered list of concrete, buildable parts on record before anyone
+touches code — per the mandatory task-splitting rule, exactly one part
+gets built per session, in order, same as every other multi-part task
+in this file. Per the Patch Handoff Convention, a `git format-patch`
+file covering this handover.md update is generated and handed to the
+product owner directly this session — not applied or pushed here.
+
+### a. The immediate decision: drop the query-param option, resolve `GET /payout/verify` via a DB-backed lookup instead [ ]
+
+**Stated directly by the product owner this session, superseding the
+`(a)` option already recorded at Task 52/e-2b-ii's own entry** (add an
+optional `?currency=` query param, falling back to today's Korapay
+default when omitted): that approach is **explicitly dropped, not kept
+as a fallback layer alongside the DB lookup.** Going forward,
+`GET /payout/verify` resolves the domain to route to by looking up the
+original payout's `currency` from a `transactions` table by
+`reference` — no caller cooperation, no request-shape change to this
+route.
+
+**Accepted trade-off, recorded explicitly per this file's own "flag
+it, don't paper over it" discipline:** a `reference` with no matching
+`transactions` row — the write failed at `/payout` time, or the payout
+predates this table's existence — falls straight through to today's
+existing Korapay default. That is the same class of bug this whole
+effort exists to close (an international payout silently checked
+against the wrong provider), just rarer (only on a DB miss, not on
+every call lacking an explicit `provider`). The product owner accepted
+this explicitly, in exchange for not carrying two parallel routing
+mechanisms (query param + DB lookup) long-term.
+
+### b. Incremental, on-the-go schema convention — adopted repo-wide, not just for this one table [ ]
+
+**Stated directly by the product owner this session:** rather than
+resolving Task 46/d's full proposed schema up front (still undecided
+at the field level, months later), this repo builds its Supabase
+schema **task by task, on the go** — a concrete task needs a table, a
+session builds that table (and only what that task needs), the same
+mandatory one-part-per-session splitting discipline already governing
+every other kind of change in this file now governs schema changes
+too. This applies to **every** kind of schema object, not just
+tables: RPC/functions, foreign key constraints, Supabase Edge
+Functions, and RLS policies are all authored the same way, as
+repo-tracked migration files, not created ad hoc through Supabase's
+own dashboard by hand — so there is always a single, dumped,
+version-controlled source of truth every session can read and diff
+against, the same way `providers/*.js` already is for provider code.
+
+**Concrete mechanics, so "on the go" doesn't drift into inconsistency
+across sessions:**
+
+| Rule | Detail |
+|---|---|
+| Location | `db/migrations/`, new directory, created by whichever session writes the first migration (Task 56/d-1 below) |
+| Naming | Sequentially numbered, zero-padded, append-only — `0001_create_transactions_table.sql`, `0002_...`. **No session edits a past migration file** — a correction is a new migration, same as this file's own "preserve history, don't overwrite" rule for handover.md itself |
+| Scope per file | One schema object (one table, one function, one constraint addition) per migration, matching the one-part-per-session rule — a session that needs two tables for one task still writes two migration files, not one combined file |
+| Running summary | `db/SCHEMA.md`, updated in the same session as any migration that changes it — a short, current list of every table/column so a future session doesn't have to reconstruct the schema by reading every migration file in order |
+| Shared conventions | Decided **once**, in migration `0001`, and followed by every migration after — id type (e.g. `uuid` via `gen_random_uuid()` vs. `serial`), timestamp columns (`created_at`/`updated_at`, `timestamptz`), and status-column style (`text` + `CHECK` constraint vs. a Postgres `enum`) are all real open picks for whoever writes `0001`, not decided here — but once picked, later migrations don't reinvent them |
+| No placeholder FKs | A table doesn't get a foreign key to a table that doesn't exist yet just because a future task is expected to add it (e.g. `transactions` does **not** get a `business_id` column now just because Task 46 mentions a future `businesses` table) — same "don't guess ahead" rule this file already applies to provider code and routing |
+| Landing a migration | Same Patch Handoff Convention as every other change in this repo — a session writes the migration file(s) and hands over a patch; the product owner applies it and runs it against the real Supabase project themselves. No session runs a migration against a live database on its own authority |
+
+### c. Still open, not resolved by this task: which Supabase project [ ]
+
+**Carried over, unresolved, from Task 47/b** — same project as Task
+45's Reseller/VTU product, or a separate project for this backend.
+Task 47/b's own risk-profile note still applies and still hasn't been
+weighed: this backend moves real money across ten payment providers;
+the Reseller/VTU product is airtime/gift-card reselling. This must be
+confirmed by the product owner **before** migration `0001` (Task
+56/d-1) is applied to any live project — it doesn't block *writing*
+the migration file, only applying it.
+
+### d. Buildable sub-tasks — one per session, per the mandatory splitting rule [ ]
+
+Each of the following is its own atomic unit of work. A session picks
+up the first unchecked one, in order, builds only that one, and marks
+it `[x]` with the usual verification/patch-handoff write-up — same
+discipline as every other multi-part task in this file (e.g. Task
+52/d-2's own a/b/c split).
+
+#### d-1. Write migration `0001`: create the `transactions` table + lock in shared conventions + create `db/SCHEMA.md` [ ]
+
+Columns needed to resolve e-2b-ii specifically: `reference` (unique,
+indexed — this is what `/payout/verify` looks up by), `type`
+(`payment` vs. `payout`, since both `/pay` and `/payout` will write
+here per d-3), `provider`, `currency`, `amount`, `status`,
+`created_at`/`updated_at`. No `business_id` or other FK yet (see (b)'s
+"no placeholder FKs" rule) — those get added in a later migration once
+a `businesses` table actually exists. This is also where the
+id/timestamp/status conventions in (b) get decided, once, for every
+table after.
+
+#### d-2. Wire a Supabase client into this backend [ ]
+
+`@supabase/supabase-js` added to `package.json`; `SUPABASE_URL` and a
+service-role key (name TBD — e.g. `SUPABASE_SERVICE_ROLE_KEY`) added
+to `render.yaml` the same manual-step way every other secret in this
+file already is; a small helper (e.g. `utils/supabase.js`) exporting a
+configured client, matching this repo's existing `getProviderKey()` /
+`getProviderBaseUrl()` pattern rather than inventing a new
+configuration style.
+
+#### d-3. Write path — persist a transaction record at `/pay` and `/payout` time [ ]
+
+Best-effort, non-blocking: a failed insert (Supabase unreachable, etc.)
+must **not** fail the underlying payment/payout call — this backend's
+core job (moving money) doesn't get gated on a logging write
+succeeding. This is a real product decision, restated here so it isn't
+silently assumed differently by whoever builds this part.
+
+#### d-4. Read path — `GET /payout/verify` looks up `currency` (and `provider`) by `reference` [ ]
+
+Looks up the `transactions` row by `reference` before calling
+`classifyDomain(currency)`; on a miss, falls through to today's
+existing Korapay default per (a)'s accepted trade-off above — **no
+query-param fallback**, that path was explicitly dropped. **Once this
+part lands, Task 52/e-2b-ii is resolved** — mark it `[x]` there,
+update Task 52's own top-of-task status line to drop the "blocked via
+Task 56" cross-reference, and re-evaluate e-2d/e-2e's status at that
+point (both are untouched by this task and remain exactly as blocked/
+not-actionable as Task 52's own entries already describe).
+
+#### d-5. RLS policy design for the `transactions` table [ ]
+
+A placeholder/permissive policy is acceptable for now, since this
+backend talks to Supabase with a service-role key (which bypasses RLS)
+rather than as an end-user — but a policy must actually be written,
+not silently skipped, per Task 53/54's own already-flagged "no RLS
+design exists yet" gap. Real per-business RLS only matters once a
+dashboard with business-level logins (Task 46) actually reads from
+this table directly.
+
+### e. Not yet done, this session, deliberately [ ]
+
+No code, no `db/` directory, no migration files, no Supabase
+dependency added, no `render.yaml` change. This task exists purely so
+the next several sessions have the convention, the accepted trade-off,
+and a lettered, buildable list of parts on record — starting with
+(d-1) — before any of it gets built. **Task 52's `e-2b-ii` leaf stays
+marked as blocked-via-cross-reference, not `[x]`, until (d-4) above
+actually lands.**
 
 ---

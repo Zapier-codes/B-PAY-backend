@@ -3,7 +3,46 @@
 > **▶ START HERE — read this box only, then go straight to work. Skip
 > everything else below unless you get stuck.**
 >
-> **Newest note (2026-09-08, latest of all) — Task 57/a built:
+> **Newest note (2026-09-08, latest of all) — Task 57/b built (all 4
+> parts): field-requirements registry, now wired into `/pay`.**
+> `utils/fieldRequirements.js` (new file, split 1-2/4) declares
+> required/optional fields per provider — JuicyWay (1/4, closing the
+> gap Task 57/a's own note flagged as open), then Paystack/Korapay/
+> Flutterwave (2/4, sourced directly from each provider's own
+> `processPayment()`, not guessed). `routes.js` (3/4) now calls
+> `getMissingFields(providerName, req.body)` right after
+> `getProvider(providerName)` resolves — an incomplete request for a
+> registered provider now gets a clean 400 naming every missing field,
+> instead of reaching that provider's API and failing there with a
+> less specific error. **Deliberate scope note, read before assuming
+> more than actually shipped:** this does NOT replace the existing
+> `assertValidAmount`/`assertValidCurrencyFormat`/
+> `assertValidCustomerEmail`/`assertValidReferenceFormat`/
+> `assertCurrencySupported` checks in `routes.js` — those all still run
+> unchanged; the registry check is a new, additional gate alongside
+> them (so `customer.email` is now checked twice for Paystack/Korapay/
+> JuicyWay). Consolidating the two systems is an explicitly open item,
+> not done here. **Verified:** `node --check` throughout; 2/4 exercised
+> `getMissingFields()` directly (all four providers + a JuicyWay
+> regression check); 3/4 ran a throwaway live Express server (temp
+> `npm install`, removed after, no `package.json`/lockfile change)
+> against the real `POST /api/pay` route — 8/8 assertions passed
+> across Paystack/Korapay/JuicyWay missing-field and full-body cases.
+> **Not verified end-to-end** — no live provider sandbox keys in this
+> environment, same pre-existing blocker every prior provider task has
+> noted. Full write-up in Task 57/b's own entry below, `[x]`. Per rule
+> 8, drift-checked before every part — `origin/main` had moved between
+> 2/4 and 3/4, and again between 3/4 and this write-up (the product
+> owner applying each prior part's patch in turn); each subsequent
+> part confirmed via `git diff origin/main` that nothing was missing
+> before resetting onto the new base and continuing, per rule 8's own
+> procedure. Per rule 7, only the Patch Handoff block is owed for this
+> part — no `db/migrations/` file touched by any part of this split.
+>
+> *(Superseded note, kept for its own record below rather than
+> deleted.)*
+>
+> **Previous newest note (2026-09-08, latest of all) — Task 57/a built:
 > `provider_data` envelope live on `/pay`, JuicyWay's `processPayment`
 > migrated onto it.** `routes.js` now forwards a namespaced
 > `provider_data` object through to each provider (no-op for
@@ -11050,15 +11089,101 @@ update) was generated and handed to the product owner directly,
 together with the exact apply/push command block per rule 7 — not
 applied or merged by this session.**
 
-### b. Field-requirements registry [ ]
-Data-driven registry (one entry per provider) declaring required/
-optional canonical + `provider_data` fields; wired in to replace the
-inline `assertValid*` checks incrementally, starting with whatever (a)
-needed for JuicyWay. Existing providers (Paystack, Korapay,
-Flutterwave) get registry entries too, so `/pay` validation doesn't
-end up half-migrated — JuicyWay going through the registry while
-everyone else stays on inline checks would recreate the exact
-unmaintainable-branching problem this registry exists to fix.
+### b. Field-requirements registry [x]
+**Built across four parts, all 2026-09-08, per this file's own
+mandatory task-splitting rule (one part per session):**
+
+**1/4** — the registry's shape (`FIELD_REQUIREMENTS`,
+`getMissingFields(providerName, body)`) plus JuicyWay's own entry —
+the provider (a) already migrated onto the `provider_data` envelope,
+so the one with a real validation gap to close.
+
+**2/4** — Paystack, Korapay, and Flutterwave registry entries, so
+`/pay` validation didn't end up half-migrated once the wiring below
+landed. Each entry sourced directly from that provider's own
+`processPayment()` (what it actually reads off the request body),
+cross-referenced against the doc citations already present in that
+provider's own file — not guessed. **Paystack:** `customer.email`
+only — no `provider_data.paystack` namespace exists anywhere.
+**Korapay:** `customer.email` (required, must be nested under
+`customer` per Korapay's own docs) + `customer.name` /
+`payment_currency` / `settlement_currency` / `channels` /
+`default_channel` (all optional). Flagged there that
+`payment_currency`/`settlement_currency` and `channels`/
+`default_channel` are each "required together" pairs a simple
+`required` flag can't express — that pairing is still enforced only by
+`providers/korapay.js`'s own inline `if` check, not by
+`getMissingFields()` itself. **Flutterwave:** `customer.email` +
+`redirect_url` (both required — `redirect_url` confirmed per
+developer.flutterwave.com/docs/flutterwave-standard-1) + `customer.name`
+/ `customer.phone` / `customizations` (optional) — added even though
+`providers/flutterwave.js` isn't wired into `routes.js`'s
+`getProvider()` yet (Task 52/e's job), per this task's own scope
+("Existing providers... get registry entries too").
+
+**3/4** — wired into `routes.js`'s `/pay` handler:
+`getMissingFields(providerName, req.body)` is called immediately after
+`getProvider(providerName)` resolves — a provider name `getProvider()`
+itself doesn't recognize (Flutterwave, today) still fails with the
+pre-existing "not supported" error first, unchanged, since the
+registry check only ever runs for a provider that already resolved. A
+request missing a required field for the resolved provider now gets a
+clean 400 naming every missing field, instead of reaching that
+provider's API and failing there with a less specific error. **This is
+the part that actually closes the gap (a)'s own writeup flagged as
+still open** — an incomplete JuicyWay request can no longer reach
+JuicyWay's API.
+
+**4/4 (this write-up)** — split-wide verification summary + this
+entry, marking the whole a–e split's (b) `[x]`.
+
+**Important, deliberate scope note — read before assuming this
+"replaced" anything:** this task's own top-level description above
+says the registry would be "wired in to replace the inline
+`assertValid*` checks incrementally." **That did not happen.**
+`assertValidAmount`, `assertValidCurrencyFormat`,
+`assertValidCustomerEmail`, `assertValidReferenceFormat`, and
+`assertCurrencySupported` in `routes.js` all still run exactly as
+before, completely unchanged — the registry check (3/4) was added as
+an **additional** gate alongside them, not a replacement. Concretely:
+`customer.email` is now checked twice for Paystack/Korapay/JuicyWay —
+once by `assertValidCustomerEmail` (which runs first and has the more
+specific, format-validating message), once by the registry (now mostly
+redundant for that one field, but still the only thing checking every
+*other* required field for those providers). Consolidating the two
+systems — retiring `assertValidCustomerEmail` in favor of the registry,
+or the reverse — is explicitly **not done** here and is left as its
+own open item; recording this now rather than letting the original
+task description's word "replace" stand as an inaccurate claim about
+what actually shipped.
+
+**Verified, across the full split:**
+- `node --check` on `utils/fieldRequirements.js` and `routes.js` after
+  every part that touched them.
+- 2/4: a throwaway script (deleted, not committed) exercising
+  `getMissingFields()` directly for all four providers, plus a
+  JuicyWay regression check against 1/4's own entry — all assertions
+  passed.
+- 3/4: a throwaway, live, in-process Express server (this repo's own
+  already-declared dependencies installed temporarily for the check
+  only, then removed — no `package.json`/`package-lock.json` change)
+  exercising the real `POST /api/pay` route with dummy provider keys:
+  Paystack/Korapay missing-`customer.email` cases (400), JuicyWay
+  missing-`provider_data` case (400 naming all 9 missing fields), and
+  Paystack/JuicyWay full-body cases correctly passing validation
+  through to the (network-blocked, by this sandbox's own egress
+  allowlist) provider API call — 8/8 assertions passed.
+- **Not verified end-to-end against any real provider sandbox** — no
+  live keys in this environment, same pre-existing blocker every prior
+  provider task in this file has noted.
+
+**Per the Patch Handoff Convention, parts 2/4, 3/4, and 4/4 were each
+handed to the product owner as their own separate patch file (one per
+part, since each was a distinct session's work), with its own
+apply/push command block per rule 7 every time — not applied or
+merged by any of those sessions. Part 1/4 was already applied to
+`origin/main` before parts 2/4 onward began (confirmed via the rule-8
+drift check at the start of each subsequent part).**
 
 ### c. `customers` table migration + RLS [ ]
 Mirrors migration `0001`/`0002`'s own pattern and conventions (see

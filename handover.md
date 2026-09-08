@@ -7960,7 +7960,7 @@ match afterward, not the other way around.
 
 ---
 
-## Task 52 — Implement every gap Task 51's capability matrix flagged: build out Juicyway/Korapay/Paystack/Flutterwave fully so the domain-based routing model is real, not aspirational [ ] (d-2 is X, per Task 55's resolution of d-1 — see Task Numbering & Workflow Convention above)
+## Task 52 — Implement every gap Task 51's capability matrix flagged: build out Juicyway/Korapay/Paystack/Flutterwave fully so the domain-based routing model is real, not aspirational [ ] (d-2b is X, per this session's split of d-2 — see Task Numbering & Workflow Convention above)
 
 **Scope note, read first:** this task exists because Task 51 recorded
 a *decision* (Juicyway defaults for every international-rails
@@ -7985,8 +7985,12 @@ and (c), Paystack, with real code (see (c)'s own entry below). `X`
 then moved to **(d) Flutterwave**, specifically **d-1**, the
 v3-vs-v4 decision — which Task 55 has now resolved (build both,
 dynamically switchable; see Task 55 below, and (d)'s own updated
-entry). `X` now moves to **d-2**. Whichever session picks this up
-next works ONLY on d-2 until it's solved, then moves `X` to e —
+entry). `X` moved to **d-2**, which this session (2026-09-08) split
+into its own lettered parts per the mandatory task-splitting rule —
+**d-2a (v3 method set) is now done**, see (d)'s own updated entry
+below for the full write-up. `X` now moves to **d-2b (v4 method set)**.
+Whichever session picks this up next works ONLY on d-2b until it's
+solved, then moves `X` to d-2c (the runtime-switch design), then e —
 unless the product owner explicitly reprioritizes, in which case
 update this line to say so and move `X` accordingly.
 
@@ -8350,34 +8354,117 @@ needs only a static secret key; v4 needs a `client_id`/`client_secret`
 pair plus the in-memory token-refresh manager the original discovery
 pass already flagged as a new category of moving part for this repo).
 
-#### d-2. Implement `providers/flutterwave.js` against BOTH v3 and v4, with a runtime switch [ ]
+#### d-2. Implement `providers/flutterwave.js` against BOTH v3 and v4, with a runtime switch [ ] (split into a/b/c this session — a done, b is X, c not started)
 
 **Re-scoped from the original d-2 ("against whichever version d-1
-picks") to reflect Task 55/a's "build both" decision — this is the
-current `X`.** Needs, per version:
-- **v3**: `processPayment`, `verifyTransaction`, `processPayout`,
-  `verifyPayout`, `getBanks`, `verifyWebhookSignature` — full parity
-  with Korapay's method set, matching this repo's existing static-key
-  pattern exactly (`getProviderKey('flutterwave', 'secret')` needs no
-  new shape for this half).
-- **v4**: the same method set, but built on the OAuth2 client-
-  credentials flow the original discovery pass confirmed (`POST
-  https://idp.flutterwave.com/realms/flutterwave/protocol/openid-
-  connect/token`, `access_token` cached in-process and refreshed
-  before its ~10-minute `expires_in` lapses — no DB per Task 0's
-  constraint, so this cache does not survive a cold start). Reread
-  that discovery section (search "Flutterwave — FULL API discovery
-  pass") before starting, including its two flagged inconsistencies
-  (the swapped-base-URL bug in Flutterwave's own sample code; the
-  two different token-endpoint hosts named across its own docs) —
-  neither is resolved yet and both need a real sandbox call to settle
-  before trusting either one in production.
-- **The runtime switch itself**: an explicit open design question, not
-  decided here — whether the version is chosen per-call (a `version`
-  field on the request), per-environment (an env var), or via the same
-  promote-to-default mechanism Task 52/e-2 already left open for
-  routing in general. Whoever picks up d-2 should decide this as part
-  of the leaf, not invent a fourth option silently.
+picks") to reflect Task 55/a's "build both" decision, then split
+further this session (2026-09-08) into its own lettered parts per the
+standing mandatory task-splitting rule** — the leaf as originally
+written bundled three genuinely separate units of work (v3's method
+set, v4's method set, and the runtime-switch design) into one
+undifferentiated block, which is exactly the pattern the splitting
+rule exists to prevent.
+
+##### d-2a. Build the v3 method set on `providers/flutterwave.js` [x]
+
+**Done this session (2026-09-08).** `processPayment`, `verifyTransaction`,
+`processPayout`, `verifyPayout`, `getBanks`, `verifyWebhookSignature` —
+matching this repo's existing static-key pattern exactly
+(`getProviderKey('flutterwave', 'secret')`, `getProviderBaseUrl('flutterwave')`,
+both added to `utils/helpers.js` this session). Every endpoint
+independently confirmed against developer.flutterwave.com's own
+v3.0.0 reference pages and the official `flutterwave-node-v3` SDK's
+own docs, fetched fresh this session, not carried over from training
+data — see `providers/flutterwave.js`'s own file-level and per-method
+comments for the specific pages cited and the confidence level of
+each claim (most are direct primary-source confirmations; one,
+the amount-unit rule, is flagged as inferred-from-examples rather
+than an explicit doc statement, same caveat class already used
+elsewhere in this file).
+
+**Three real, confirmed interface differences from Korapay's own
+provider file, each flagged explicitly in code rather than papered
+over:**
+- `verifyTransaction(reference)` uses `GET /v3/transactions/verify_by_reference?tx_ref=`,
+  not the id-based `/transactions/:id/verify` path, to keep the same
+  reference-based signature every other provider's `verifyTransaction`
+  already has.
+- `verifyPayout(reference)` has **no confirmed reference-based lookup**
+  on Flutterwave's side (unlike collections above) — `GET /v3/transfers/:id`
+  only accepts Flutterwave's own internal numeric id. Callers must
+  pass `data.id` from `processPayout()`'s own response, not an
+  arbitrary merchant reference, until this is resolved. This is a
+  real gap between the two providers, not a bug in this session's
+  code — flagged prominently in the method's own comment so it isn't
+  silently "fixed" by guessing an undocumented query filter later.
+- `getBanks(currency)` translates currency → 2-letter country
+  internally (`GET /v3/banks/:country`, only 6 countries confirmed:
+  NG/GH/KE/UG/ZA/TZ), since Flutterwave's endpoint is country-keyed,
+  not currency-keyed like Korapay's own `getBanks`. An unmapped
+  currency throws rather than guessing a country.
+
+**`verifyWebhookSignature` is a plain shared-secret string comparison
+against a new `FLW_SECRET_HASH` env var** (not yet in `render.yaml` —
+manual product-owner step, same class of action as every other secret
+in this file), NOT a per-payload HMAC — confirmed directly against
+Flutterwave's own docs and blog post on webhooks; at least one
+third-party blog post found during this session's research computes
+an HMAC instead, which would reject every genuine Flutterwave webhook,
+and was deliberately not followed.
+
+**Verified:** `node --check` on `providers/flutterwave.js` and
+`utils/helpers.js`. A standalone functional test, 19 cases covering
+all six methods (success and failure paths, the string- vs boolean-
+status envelope difference, the deliberate FAILED-throws-on-payout-
+but-not-on-verify divergence mirroring Korapay's own, the currency→
+country translation and its unmapped-currency rejection, and the
+webhook secret's correct/wrong/missing/unset-env-var cases) — all 19
+passing.
+
+**Deliberately NOT done in this part, per the task-splitting rule:**
+- Not wired into `routes.js`'s `getProvider()` switch or
+  `ROUTING_RULES` — that's Task 52/e's job, kept separate from
+  building the provider itself.
+- No independent sandbox call made to confirm the amount-unit
+  inference or the `verifyPayout` id-vs-reference gap above — both
+  flagged in code for a future session (or a real test transaction)
+  to settle before production use.
+- `FLW_SECRET_HASH` not yet added to `render.yaml` or set in Render's
+  dashboard — same manual-step pattern as `INTERNAL_API_KEY` (Task 42
+  Part A).
+
+##### d-2b. Build the v4 method set on `providers/flutterwave.js` [ ] (this is the current X)
+
+**Not started.** Same method set as d-2a (`processPayment`,
+`verifyTransaction`, `processPayout`, `verifyPayout`, `getBanks`,
+`verifyWebhookSignature`), but built on the OAuth2 client-credentials
+flow the original discovery pass confirmed (`POST
+https://idp.flutterwave.com/realms/flutterwave/protocol/openid-
+connect/token`, `access_token` cached in-process and refreshed before
+its ~10-minute `expires_in` lapses — no DB per Task 0's constraint, so
+this cache does not survive a cold start). Reread that discovery
+section (search "Flutterwave — FULL API discovery pass") before
+starting, including its two flagged inconsistencies (the swapped-
+base-URL bug in Flutterwave's own sample code — v4 has a real
+sandbox/production host split, unlike v3, see this session's own note
+on that in `utils/helpers.js#getProviderBaseUrl`; and the two
+different token-endpoint hosts named across Flutterwave's own docs) —
+neither is resolved yet and both need a real sandbox call to settle
+before trusting either one in production. Per Task 55/a, this should
+land as v3 and v4 coexisting (a second class, or a version flag on
+the existing `Flutterwave` class — an open implementation choice for
+whoever builds this part, not decided here), not a replacement of
+d-2a's work.
+
+##### d-2c. Design and implement the runtime v3/v4 switch [ ] (not started, blocked on d-2b existing first)
+
+An explicit open design question, not decided here: whether the
+version is chosen per-call (a `version` field on the request), per-
+environment (an env var), or via the same promote-to-default
+mechanism Task 52/e-2 already left open for routing in general.
+Whoever picks this up should decide as part of the leaf, not invent a
+fourth option silently. Only makes sense once d-2b exists — nothing to
+switch between otherwise.
 
 ### e. Routing-layer rewrite — make `routes.js` actually use the Task 51 model [ ]
 

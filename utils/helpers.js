@@ -209,12 +209,21 @@ export function getProviderKey(provider, type) {
       public: process.env.KORAPAY_PUBLIC_KEY || '',
       secret: process.env.KORAPAY_SECRET_KEY || '',
     },
+    // Task 52/d-2, part (1) of 3 (v3 method set only this session —
+    // v4's OAuth2 client_id/client_secret pair is a deliberately
+    // separate, not-yet-built shape, see providers/flutterwave.js's
+    // own constructor comment). v3 uses the same static public/secret
+    // pair every other provider in this map already does.
+    flutterwave: {
+      public: process.env.FLW_PUBLIC_KEY || '',
+      secret: process.env.FLW_SECRET_KEY || '',
+    },
   };
 
   const providerKeys = keyMap[providerLower];
   
   if (!providerKeys) {
-    throw new Error(`Unsupported provider: ${provider}. Supported: paystack, korapay, juicyway`);
+    throw new Error(`Unsupported provider: ${provider}. Supported: paystack, korapay, juicyway, flutterwave`);
   }
   
   const key = providerKeys[type];
@@ -409,6 +418,23 @@ export function getAmountFormat(provider, currency) {
       return { unit: 'base', multiplier: 1 };
     }
 
+    case 'flutterwave':
+      // Task 52/d-2 (v3 only). Confidence level stated explicitly,
+      // weaker than Korapay's/Paystack's own confirmed rules above:
+      // no Flutterwave doc page fetched this session (2026-09-08)
+      // states "base currency units" in so many words the way
+      // Paystack's "multiply by 100" is stated outright — this is
+      // inferred from every worked example checked (e.g. a charge of
+      // amount: '100' priced as ₦100, not ₦1), which is the same
+      // inference class as this file's other "confirmed via examples,
+      // not an explicit rule statement" notes elsewhere. One real
+      // sandbox call should confirm this before fully trusting it in
+      // production. No CONFIRMED_PROVIDER_CURRENCIES entry yet either
+      // — a currency-list-specific pass is real, separate follow-up
+      // work, not done here; this case intentionally skips the
+      // supported-list warning the paystack/korapay cases above do.
+      return { unit: 'base', multiplier: 1 };
+
     case 'juicyway':
       // JuicyWay's CURRENCY LIST was confirmed by the product owner
       // (Task 49/a, see CONFIRMED_PROVIDER_CURRENCIES above) but that
@@ -489,6 +515,19 @@ export function getProviderBaseUrl(provider) {
     korapay: {
       development: 'https://api.korapay.com/merchant',
       production: 'https://api.korapay.com/merchant',
+    },
+    // Task 52/d-2, part (1) of 3 — v3 only. Confirmed
+    // (developer.flutterwave.com, multiple endpoint reference pages,
+    // 2026-09-08): v3 uses a single host for both test and live mode
+    // — which environment a call hits is determined by which secret
+    // key (FLWSECK_TEST-... vs FLWSECK-...) is sent, not a different
+    // base URL, unlike v4 (see this file's own Flutterwave discovery
+    // notes on v4's swapped-base-URL sample-code bug — that problem
+    // does not apply to v3, which has no equivalent sandbox/production
+    // host split).
+    flutterwave: {
+      development: 'https://api.flutterwave.com/v3',
+      production: 'https://api.flutterwave.com/v3',
     },
   };
   

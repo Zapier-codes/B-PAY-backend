@@ -79,6 +79,36 @@
 > its top-level status line updated to `[x]`. Per the No-skip-ahead
 > rule, this was the next unchecked buildable part after d-4.
 >
+> **Newest note (2026-09-08, latest of all) — Task 8c fixed:
+> `Paystack.verifyTransaction()` now throws on a real failed/abandoned
+> transaction, not just a bad API call.** Paystack always answers
+> `HTTP 200`/top-level `status: true` even when the underlying
+> transaction failed or was abandoned — the real outcome lives only
+> in nested `data.status`. Added a check for
+> `responseData.data?.status !== 'success'` right after the existing
+> `!response.ok || !responseData.status` check, mirroring
+> `providers/flutterwave.js`'s v4 `verifyTransaction()`, which already
+> throws on a nested failed status the same way — chosen over touching
+> `routes.js`'s shared `/verify` route, which other providers with
+> differently-shaped responses also use. **Verified:** `node --check`
+> on both changed/caller files, plus a throwaway script (deleted, not
+> committed) exercising success/failed/abandoned/missing-data — 4/4
+> as expected. **Still open:** end-to-end confirmation against live
+> Paystack keys (same pre-existing blocker this task's own entry
+> already noted). Full write-up in Task 8c's own entry below, `[x]`.
+> **Per rule 8, drift-checked first** — `git fetch origin` showed
+> `origin/main` unmoved from this session's own known base (`fe4f272`,
+> the just-landed Task 6 fix), so this is a fresh, un-stacked commit
+> on top of it, not folded into anything unapplied. **Per rule 7, the
+> Patch Handoff command block is restated in this session's own
+> reply.** Next unchecked task in document order: **Task 45a**
+> (JuicyWay: fix the wrong endpoint path + Authorization header
+> format) — not started, flagged for whichever session picks this up
+> next, per the No-skip-ahead rule.
+>
+> *(Superseded note, kept for its own record below rather than
+> deleted.)*
+>
 > **Newest note (2026-09-08, latest of all) — Task 6 struck, not
 > started: it was already moot.** The previous version of this box
 > pointed the next session at "Task 6 — Payscribe webhook," but
@@ -5669,7 +5699,7 @@ doc-only scope:**
   (`utils/helpers.js`) is missing `XOF`, which Paystack's own docs
   list as a sixth supported currency.
 
-### Task 8c — Fix `GET /api/verify`: surface Paystack's real per-transaction status, not just the API-call status [ ]
+### Task 8c — Fix `GET /api/verify`: surface Paystack's real per-transaction status, not just the API-call status [x]
 **Added by Task 8's full audit pass (2026-09-06), doc-research only —
 not fixed as part of that pass since it's a code change outside
 Task 8's own stated scope, and this repo is still under the "Current
@@ -5709,6 +5739,32 @@ here rather than presupposing it.
 itself — but this is a pure logic fix (no API call shape changes), so
 it can be written and unit-reasoned-about without live keys; only the
 final end-to-end confirmation needs them.
+
+**FIXED 2026-09-08 — option (a) chosen.** Went with fixing this
+directly in `providers/paystack.js#verifyTransaction`: after the
+existing `!response.ok || !responseData.status` check, an added
+check now throws (via `providerError`) when `responseData.data?.status
+!== 'success'`. Reasoning for (a) over (b): `providers/flutterwave.js`'s
+own `verifyTransaction()` (the v4 one) **already implements exactly
+this pattern** — it throws when its own nested status field reads
+`'failed'` — so this keeps Paystack consistent with an existing,
+working sibling-provider precedent in this same file, rather than
+touching `routes.js`'s shared `/verify` route (which Korapay/JuicyWay/
+Flutterwave also use, with their own differently-shaped responses —
+changing the route's own status logic risked affecting those, out of
+this task's Paystack-only scope). The error message includes the
+reference and the actual nested status (e.g. `"Paystack transaction
+ref_123 was not successful (status: 'abandoned')"`) — `providerError`
+marks it `isProviderMessage`, so it's surfaced to the client as-is,
+same as this method's existing error path.
+**End-to-end confirmation with live keys is still genuinely open** —
+per this entry's own note above, that part was always blocked on
+Paystack keys, not on the logic itself.
+**Verified:** `node --check providers/paystack.js` and
+`node --check routes.js` both pass. A throwaway script (deleted after
+use, not committed) exercised the new check directly — `success`
+does not throw; `failed`, `abandoned`, and a response missing `data`
+entirely all throw — 4/4 as expected.
 
 ### Task 8d — Add `XOF` to Paystack's confirmed-currency list [x]
 **Added by Task 8's full audit pass (2026-09-06), doc-research only —

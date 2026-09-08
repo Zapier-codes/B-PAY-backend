@@ -73,6 +73,29 @@ export class Paystack {
         throw providerError(responseData.message || 'Paystack verification failed');
       }
 
+      // Task 8c: Paystack always answers HTTP 200 / top-level
+      // `status: true` even when the underlying transaction failed or
+      // was abandoned -- confirmed directly against
+      // paystack.com/docs/api/errors/ ("we will always send a 200 if
+      // a charge or verify request was made. Do check the data
+      // object to know how the charge went."). The real outcome only
+      // lives in the nested `data.status` field ('success' / 'failed'
+      // / 'abandoned'). Without this check, a caller of this method
+      // (GET /api/verify in routes.js) would see it return normally
+      // and report a declined card or an abandoned checkout as a
+      // confirmed payment -- exactly the "paid but no value" failure
+      // mode Paystack's own webhooks guide warns integrators about.
+      // Mirrors Flutterwave v4's own verifyTransaction() above, which
+      // already throws on a nested failed status for the same
+      // reason -- keeping this Paystack-specific (not touched in
+      // routes.js's shared /verify route, which other providers with
+      // different response shapes also use).
+      if (responseData.data?.status !== 'success') {
+        throw providerError(
+          `Paystack transaction ${reference} was not successful (status: '${responseData.data?.status}')`
+        );
+      }
+
       return responseData;
     }, 'paystack');
 

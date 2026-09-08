@@ -106,6 +106,49 @@ Task 57/e (`/pay` end-to-end wiring) are still open — this table is
 now live in the schema (confirmed above) but nothing in the running
 application reads from or writes to it as of this update.
 
+### `routing_config` (migration `0005`) — Task 52/e-2d's Stripe-precedent default-provider table
+
+| Column | Type | Notes |
+|---|---|---|
+| `domain` | `text` | primary key — one row per `classifyDomain()` return value (`'african_rails'` \| `'international'`) |
+| `default_provider` | `text` | no `CHECK` constraint (see migration's own note — routes.js's `getProvider()` validates this at request time instead) |
+| `created_at` | `timestamptz` | default `now()` |
+| `updated_at` | `timestamptz` | default `now()`, auto-updated via `set_updated_at()` trigger — this is what makes a "promote a fallback to default" `UPDATE` auditable with no application code |
+
+**Seeded** (same migration) with today's live defaults —
+`african_rails` → `korapay`, `international` → `juicyway` — exactly
+matching routes.js's own `DOMAIN_DEFAULT_PROVIDER` fallback table, so
+applying this migration changes no current routing behavior.
+
+**Purpose:** resolves Task 52/e-2d's open design question (env var vs.
+config file vs. admin-dashboard toggle) by mirroring Stripe's actual
+Payment Method Configurations model — a live, Dashboard-toggleable,
+API-backed object, not a deploy. Until Task 46's real admin dashboard
+exists, the product owner edits this table's rows directly (SQL, from
+the DB-Ops second environment) as their "dashboard" — see handover.md's
+Task 52/e-2d entry for the full precedent writeup.
+
+**No foreign keys.** Nothing else in this repo references
+`routing_config` rows.
+
+**Row Level Security:** enabled (migration `0006`). One explicit
+policy, `routing_config_service_role_all`, scoped to `service_role`
+only — same pattern as `transactions`/`customers` above, same
+reasoning, with an extra edge here specifically: an open
+`anon`/`authenticated` write policy on this table could silently
+redirect real payment traffic to a different provider. No policy for
+`anon`/`authenticated`.
+
+**Wired into the running application as of this update** —
+`routes.js`'s `resolveDomainDefaultProvider(domain)` (Task 52/e-2d)
+reads this table first at all four call sites that previously read
+`DOMAIN_DEFAULT_PROVIDER[domain]` directly (`POST /pay`, `POST
+/payout`, `GET /payout/verify`, `GET /banks`), falling back to the
+hardcoded table on any miss (not configured, table not yet migrated on
+this environment, or a domain with no row) — same never-fail-the-
+request posture every other Supabase-backed lookup in this file
+already uses.
+
 ## Functions
 
 - **`set_updated_at()`** — trigger function (migration `0001`). Keeps
@@ -116,14 +159,20 @@ application reads from or writes to it as of this update.
 
 ## Not yet in this schema
 
-Task 56/d (a through e) is fully built. Task 57/c (`customers` table +
-RLS, migrations `0003`/`0004`) is built as of this update — see that
-table's own entry above. Still open: Task 57/d (vault read/write logic
-— resolving `customer_id` into these columns, `save_customer: true`
-handling, returning the new `customer_id`) and Task 57/e (wiring
-`customer_id`/`save_customer` into the live `/pay` handler). Until (d)
-lands, this table exists but nothing in the running application reads
-from or writes to it yet. Beyond that, nothing currently queued needs
-a further migration; the next schema change is whatever a future task
+Task 56/d (a through e) is fully built. Task 57 (a through e,
+`customers` table + Customer Vault) is fully built as of this file's
+own prior update. Task 52/e-2d (`routing_config` table, migrations
+`0005`/`0006`) is built and wired in as of this update — see that
+table's own entry above. **Not yet built for `routing_config`:** a
+second, per-account/per-domain override tier beyond the single
+platform-level default row per domain (Stripe's own Configurations
+model supports this via a specific config ID referenced per Checkout
+Session; this table doesn't yet have an equivalent scope column) —
+flagged as a future extension of this same table, not guessed at in
+migration `0005`. Migrations `0005`/`0006` themselves are **not yet
+confirmed live** — same "check before assuming" caveat this file's
+own top note already states for every migration not explicitly listed
+as confirmed there. Beyond that, nothing currently queued needs a
+further migration; the next schema change is whatever a future task
 actually requires (e.g. Task 46's dashboard, once it needs a
 `businesses` table or per-business RLS).

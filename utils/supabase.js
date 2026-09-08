@@ -266,3 +266,60 @@ export async function saveCustomer({ first_name, last_name, phone_number, billin
     return null;
   }
 }
+
+// ==================================================
+// 🧭 ROUTING CONFIG — READ (Task 52/e-2d)
+// ==================================================
+// The read half of the `routing_config` table (migrations 0005/0006).
+// Resolves e-2d's own open design question (env var vs. config file
+// vs. admin-dashboard toggle) via the Stripe-precedent option the
+// product owner directed this task to mirror (Payment Method
+// Configurations — a live, Dashboard-toggleable, API-backed object,
+// not a deploy): a Supabase-backed row that can be updated directly
+// (today, via SQL from the DB-Ops second environment — Task 46's own
+// admin dashboard, once it exists, is a UI on top of the same table,
+// not a replacement for it), taking effect on the very next request,
+// no code deploy required.
+//
+// Same "never throws, best-effort" posture as every other Supabase
+// helper in this file, for the same reason: this is a routing DEFAULT
+// lookup on the hot path of every single /pay, /payout, /payout/verify,
+// and /banks call — a lookup miss (Supabase unreachable, the table
+// not yet migrated on this environment, a domain with no row) must
+// fall through to routes.js's own hardcoded `DOMAIN_DEFAULT_PROVIDER`
+// safety-net table, exactly the way getTransactionByReference()'s own
+// miss already falls through to a hardcoded default for the same
+// reason (Task 56/a's accepted trade-off) — it must never turn into a
+// 500 or block a payment from resolving a provider at all.
+export async function getRoutingDefaultProvider(domain) {
+  let client;
+  try {
+    client = getSupabaseClient();
+  } catch (err) {
+    log(`getRoutingDefaultProvider skipped — Supabase not available: ${err.message}`, 'warn');
+    return null;
+  }
+
+  try {
+    const { data, error } = await client
+      .from('routing_config')
+      .select('default_provider')
+      .eq('domain', domain)
+      .maybeSingle();
+
+    if (error) {
+      log(`getRoutingDefaultProvider lookup failed for domain '${domain}': ${error.message}`, 'warn');
+      return null;
+    }
+
+    // maybeSingle() resolves data: null (no error) for a genuine miss
+    // — no row for this domain yet (e.g. migration 0005 not applied
+    // on this environment, or a future classifyDomain() return value
+    // this table hasn't been seeded for) — not itself a warning-worthy
+    // condition, same as every other by-key lookup miss in this file.
+    return data?.default_provider || null;
+  } catch (err) {
+    log(`getRoutingDefaultProvider failed for domain '${domain}': ${err.message}`, 'warn');
+    return null;
+  }
+}

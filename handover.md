@@ -9665,7 +9665,7 @@ match afterward, not the other way around.
 
 ---
 
-## Task 52 — Implement every gap Task 51's capability matrix flagged: build out Juicyway/Korapay/Paystack/Flutterwave fully so the domain-based routing model is real, not aspirational [ ] (e-1, e-2a, e-2b-i, e-2b-ii, e-2c all done; e-2d, e-2e remain independently blocked/not-actionable; see this repo's own No-skip-ahead rule before substituting a different top-level task)
+## Task 52 — Implement every gap Task 51's capability matrix flagged: build out Juicyway/Korapay/Paystack/Flutterwave fully so the domain-based routing model is real, not aspirational [ ] (e-1, e-2a, e-2b-i, e-2b-ii, e-2c, e-2d all done; e-2e remains — not blocked on a decision, just not yet actionable, see its own entry; see this repo's own No-skip-ahead rule before substituting a different top-level task)
 
 **Scope note, read first:** this task exists because Task 51 recorded
 a *decision* (Juicyway defaults for every international-rails
@@ -10341,12 +10341,114 @@ undecided question (see their own entries); e is a different kind of
 "not done" — see e-2e's own entry, it's not blocked on a decision, just
 not yet actionable.
 
-##### e-2d. Promote-to-default mechanism design + implementation [ ]
+##### e-2d. Promote-to-default mechanism design + implementation [x]
 
-Not started — this is the leaf's own open design question (env var vs.
-config file vs. admin-dashboard toggle), genuinely undecided, not
-guessed here. Should be confirmed with the product owner before
-building, same as e-1 was.
+**Resolved and built (2026-09-08), per direct product-owner
+instruction, applying the Stripe-as-Reference-Model Convention.**
+
+**The design question, and Stripe's actual answer:** this leaf's own
+three framed options (env var, config file, admin-dashboard toggle)
+all had a real gap — env var/config file both need a deploy to take
+effect (a promotion decision is a business event, not a code change,
+and shouldn't wait on CI/CD), and a real admin-dashboard toggle
+doesn't exist yet (Task 46 is still decision-record only). Stripe's
+own answer to "let a business flip which payment method/provider is
+the default, live, without redeploying" is [Payment Method
+Configurations](https://docs.stripe.com/payments/payment-method-configurations)
+— not just a Dashboard checkbox, but a first-class, API-backed object
+with its own ID: toggleable live in the Dashboard (no deploy), also
+settable via an API for scriptability/auditability, referenced
+explicitly per call or falling back to an account-level default, and
+genuinely two-tier (a platform default, individually overridable per
+call). Mirroring that shape, adapted to this repo's own scope: a
+`routing_config` table in Supabase (already live in this project,
+Task 56) that `DOMAIN_DEFAULT_PROVIDER`'s call sites read at request
+time, instead of a hardcoded object literal — live, no-redeploy,
+auditable (via the shared `set_updated_at()` trigger), and editable
+today via direct SQL from the DB-Ops second environment as a
+stand-in "dashboard," with Task 46's real admin UI landing on top of
+the same table later rather than replacing it.
+
+**Built, in full, this session (per explicit instruction not to split
+this into the usual a–e parts — recorded here plainly per this file's
+own "say so explicitly" rule for a deviation from the standing
+task-splitting convention):**
+
+1. **Migrations `0005`/`0006`** — `routing_config` table (`domain`
+   primary key, `default_provider`, timestamps + the shared
+   `set_updated_at()` trigger) seeded with today's exact live defaults
+   (`african_rails` → `korapay`, `international` → `juicyway`, matching
+   `DOMAIN_DEFAULT_PROVIDER` exactly so applying the migration changes
+   no current behavior), plus RLS — same deny-by-default,
+   `service_role`-only treatment as `transactions`/`customers`
+   (migrations 0002/0004), with an extra edge flagged in 0006's own
+   comment: an open write policy here could silently redirect real
+   payment traffic to a different provider, so this table's
+   service-role-only posture matters more than most.
+
+2. **`utils/supabase.js`'s `getRoutingDefaultProvider(domain)`** —
+   same "never throws, best-effort" posture as every other helper in
+   that file (`getTransactionByReference()`, `getCustomerById()`): a
+   miss (not configured, table not migrated on this environment, or a
+   domain with no row) resolves to `null`, never a thrown error.
+
+3. **`routes.js`'s `resolveDomainDefaultProvider(domain)`** — a new
+   shared async resolver, sitting right next to `DOMAIN_DEFAULT_PROVIDER`
+   (which is kept, not deleted, as this function's own hardcoded
+   fallback/safety-net — seeded with the identical values migration
+   `0005` seeds `routing_config` with). Tries the Supabase-backed
+   lookup first; falls through to the hardcoded table on any miss.
+   Wired into all four call sites that previously read
+   `DOMAIN_DEFAULT_PROVIDER[domain]` directly: `POST /pay` (e-2a),
+   `POST /payout` (e-2b-i), `GET /payout/verify` (e-2b-ii, only on its
+   own already-existing `transactions`-lookup-hit path — the
+   already-built miss path still falls through to `ROUTING_RULES.payout`
+   unchanged, untouched by this leaf), and `GET /banks` (e-2c). Every
+   site's existing explicit-`provider`-always-wins precedence is
+   completely unchanged — this only replaces what happens when no
+   explicit provider was given, same "explicit always wins" principle
+   already used for the Customer Vault's resolution order (Task 57),
+   so no second override tier needed to be built here for that case.
+
+**Deliberately NOT built, flagged rather than silently assumed:** a
+second, per-account/per-domain override tier on top of the single
+platform-level default (Stripe's own per-Checkout-Session override of
+its Default Config) — this table has no scope column for that yet;
+it's a future extension of the same table, not guessed at here, and
+per-call override is already fully available today via the unchanged
+explicit `provider` field/query param at every site.
+
+**Verified:** `node --check` on `routes.js` and `utils/supabase.js`.
+Both migrations parsed against real Postgres grammar via `pglast`
+(`parse_sql`) — 4 statements in `0005`, 2 in `0006`, no syntax errors,
+same verification method every migration in this repo has used since
+`0001`. A throwaway script (deleted, not committed) exercised
+`resolveDomainDefaultProvider`'s actual resolution logic against a
+mocked Supabase response for 5 cases — a miss falling back correctly
+for both domains, a live `routing_config` row overriding the hardcoded
+default in both directions (the actual "promote a fallback to
+default" scenario this task exists to enable), and a lookup failure
+degrading the same way a miss does — 5/5 passed. A live, in-process
+Express server (this repo's own already-declared dependencies, no
+`package.json`/`package-lock.json` change) exercised the real `GET
+/banks` route end-to-end with Supabase unconfigured in this sandbox:
+the routing-config lookup itself logged its expected "not available"
+warning and fell back cleanly to the hardcoded default for both an
+African-rails and an international currency, with no crash from this
+change — the resulting 500 in both cases is the separate, pre-existing
+"no provider API keys in this sandbox" condition every prior
+provider-touching task in this file has already noted, unrelated to
+this leaf.
+
+**Not verified end-to-end against a real Supabase project** — no
+`SUPABASE_URL`/`SUPABASE_SERVICE_ROLE_KEY` in this environment, same
+pre-existing blocker every prior Supabase-touching task in this file
+has noted. Migrations `0005`/`0006` are not yet applied to the live
+project — per the Patch Handoff / DB-Ops Handoff Conventions, that
+remains the product owner's own step.
+
+**This closes Task 52/e-2d.** e-2e remains the only open leaf under
+Task 52/e-2 — see its own entry immediately below, unaffected by this.
 
 ##### e-2e. Capability-mix flow support (Task 55/b cross-reference) [ ]
 

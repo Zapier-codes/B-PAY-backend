@@ -3,7 +3,7 @@ import { Paystack } from './providers/paystack.js';
 import { Juicyway } from './providers/juicyway.js';
 import { Korapay } from './providers/korapay.js';
 import { log, formatPayload, generateReference, getSupportedCurrencies, isValidCurrencyCode, isValidEmail, providerRequiresEmail, requireInternalApiKey, classifyDomain } from './utils/helpers.js';
-import { recordTransaction, getTransactionByReference } from './utils/supabase.js';
+import { recordTransaction, getTransactionByReference, getRoutingDefaultProvider } from './utils/supabase.js';
 import { getMissingFields } from './utils/fieldRequirements.js';
 import { resolveCustomer } from './utils/customerVault.js';
 import { handleGatewayEvent } from './webhookGateway.js';
@@ -60,7 +60,7 @@ router.post('/payout', requireInternalApiKey, async (req, res) => {
     let providerName = req.body.provider;
     if (!providerName) {
       const domain = classifyDomain(currency);
-      providerName = DOMAIN_DEFAULT_PROVIDER[domain];
+      providerName = await resolveDomainDefaultProvider(domain);
     }
     const provider = getProvider(providerName);
 
@@ -194,7 +194,7 @@ router.get('/payout/verify', requireInternalApiKey, async (req, res) => {
       const transaction = await getTransactionByReference(reference);
       if (transaction && transaction.currency) {
         const domain = classifyDomain(transaction.currency);
-        providerName = DOMAIN_DEFAULT_PROVIDER[domain];
+        providerName = await resolveDomainDefaultProvider(domain);
       } else {
         // Miss — see this route's own comment above and Task 56/a's
         // accepted trade-off: fall through to today's existing
@@ -250,7 +250,7 @@ router.get('/banks', async (req, res) => {
     let providerName = req.query.provider;
     if (!providerName) {
       const domain = classifyDomain(currency);
-      providerName = DOMAIN_DEFAULT_PROVIDER[domain];
+      providerName = await resolveDomainDefaultProvider(domain);
     }
 
     const provider = getProvider(providerName);
@@ -287,6 +287,39 @@ const DOMAIN_DEFAULT_PROVIDER = {
   african_rails: 'korapay',
   international: 'juicyway',
 };
+
+// Task 52/e-2d (2026-09-08) — resolves this leaf's own open design
+// question (env var vs. config file vs. admin-dashboard toggle) via
+// the Stripe-precedent option the product owner directed this task to
+// mirror: Payment Method Configurations are a live, Dashboard-
+// toggleable, API-backed object, not a deploy. `routing_config`
+// (migrations 0005/0006) is that object's equivalent here — reads a
+// domain's default provider from Supabase first, so a promotion
+// ("make Juicyway the default for african_rails instead of Korapay")
+// takes effect on the next request with no code deploy, exactly the
+// property env-var/config-file approaches both fail per the Stripe
+// writeup in handover.md's Task 52/e-2d entry.
+//
+// `DOMAIN_DEFAULT_PROVIDER` above is NOT deleted — it's kept as this
+// function's own fallback/safety-net, seeded with the exact same
+// values migration 0005 seeds `routing_config` with. A Supabase miss
+// (not configured on this environment, table not yet migrated, or a
+// domain with no row) falls straight through to it, same
+// never-fail-the-request posture every other Supabase-backed lookup
+// in this file already uses (getTransactionByReference(),
+// getCustomerById()) — a routing-config lookup must never turn into a
+// 500 or block a payment from resolving *some* provider.
+//
+// Deliberately does NOT implement a second, per-domain override tier
+// on top of the platform default (Stripe's own "per-Checkout-Session
+// override" of its Default Config) — the existing, unchanged
+// `req.body.provider` / `req.query.provider` explicit-override
+// precedence at every call site already gives a caller that exact
+// capability, per-call, so there's nothing new to build for it here.
+async function resolveDomainDefaultProvider(domain) {
+  const configured = await getRoutingDefaultProvider(domain);
+  return configured || DOMAIN_DEFAULT_PROVIDER[domain];
+}
 
 // Task 10 (Korapay-focus partial — see handover.md's "Current focus:
 // Korapay only" section): ROUTING_RULES above still only maps an
@@ -666,7 +699,7 @@ router.post('/pay', requireInternalApiKey, async (req, res) => {
     let providerName = provider;
     if (!providerName) {
       const domain = classifyDomain(resolvedCurrency);
-      providerName = DOMAIN_DEFAULT_PROVIDER[domain];
+      providerName = await resolveDomainDefaultProvider(domain);
     }
 
     log(`Routing to provider: '${providerName}'`);

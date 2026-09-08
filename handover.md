@@ -3,8 +3,57 @@
 > **▶ START HERE — read this box only, then go straight to work. Skip
 > everything else below unless you get stuck.**
 >
-> **Newest note (2026-09-08, latest of all, supersedes the Task 8d
-> note below) — No-skip-ahead rule added (see its own section, right
+> **Newest note (2026-09-08, latest of all, supersedes the "actual next
+> task is blocked" note below) — Task 52/e-1's blocking product
+> decision is now RESOLVED, and e-1 itself is done.** The product
+> owner chose **option (a)**, currency-based inference — explicitly
+> **not** (b) a separate country field or (c) a client-supplied
+> `domain` field, and explicitly for a product reason worth recording
+> verbatim rather than paraphrasing away: **the client must not be
+> able to tell this backend routes international vs. African rails
+> differently at all — the split has to look like one basket from the
+> outside, not two.** A client-supplied `domain` field (option c) would
+> have exposed exactly that split to the caller, which is why it was
+> rejected despite being the architecturally "cleaner" of the three
+> options on paper.
+>
+> **Built this session:** `classifyDomain(currency)` and its backing
+> `AFRICAN_RAILS_CURRENCIES` constant, added to `utils/helpers.js`,
+> using exactly Task 51/b-2's confirmed African-rails currency set
+> (NGN/GHS/KES/ZAR/XAF/XOF/EGP/TZS) as a single named constant so the
+> two can't drift apart independently. `classifyDomain` returns exactly
+> `'african_rails'` or `'international'`, uppercases/defaults safely on
+> falsy input. Verified with `node --check` plus a throwaway sanity
+> script (deleted after use) covering all 8 African-rails currencies,
+> several international ones (USD/CAD/GBP/USDT/USDC), lower-case input,
+> and empty/undefined input — all passed. **Not split further** — this
+> was treated as a single atomic unit of work per the mandatory
+> task-splitting rule's own stated exception for genuinely small tasks.
+>
+> **Deliberately NOT done this session:** the function is not yet wired
+> into `routes.js` anywhere — `ROUTING_RULES`/`getProvider()` are
+> untouched, and no route calls `classifyDomain` yet. That wiring is
+> Task 52/e-2's own separate job (rewrite the routing logic to actually
+> use Task 51's tables), now unblocked in turn since it was waiting on
+> this same decision, but not started this session.
+>
+> **Known, accepted trade-off, recorded in the code comment too:** pure
+> currency-based classification means a same-currency-different-region
+> edge case (e.g. a USD charge that's still logically African-rails
+> business) will classify as international. The product owner accepted
+> this in exchange for keeping the split invisible to the client — not
+> re-litigated here.
+>
+> **Per the Patch Handoff Convention, a patch file covering this
+> session's `utils/helpers.js` change plus this `handover.md` update
+> was generated and handed to the product owner directly — not applied
+> or pushed by this session.**
+>
+> *(Superseded note, kept for its own record below rather than
+> deleted — describes the blocker as it stood before this session's
+> decision.)*
+>
+> **Previous newest note (2026-09-08) — No-skip-ahead rule added (see its own section, right
 > before "Build-focus" below); Task 8d's pick was a correction target,
 > not a template.** Per direct product-owner instruction: when the
 > next task is blocked, a session reports the blocker instead of
@@ -8154,7 +8203,7 @@ match afterward, not the other way around.
 
 ---
 
-## Task 52 — Implement every gap Task 51's capability matrix flagged: build out Juicyway/Korapay/Paystack/Flutterwave fully so the domain-based routing model is real, not aspirational [ ] (e-1 is next, but is a product decision, not code — see that leaf's own entry; no `X` currently assigned to a codeable leaf)
+## Task 52 — Implement every gap Task 51's capability matrix flagged: build out Juicyway/Korapay/Paystack/Flutterwave fully so the domain-based routing model is real, not aspirational [ ] (e-1 done this session; e-2 is next — actual routing rewrite, unblocked but not started)
 
 **Scope note, read first:** this task exists because Task 51 recorded
 a *decision* (Juicyway defaults for every international-rails
@@ -8684,15 +8733,24 @@ Only makes sense to pick up once enough of (a)-(d) exist that there's
 something real to route to — attempting this first would just be
 rewiring `ROUTING_RULES` to point at methods that still throw/501.
 
-#### e-1. Domain-detection logic — decide international vs. African per request [ ]
+#### e-1. Domain-detection logic — decide international vs. African per request [x]
 
-Nothing today inspects an incoming `/pay`, `/payout`, `/verify`, or
-`/banks` request and classifies it as "international" or "African
-rails" — Task 51's tables assume that classification already happened.
-Needs a real rule (by currency? by destination country? by an explicit
-client-supplied field?) — this is itself a product decision, not
-purely an engineering one, and should be confirmed with the product
-owner before implementing rather than guessed.
+**Resolved + built (2026-09-08).** Product owner decided by
+currency — explicitly rejecting a separate country field or a
+client-supplied `domain` field, because the split must be invisible to
+the client (see this file's own START HERE box for the full quote and
+reasoning). Implemented as `classifyDomain(currency)` in
+`utils/helpers.js`, backed by a named `AFRICAN_RAILS_CURRENCIES`
+constant equal to Task 51/b-2's confirmed African-rails currency set
+(NGN/GHS/KES/ZAR/XAF/XOF/EGP/TZS) — anything else classifies as
+`'international'`. Verified with `node --check` plus a throwaway
+sanity script (deleted after use); all cases passed (8 African-rails
+currencies, several international currencies, lower-case input,
+empty/undefined input). **Not wired into `routes.js` yet** —
+`ROUTING_RULES`/`getProvider()` remain untouched; that's e-2's own job,
+below, now unblocked but not started this session. Patch handed to the
+product owner per the Patch Handoff Convention, not applied/pushed by
+this session.
 
 #### e-2. Rewrite `ROUTING_RULES`/`getProvider()` to route by domain, with explicit fallback/promote-to-default support [ ]
 

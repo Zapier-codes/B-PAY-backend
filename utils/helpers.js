@@ -412,6 +412,35 @@ export function getSupportedCurrencies(provider) {
   return CONFIRMED_PROVIDER_CURRENCIES[(provider || '').toLowerCase()] || null;
 }
 
+// Task 52/e-1 — domain-detection logic (currency-based, decided by the
+// product owner 2026-09-08: NOT a client-supplied field, and NOT a
+// separate country field — the client must not be able to tell this
+// backend routes "international" vs "African rails" differently at
+// all; the split has to be invisible from the request shape). Every
+// currency below is exactly Task 51/b-2's "African rails" domain-covers
+// list (NGN/GHS/KES/ZAR/XAF/XOF/EGP/TZS) — kept as its own named
+// constant, not inlined, so Task 51's tables and this function can't
+// silently drift apart if one is edited without the other.
+//
+// Known, accepted trade-off (flagged, not solved here): this is a pure
+// currency→domain map. A same-currency-different-region case (e.g. a
+// USD-denominated charge that's still logically "African rails"
+// business) will classify as international, since USD isn't in the
+// African-rails list above. The product owner chose this over an
+// explicit country/domain field specifically to keep the split
+// invisible to the client; revisit only if a real case surfaces where
+// that trade-off actually bites.
+const AFRICAN_RAILS_CURRENCIES = ['NGN', 'GHS', 'KES', 'ZAR', 'XAF', 'XOF', 'EGP', 'TZS'];
+
+// Classifies a currency into one of Task 51's two rail domains.
+// Returns 'african_rails' or 'international' — never anything else,
+// so callers (Task 52/e-2's routing rewrite) can switch on the result
+// directly without a default/else case of their own.
+export function classifyDomain(currency) {
+  const currencyUpper = (currency || '').toUpperCase();
+  return AFRICAN_RAILS_CURRENCIES.includes(currencyUpper) ? 'african_rails' : 'international';
+}
+
 export function getAmountFormat(provider, currency) {
   const providerLower = (provider || '').toLowerCase();
   const currencyUpper = (currency || '').toUpperCase();

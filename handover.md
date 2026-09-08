@@ -79,6 +79,45 @@
 > its top-level status line updated to `[x]`. Per the No-skip-ahead
 > rule, this was the next unchecked buildable part after d-4.
 >
+> **Newest note (2026-09-08, latest of all) — Task 45a partially
+> fixed: JuicyWay's `processPayment` endpoint path + both methods'
+> Authorization header.** `processPayment`'s endpoint changed
+> `/v1/charges` → `/payment-sessions` (confirmed wrong/right against
+> docs.juicyway.com); both `processPayment` and `verifyTransaction`
+> had their `Bearer ` prefix dropped (docs are explicit the header is
+> the raw key). **`verifyTransaction`'s endpoint path deliberately
+> left unchanged** — the real one needs Juicyway's internal `id`, not
+> the `reference` this method receives, and that lookup is Task 45d's
+> job, still open; changing the path without it would just swap one
+> wrong endpoint for another, so it's commented in place instead of
+> guessed at. **New finding, not fixed, flagged for a future task:**
+> the same `Bearer` prefix bug also lives in `createBeneficiary`,
+> `verifyPayout`, `getBanks`, and `processPayout` — out of this task's
+> stated scope ("Both methods" meant processPayment/verifyTransaction
+> only), left untouched rather than silently expanded into. Full
+> write-up in Task 45a's own entry below, `[x]`. **Verified:**
+> `node --check providers/juicyway.js`, plus direct `grep` checks
+> confirming exactly the two target call sites changed and the four
+> others didn't (a `fetch`-mocking script was attempted but abandoned
+> — `node-fetch` isn't the global `fetch`, so the mock never
+> intercepted; a real call correctly got blocked by this sandbox's own
+> egress proxy instead). **Per rule 8, drift-checked first** —
+> `origin/main` unmoved from this session's own known base (`56e1387`,
+> the just-landed Task 8c fix). **Per rule 7, the Patch Handoff
+> command block is restated in this session's own reply.**
+> **Next task in document order is Task 45b — but per the No-skip-
+> ahead rule, flagging rather than starting it: its own entry already
+> states it's blocked on a real product decision** (does
+> `routes.js`'s `/api/pay` request body grow JuicyWay-specific
+> optional fields — first/last name, phone, billing address, customer
+> type, IP address, an order identifier/items array, a description —
+> or does JuicyWay get its own route/validation path?), not just a
+> payload literal to edit. Whichever session picks this up next needs
+> that decision from the product owner before writing code.
+>
+> *(Superseded note, kept for its own record below rather than
+> deleted.)*
+>
 > **Newest note (2026-09-08, latest of all) — Task 8c fixed:
 > `Paystack.verifyTransaction()` now throws on a real failed/abandoned
 > transaction, not just a bad API call.** Paystack always answers
@@ -5811,7 +5850,7 @@ a doc-research pass per the Discovery Convention. Each is queued as
 its own task immediately below (**Tasks 45a–45e**) rather than fixed
 under this task's own now-narrower scope.
 
-### Task 45a — Fix JuicyWay's endpoint path and Authorization header format [ ]
+### Task 45a — Fix JuicyWay's endpoint path and Authorization header format [x]
 **Added by Task 8b's full audit pass (2026-09-06), doc-research only.**
 Two confirmed bugs, fixed together since neither alone gets a real
 call to succeed: (1) `providers/juicyway.js#processPayment` calls
@@ -5826,6 +5865,41 @@ explicit that the header is the raw key with no scheme prefix. Not
 blocked on API keys for writing the fix (this is a pure string/path
 change, confirmed against docs), but end-to-end confirmation still
 needs real JuicyWay sandbox keys, same as every other JuicyWay task.
+
+**PARTIALLY FIXED 2026-09-08 — split per this task's own caveat.**
+`processPayment`: endpoint path changed `/v1/charges` →
+`/payment-sessions`, and the `Bearer ` prefix dropped from its
+Authorization header — both unblocked, both done. `verifyTransaction`:
+**Authorization header fixed (prefix dropped), endpoint path
+deliberately left unchanged.** As this entry's own text already
+flagged, the real verify endpoint (`/payments/{id}`) takes Juicyway's
+own internal `id`, not the merchant `reference` this method is given
+— and this repo has no reference→id lookup yet (that's Task 45d,
+still open, `[ ]`). Swapping the path without that lookup would trade
+one wrong endpoint for a differently-wrong one, so
+`/v1/charges/${reference}` stays as a known-still-broken placeholder,
+now commented in-line explaining why, until 45d lands.
+**New finding, not fixed here, flagged for a future task:** the same
+`Bearer ${this.apiKey}` prefix bug this task fixed in
+`processPayment`/`verifyTransaction` also appears in
+`createBeneficiary`, `verifyPayout`, `getBanks`, and `processPayout`
+— i.e., every other method in `providers/juicyway.js` that calls
+Juicyway's API. Task 45a's own scope, in its original text above, was
+explicitly "Both methods" (`processPayment`/`verifyTransaction` only),
+so these four were left untouched rather than silently expanded into.
+Worth its own small follow-up task — likely trivial once picked up,
+same one-line-per-call-site fix, just four more call sites.
+**Verified:** `node --check providers/juicyway.js` passes. Confirmed
+via `grep -n "Bearer"` that the two target methods no longer send it
+and the four others (intentionally out of scope) still do, and via
+`grep -n "payment-sessions\|v1/charges"` that `processPayment`'s path
+changed and `verifyTransaction`'s did not. A network-call-level
+throwaway check (mocking `fetch`) was attempted but abandoned — this
+file's `fetch` import is `node-fetch`, not the global, so a
+`globalThis.fetch` mock doesn't intercept it, and a real call is
+correctly blocked by this sandbox's own egress proxy; direct source
+inspection above was sufficient for a pure string/literal change like
+this one.
 
 ### Task 45b — Fix JuicyWay's request payload shape (missing required nested fields) [ ]
 **Added by Task 8b's full audit pass (2026-09-06), doc-research only.**

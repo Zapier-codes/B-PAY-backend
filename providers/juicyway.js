@@ -208,11 +208,16 @@ export class Juicyway {
     log(`Juicyway Payment Request: ${formatPayload(payload)}`);
 
     const result = await handleApiCall(async () => {
-      // ⚠️ Verify exact endpoint path in Juicyway docs
-      const response = await fetch(`${this.baseUrl}/v1/charges`, {
+      // Task 45a: was /v1/charges, which doesn't exist on Juicyway's
+      // API -- confirmed against docs.juicyway.com, the real
+      // payment-initiation endpoint is /payment-sessions.
+      const response = await fetch(`${this.baseUrl}/payment-sessions`, {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${this.apiKey}`,
+          // Task 45a: was `Bearer ${this.apiKey}` -- Juicyway's docs
+          // (docs.juicyway.com/authentication.md) are explicit that
+          // this header is the raw key with no scheme prefix.
+          'Authorization': this.apiKey,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify(payload),
@@ -335,10 +340,23 @@ export class Juicyway {
     log(`Juicyway Verification Request for: ${reference}`);
 
     const result = await handleApiCall(async () => {
+      // Task 45a: endpoint path here is intentionally UNCHANGED for
+      // now. Docs confirm the real verify endpoint is
+      // GET /payments/{id} -- but that takes Juicyway's own internal
+      // id, not the merchant `reference` this method actually
+      // receives, and this repo has no id-from-reference lookup yet
+      // (that's Task 45d, still open). Swapping the path here without
+      // that lookup would just trade one wrong endpoint for a
+      // differently-wrong one, so /v1/charges/${reference} stays as
+      // a known-still-broken placeholder until 45d lands. The
+      // Authorization header fix below is independent of this and
+      // safe to land now.
       const response = await fetch(`${this.baseUrl}/v1/charges/${reference}`, {
         method: 'GET',
         headers: {
-          'Authorization': `Bearer ${this.apiKey}`,
+          // Task 45a: was `Bearer ${this.apiKey}` -- see the same fix
+          // + citation in processPayment() above.
+          'Authorization': this.apiKey,
           'Content-Type': 'application/json',
         },
       });

@@ -3,8 +3,43 @@
 > **▶ START HERE — read this box only, then go straight to work. Skip
 > everything else below unless you get stuck.**
 >
-> **Newest note (2026-09-08, latest of all, supersedes the Task 52/d-2c
-> note below) — Task 8d done: `XOF` added to Paystack's confirmed-
+> **Newest note (2026-09-08, latest of all, supersedes the Task 8d
+> note below) — No-skip-ahead rule added (see its own section, right
+> before "Build-focus" below); Task 8d's pick was a correction target,
+> not a template.** Per direct product-owner instruction: when the
+> next task is blocked, a session reports the blocker instead of
+> substituting a different open task. Applying that now, properly,
+> instead of the list-of-alternatives framing the superseded note
+> below used:
+>
+> **The actual next task is Task 52/e-1 (domain-detection logic —
+> classify an incoming `/pay`/`/payout`/`/verify`/`/banks` request as
+> "international" or "African rails" before Task 51's routing tables
+> can be applied), and it is blocked. The specific question, for the
+> product owner:** which signal should decide that classification —
+> **(a)** the request's own `currency` field (e.g. NGN/GHS/KES/ZAR/
+> XAF/XOF/EGP/TZS → African rails, everything else → international);
+> **(b)** an explicit destination-country field the caller supplies
+> separately from currency (handles same-currency-different-region
+> edge cases, e.g. a USD payment that's still logically "African
+> rails" business, if that's a real case here); or **(c)** an explicit
+> field the client is expected to set directly (e.g. `domain:
+> 'international' | 'african_rails'`), pushing the classification
+> decision to the caller instead of inferring it here at all. Task
+> 52/e-2 (rewriting `ROUTING_RULES`/`getProvider()` to actually use
+> Task 51's tables) is downstream of this and stays blocked until it's
+> answered. **No other task in this repo's queue was substituted in
+> its place this session** — per the new rule, this session stops here
+> and reports this, rather than picking up Task 8c or the Task 45
+> series instead.
+>
+> *(Superseded note, kept for its own record below rather than
+> deleted — describes Task 8d itself, which is done and correct on its
+> own merits; only the "here's a list of other open tasks" framing
+> around it is what the new rule corrects.)*
+>
+> **Newest note (2026-09-08, previous) — Task 8d done: `XOF` added to
+> Paystack's confirmed-
 > currency list.** One-line addition to
 > `CONFIRMED_PROVIDER_CURRENCIES.paystack` in `utils/helpers.js` —
 > already fully confirmed against Paystack's own docs, no ambiguity,
@@ -1358,6 +1393,57 @@ segment — still exactly this shape, not a shorter/different one.
    `cd && git am && git push` shape (just a shorter chain) — not a
    different, shorter format "because it's only one repo." Consistency
    for the human is the entire point of this section existing.
+
+---
+
+## No-skip-ahead rule — MANDATORY, this repo, effective 2026-09-08
+
+**Direct product-owner instruction, overriding any implicit "if the
+next task is blocked, go find a different open task instead"
+behavior a session might otherwise default to — this is a correction,
+not a preference.**
+
+**The rule:** a session works the queue in the order this file
+establishes (its own "X" marker / the status box's own account of
+what's next). **If the task that's actually next is blocked, the
+session does NOT go looking elsewhere in the queue for a different
+open task to fill the session instead.** Concretely, a session that
+finds the next task blocked must:
+
+1. **Stop working the task queue for this repo.**
+2. **Say plainly, in the status box, that the next task is blocked.**
+3. **Name the specific question(s) or gap(s) blocking it** — not just
+   "blocked," but exactly what's missing (a product decision, a
+   specific doc citation, an API key, a field-name confirmation,
+   etc.), and, where it helps, the concrete options the product owner
+   would actually be choosing between, the same level of detail this
+   file already uses for its own open items elsewhere (e.g. Task
+   52/e-1's own "by currency? by destination country? by an explicit
+   client-supplied field?" phrasing).
+4. **Does not silently substitute a different, easier, unblocked task
+   instead** — even a well-justified-sounding substitution counts.
+
+**Correction, this session (2026-09-08):** after Task 52/d finished,
+Task 52/e-1 (domain-detection logic) turned out to be blocked on a
+product decision. Rather than stopping there and asking the question,
+that session went looking for a different open task in this repo's
+queue and picked up Task 8d instead. Task 8d was a fine, low-risk,
+already-fully-confirmed change on its own — but reaching for it
+instead of stopping was exactly the skip-ahead behavior this rule now
+forbids, not a pattern to repeat. Recorded here as a correction, the
+same way this file records other "a prior session's posture turned
+out to be wrong, don't repeat it" notes elsewhere (see, e.g., the
+Korapay webhook gateway's own "confirmed done was premature"
+correction, above).
+
+**This rule is scoped to this repo only for now**, per the direct
+instruction that prompted it (a session was told explicitly to focus
+on this repo, not the three-repo project as a whole, right before this
+rule was written). It has the same shape as the cross-repo "Build-
+focus" section above, though, and a future session should consider
+proposing the identical rule for Mavins-web's and Velune's own
+handover files — not done here, since this session was told to stay
+inside this repo.
 
 ---
 

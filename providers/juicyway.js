@@ -55,6 +55,103 @@ export class Juicyway {
     return result;
   }
 
+  // ==================================================
+  // 💸 PROCESS PAYOUT (international payout/disbursement)
+  // ==================================================
+  // Confirmed against docs.juicyway.com/reference/payouts/initiate-a-payout.md
+  // (raw OpenAPI: POST /payouts, 201 on success) and the worked
+  // request/response examples on
+  // docs.juicyway.com/transfers/transfers/initiate-bank-transfer.md
+  // (2026-09-08 session; Task 52/a-1). See handover.md Task 52/a-1 for
+  // the full citation trail -- summarizing the parts that shape this
+  // code:
+  // - Unlike Korapay's processPayout, this endpoint does NOT take raw
+  //   bank_code/account_number -- it takes a `beneficiary` object
+  //   referencing a beneficiary resource created ahead of time via
+  //   Juicyway's separate Beneficiaries API. Creating/resolving that
+  //   beneficiary from raw account details is Task 52/a-1-iv, not yet
+  //   implemented -- so this method requires the caller to already
+  //   have a beneficiary id, and fails loudly rather than guessing at
+  //   an inline-creation shape that hasn't been confirmed yet.
+  // - Both worked examples on that page include a `pin` field
+  //   (transfer PIN) despite the page's own <ParamField> markup not
+  //   clearly marking it required -- treated as required here since
+  //   its presence in every example is the stronger signal.
+  // - Amount is in minor units (the docs say so explicitly: "Transfer
+  //   amount in minor units (e.g., cents, kobo)") -- same subunit
+  //   rule Task 49/a already cited for collection, independently
+  //   confirmed here for payout rather than assumed. NOT run through
+  //   convertAmountForProvider() -- callers pass minor units directly,
+  //   matching this file's own processPayment() convention.
+  // - The response's `status` is documented as "pending" in both
+  //   worked examples; no documented synchronous "failed" outcome the
+  //   way Korapay's payout response has one (see
+  //   korapay.js#processPayout's own comment on that asymmetry) -- so,
+  //   unlike Korapay's implementation, there is no post-hoc
+  //   `data.status === 'failed'` check here. Final outcome presumably
+  //   arrives via webhook; callers must not treat this method's return
+  //   value as "payout completed", same caveat Korapay's docblock
+  //   states for the same reason.
+  async processPayout(data) {
+    const ref = data.reference || generateReference('juicyway-payout');
+
+    const beneficiaryId = data.beneficiary_id || data.beneficiary?.id;
+    if (!beneficiaryId) {
+      // Task 52/a-1-iv: nothing in this codebase creates a Juicyway
+      // beneficiary from raw account details yet. Failing loudly here
+      // rather than silently trying to synthesize one against an
+      // unconfirmed shape.
+      throw providerError(
+        'Juicyway payouts require a pre-created beneficiary_id (see handover.md Task 52/a-1-iv — raw bank_code/account_number is not accepted by this endpoint)'
+      );
+    }
+
+    const pin = data.pin || process.env.JUICYWAY_PAYOUT_PIN;
+    if (!pin) {
+      throw providerError('Juicyway payouts require a transfer pin (pass data.pin or set JUICYWAY_PAYOUT_PIN)');
+    }
+
+    const payload = {
+      amount: data.amount,
+      beneficiary: {
+        id: beneficiaryId,
+        type: data.beneficiary?.type || 'bank_account',
+      },
+      description: data.narration || data.description || 'Payout from Mavins',
+      destination_currency: data.destination_currency || data.currency,
+      pin,
+      reference: ref,
+      source_currency: data.source_currency || data.currency,
+      ...(data.fee_charged_to && { fee_charged_to: data.fee_charged_to }),
+    };
+
+    log(`Juicyway Payout Request: ${formatPayload(payload)}`);
+
+    const result = await handleApiCall(async () => {
+      const response = await fetch(`${this.baseUrl}/payouts`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${this.apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+      });
+
+      const responseData = await response.json();
+
+      if (!response.ok) {
+        throw providerError(responseData.message || responseData.data?.reason || 'Juicyway payout failed');
+      }
+
+      log(`Juicyway Payout accepted — status: '${responseData.data?.status}' (this is Juicyway's acknowledgement the request was received, NOT final confirmation the transfer completed — see this method's own comment)`);
+
+      return responseData;
+    }, 'juicyway');
+
+    log(`Juicyway Payout Response: ${formatPayload(result)}`);
+    return result;
+  }
+
   async verifyTransaction(reference) {
     log(`Juicyway Verification Request for: ${reference}`);
 

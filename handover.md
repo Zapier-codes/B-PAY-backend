@@ -7923,7 +7923,7 @@ match afterward, not the other way around.
 
 ---
 
-## Task 52 — Implement every gap Task 51's capability matrix flagged: build out Juicyway/Korapay/Paystack/Flutterwave fully so the domain-based routing model is real, not aspirational [ ] (a-1-i-zi is X, per the 2026-09-07 six-level retrofit — see Task Numbering & Workflow Convention above)
+## Task 52 — Implement every gap Task 51's capability matrix flagged: build out Juicyway/Korapay/Paystack/Flutterwave fully so the domain-based routing model is real, not aspirational [ ] (a-1-iv is X, per the 2026-09-08 session's resolution of a-1-i/ii/iii — see Task Numbering & Workflow Convention above)
 
 **Scope note, read first:** this task exists because Task 51 recorded
 a *decision* (Juicyway defaults for every international-rails
@@ -7939,16 +7939,17 @@ Convention, not to close the gap itself (no code was written this
 session — decision/scoping record only, same as Task 51).
 
 **Exactly one leaf below carries the `X` marker at any time, per the
-Workflow Convention.** As of the 2026-09-07 six-level retrofit, that
-is **Task 52/a-1-i-zi** (see a-1's own retrofit below) — a research
-leaf, currently unsolved: no primary source for JuicyWay's payout
-endpoint was found this session, so a-1-ii/a-1-iii and a-2/a-3 all
-stay blocked behind it. Whichever session picks this up next works
-ONLY on a-1-i-zi until it's solved, then moves `X` to a-1-i-zo, then
-a-1-ii, then a-1-iii, then a-2 (itself to be split into the same
-i/zi/zo shape when its turn comes), then a-3, then b, then c, then d,
-then e — unless the product owner explicitly reprioritizes, in which
-case update this line to say so and move `X` accordingly.
+Workflow Convention.** This session (2026-09-08) found JuicyWay's real
+payout docs and resolved a-1-i/a-1-ii/a-1-iii — see a-1's own section
+below for the citations and the accompanying code patch. That research
+surfaced a new dependency (JuicyWay payouts need a pre-created
+beneficiary resource, which nothing in this codebase creates yet), so
+`X` moves to the new leaf **a-1-iv**, not to a-2. Whichever session
+picks this up next works ONLY on a-1-iv until it's solved, then moves
+`X` to a-2 (itself to be split into the same i/zi/zo shape when its
+turn comes), then a-3, then b, then c, then d, then e — unless the
+product owner explicitly reprioritizes, in which case update this line
+to say so and move `X` accordingly.
 
 ### a. Juicyway — build the missing international-rails methods [ ]
 
@@ -7976,39 +7977,124 @@ same rule as collection, since payout and collection are documented
 as separate surfaces on other providers (see Korapay's own split
 between accept-payments docs and payout-via-api docs, Task 7).
 
-##### a-1-i. Locate and confirm JuicyWay's payout/disbursement endpoint against a primary source [ ]
+##### a-1-i. Locate and confirm JuicyWay's payout/disbursement endpoint against a primary source [x]
 
-###### a-1-i-zi. Find JuicyWay's own API reference for payout/disbursement [X]
+###### a-1-i-zi. Find JuicyWay's own API reference for payout/disbursement [x]
 
-**Current board `X`, as of this session.** A web search this session
-for JuicyWay's payout/disbursement API turned up only the
-`juicyway_flutter` package (a client-side checkout SDK for
-card-present payment collection, not a payout/disbursement API) and
-unrelated providers (Worldpay, Mastercard, NicePay). **No primary
-source for a JuicyWay payout/disbursement REST endpoint was found
-this session.** Per this file's own no-guessing rule (Task 7/49's bar,
-restated in a-1 above), nothing was implemented against a guessed path
-or payload shape. This leaf stays `X` and unsolved: whichever session
-picks this up next should either (a) find JuicyWay's actual developer/
-API-reference portal (likely gated behind a merchant dashboard login
-rather than public docs, going by how the checkout SDK's own
-`accountId`/`key` fields are structured) or (b) get the endpoint
-confirmed directly by the product owner/JuicyWay's own support channel,
-same escalation path Task 49 used for JuicyWay's stablecoin question.
-**No patch file accompanies this leaf** — there is no code or decision
-to hand off yet, only a negative research result.
+Resolved this session (2026-09-08), reopened after the prior session's
+negative result above (kept verbatim for the record instead of
+deleted, since it correctly documents *why* nothing was guessed at
+the time). This session found the real docs site —
+`docs.juicyway.com/llms.txt` lists a full "Payouts" section separate
+from "Transfers"/"Beneficiaries" — and confirmed **`POST /payouts`**
+(operationId `Payout.Web.Controller.initiate_payout`, 201 on success,
+400/422 on error) via the raw OpenAPI spec at
+`docs.juicyway.com/reference/payouts/initiate-a-payout.md`, plus a
+full worked-example guide at
+`docs.juicyway.com/transfers/transfers/initiate-bank-transfer.md`
+(both a local-NGN and an international-USD example, both posting to
+this same path — see a-1-i-zo for the payload itself).
 
-###### a-1-i-zo. Confirm the payout payload shape once zi's endpoint is found [ ]
+**Cross-reference, not in this leaf's scope but worth flagging where
+found:** the same OpenAPI spec's base `servers: []` (empty) means the
+host still isn't confirmed from this document alone, and the sibling
+"Execute Bulk Transfer" reference page's curl example hits
+`api.spendjuice.com`, not a `juicyway.com` host — a real, citable data
+point for Task 45a's still-open "verify JuicyWay's base URL / whether
+`/v1/charges` is the right collection path" question, which this leaf
+does not attempt to resolve.
 
-Blocked on a-1-i-zi. Not started.
+###### a-1-i-zo. Confirm the payout payload shape once zi's endpoint is found [x]
 
-##### a-1-ii. Implement `processPayout(data)` on the `Juicyway` class per the confirmed shape [ ]
+Resolved this session. `initiate-bank-transfer.md`'s two worked
+examples (request AND response, both local and international) confirm
+the shape directly — no field names guessed:
 
-Blocked on a-1-i. Not started.
+Request: `amount` (integer, minor units — see a-1-iii), `beneficiary`
+(object: `id`, `type`), `description` (string, optional, max 200
+chars), `destination_currency`, `pin` (string — appears in both worked
+examples; not marked `required` in the page's own `<ParamField>` block,
+which is itself internally inconsistent/malformed markup on Juicyway's
+side, but its presence in every example is a stronger signal than an
+ambiguous schema annotation), `reference` (string, must be unique),
+`source_currency`, `fee_charged_to` (optional, one of `sender` /
+`recipient`, default `sender`).
 
-##### a-1-iii. Verify payout-specific amount-unit handling against Task 49/a's subunit citation [ ]
+Response: `data.{beneficiary, beneficiary_type, created_at,
+destination_amount, destination_currency, id, source_amount,
+source_currency, status, updated_at}` — `status` is documented as
+`"pending"` in both worked examples; no documented synchronous
+`"failed"` outcome the way Korapay's payout response has one (see
+`korapay.js#processPayout`'s own comment on that asymmetry).
 
-Blocked on a-1-i/a-1-ii. Not started.
+**Important shape difference from Korapay, discovered here, not
+guessed:** JuicyWay's payout endpoint takes a `beneficiary.id`
+referencing a resource created ahead of time via the separate
+Beneficiaries API (`docs.juicyway.com/transfers/beneficiaries`) —
+there is no raw `bank_code`/`account_number` passthrough field on this
+endpoint the way `Korapay.processPayout`'s `destination.bank_account`
+has. See a-1-iv below, split off because of this finding.
+
+##### a-1-ii. Implement `processPayout(data)` on the `Juicyway` class per the confirmed shape [x]
+
+Resolved this session — see this session's patch. Implemented against
+a-1-i-zo's confirmed shape exactly: takes `data.beneficiary_id` (or
+`data.beneficiary?.id`) rather than raw account fields, and fails
+loudly (not silently) if no beneficiary id is available, pointing at
+a-1-iv rather than trying to synthesize one inline. `pin` is read from
+`data.pin` or a new `JUICYWAY_PAYOUT_PIN` env var (following the same
+pattern `businessId` uses in this file for a credential that doesn't
+fit `getProviderKey()`'s existing public/secret shape) and the call
+fails loudly if neither is set, rather than sending a request Juicyway
+would reject anyway. Mirrors `Korapay.processPayout`'s logging and
+`handleApiCall` wrapping, but does NOT copy Korapay's synchronous
+`status === 'failed'` check, since a-1-i-zo found no documented
+failure status on this endpoint to check for.
+
+##### a-1-iii. Verify payout-specific amount-unit handling against Task 49/a's subunit citation [x]
+
+Resolved this session. `initiate-bank-transfer.md` states directly,
+in its own Request Parameters section: "Transfer amount in minor
+units (e.g., cents, kobo)" — the same subunit rule Task 49/a already
+cited for collection, confirmed independently here for payout rather
+than assumed. `processPayout(data)` does not run `data.amount` through
+`convertAmountForProvider()` (unlike `Korapay.processPayout`, which
+does) — callers are expected to already pass minor units, matching
+`Juicyway.processPayment`'s existing convention in this same file. If
+that convention changes for one method it should change for both, as
+its own future leaf, not silently diverge between them.
+
+##### a-1-iv. Create-or-resolve a JuicyWay beneficiary from raw account details [X]
+
+**New leaf, split off from a-1-i-zo's finding above (not part of the
+original a-1 scope written before this session).** `routes.js`'s
+`/payout` route, and every existing caller of `Korapay.processPayout`,
+pass raw `bank_code`/`account_number` — JuicyWay's endpoint needs a
+pre-created `beneficiary.id` instead (a-1-i-zo). Until this leaf is
+solved, `Juicyway.processPayout()` only works for callers that already
+happen to hold a JuicyWay beneficiary id, which is not yet anything in
+this codebase — so a-1 as a whole is NOT fully wired end-to-end yet
+despite a-1-i/ii/iii all being resolved.
+
+**Current board `X`.** Needs, in order: (1) confirm
+`docs.juicyway.com/transfers/beneficiaries/create-beneficiary.md`'s
+exact request/response shape against its own primary source — not
+fetched yet this session, so nothing about its field names should be
+assumed even though the sibling Beneficiaries list/fetch pages this
+session did see in passing suggest a `bank_account` type consistent
+with a-1-i-zo's response shape; (2) decide, and document the decision
+here, whether `Juicyway.processPayout(data)` should create-a-beneficiary
+inline on every call when no `beneficiary_id` is supplied (extra
+JuicyWay API round-trip per payout, but zero caller changes needed) or
+whether resolving/caching a beneficiary is pushed up to the caller
+(matches Korapay's flatter interface less, but avoids creating a
+throwaway beneficiary resource on every single payout call — worth
+checking whether JuicyWay's beneficiary list is de-duplicated
+server-side or whether repeated calls pile up redundant records,
+since that affects which choice is actually cheaper); (3) implement
+whichever shape (2) settles on.
+
+
 
 #### a-2. `verifyPayout` — international verify-payout [ ]
 

@@ -112,3 +112,61 @@ export async function recordTransaction({ reference, type, provider, currency, a
     log(`recordTransaction failed for reference '${reference}': ${err.message}`, 'warn');
   }
 }
+
+// ==================================================
+// 🔎 TRANSACTION LOOKUP (Task 56/d-4)
+// ==================================================
+// The read half of the `transactions` table (migration 0001) —
+// resolves GET /payout/verify's currency gap (Task 52/e-2b-ii) by
+// looking a payout's `currency` (and `provider`) up by `reference`,
+// instead of that route defaulting to Korapay unconditionally.
+//
+// Same "never throws, best-effort" posture as recordTransaction()
+// (d-3-a), for the same reason stated in Task 56/a's accepted
+// trade-off: a lookup miss (no matching row — the write failed at
+// `/payout` time, Supabase is unreachable, the env vars aren't set
+// on this environment, or the payout simply predates this table)
+// falls straight through to the route's own existing default, it
+// does not become a 500. That fallback decision belongs to the
+// caller (routes.js), not here — this helper only ever returns the
+// row's data or `null`, never partial/guessed data and never a
+// thrown error.
+//
+// Deliberately thin, mirroring recordTransaction()'s own scope: a
+// single lookup by the unique `reference` index, no caching, no
+// update/upsert logic (that's still out of scope, same as d-3-a's
+// own note).
+export async function getTransactionByReference(reference) {
+  let client;
+  try {
+    client = getSupabaseClient();
+  } catch (err) {
+    log(`getTransactionByReference skipped — Supabase not available: ${err.message}`, 'warn');
+    return null;
+  }
+
+  try {
+    const { data, error } = await client
+      .from('transactions')
+      .select('currency, provider, type, status')
+      .eq('reference', reference)
+      .maybeSingle();
+
+    if (error) {
+      // A Postgres/PostgREST-level failure — surfaced the same as a
+      // thrown error below, still resolved to `null` rather than
+      // propagated, per this function's own "never throws" contract.
+      log(`getTransactionByReference lookup failed for reference '${reference}': ${error.message}`, 'warn');
+      return null;
+    }
+
+    // `maybeSingle()` resolves `data: null` (no error) on a genuine
+    // miss — the normal, expected "payout predates this table, or
+    // its own write failed" case from Task 56/a's accepted
+    // trade-off, not a warning-worthy condition.
+    return data || null;
+  } catch (err) {
+    log(`getTransactionByReference failed for reference '${reference}': ${err.message}`, 'warn');
+    return null;
+  }
+}

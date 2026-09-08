@@ -3,7 +3,7 @@ import { Paystack } from './providers/paystack.js';
 import { Juicyway } from './providers/juicyway.js';
 import { Korapay } from './providers/korapay.js';
 import { log, formatPayload, generateReference, getSupportedCurrencies, isValidCurrencyCode, isValidEmail, providerRequiresEmail, requireInternalApiKey, classifyDomain } from './utils/helpers.js';
-import { recordTransaction } from './utils/supabase.js';
+import { recordTransaction, getTransactionByReference } from './utils/supabase.js';
 import { handleGatewayEvent } from './webhookGateway.js';
 
 const router = express.Router();
@@ -162,6 +162,21 @@ router.post('/payout', requireInternalApiKey, async (req, res) => {
 // "stub until fully integrated" rule) with a clear 501, rather than
 // letting `provider.verifyPayout is not a function` reach the client
 // as an unhandled crash.
+//
+// Task 56/d-4: this route has no `currency` of its own to classify —
+// it only ever received `reference` (+ optional explicit `provider`).
+// Per Task 56/a's product-owner decision, the query-param-fallback
+// option is explicitly dropped; instead, when no explicit `provider`
+// is given, this looks the original payout's `currency` up from the
+// `transactions` table (written by `POST /payout`, Task 56/d-3-c) by
+// `reference`, and routes off THAT via the same
+// classifyDomain()/DOMAIN_DEFAULT_PROVIDER model `POST /pay` and
+// `GET /banks` already use. A lookup miss — no matching row, the
+// original write failed, Supabase unreachable, or the payout
+// predates this table — falls straight through to today's existing
+// `ROUTING_RULES.payout` (Korapay) default, per (a)'s explicitly
+// accepted trade-off. `getTransactionByReference()` (d-4's own read
+// helper) never throws, so this never turns a lookup miss into a 500.
 router.get('/payout/verify', requireInternalApiKey, async (req, res) => {
   try {
     const { reference, provider: providerParam } = req.query;
@@ -172,7 +187,20 @@ router.get('/payout/verify', requireInternalApiKey, async (req, res) => {
       throw err;
     }
 
-    const providerName = providerParam || ROUTING_RULES.payout;
+    let providerName = providerParam;
+    if (!providerName) {
+      const transaction = await getTransactionByReference(reference);
+      if (transaction && transaction.currency) {
+        const domain = classifyDomain(transaction.currency);
+        providerName = DOMAIN_DEFAULT_PROVIDER[domain];
+      } else {
+        // Miss — see this route's own comment above and Task 56/a's
+        // accepted trade-off: fall through to today's existing
+        // default rather than failing the request.
+        providerName = ROUTING_RULES.payout;
+      }
+    }
+
     const provider = getProvider(providerName);
 
     if (typeof provider.verifyPayout !== 'function') {

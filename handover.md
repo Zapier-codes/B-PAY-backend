@@ -3,7 +3,37 @@
 > **▶ START HERE — read this box only, then go straight to work. Skip
 > everything else below unless you get stuck.**
 >
-> **Newest note (2026-09-08, latest of all) — Task 56/d-3-c built:
+> **Newest note (2026-09-08, latest of all) — Task 56/d-4 built:
+> `GET /payout/verify` now looks the original payout's `currency` up
+> from the `transactions` table by `reference` (via the new
+> `getTransactionByReference()` in `utils/supabase.js`) and routes via
+> `classifyDomain()`/`DOMAIN_DEFAULT_PROVIDER` when no explicit
+> `?provider=` is given; a lookup miss falls through to today's
+> existing Korapay default, per Task 56/a's accepted trade-off — no
+> query-param fallback. Per the No-skip-ahead rule, this was the next
+> unchecked buildable part after d-3-c. **This resolves Task
+> 52/e-2b-ii** (marked `[x]` there; Task 52's own top-of-task status
+> line updated to drop the "blocked via Task 56" cross-reference).
+> **Task 56/d-5 (RLS policy design) is next** within Task 56/d; e-2d/
+> e-2e remain independently blocked/not-actionable as Task 52's own
+> entries already describe.
+>
+> **Flagged plainly:** this lookup is `await`-ed on the request's
+> critical path (unlike d-3's fire-and-forget writes) — an
+> unreachable-Supabase functional check took ~7s to resolve to a
+> fallback, rather than the ~10ms d-3-b/d-3-c saw. See d-4's own
+> write-up below for the full note; no timeout/circuit-breaker was
+> added this session.
+>
+> **Per the Patch Handoff Convention, a patch file covering this
+> session's changes was generated and handed to the product owner
+> directly — not applied, not merged, and no live route has actually
+> executed this code path yet.**
+>
+> *(Superseded note, kept for its own record below rather than
+> deleted.)*
+>
+> **Previous newest note (2026-09-08, latest of all) — Task 56/d-3-c built:
 > `POST /payout` now calls `recordTransaction()` after
 > `processPayout()` resolves, same fire-and-forget/`'pending'` pattern
 > as d-3-b's own `/pay` wiring. Per the No-skip-ahead rule, this was
@@ -8871,7 +8901,7 @@ match afterward, not the other way around.
 
 ---
 
-## Task 52 — Implement every gap Task 51's capability matrix flagged: build out Juicyway/Korapay/Paystack/Flutterwave fully so the domain-based routing model is real, not aspirational [ ] (e-1, e-2a, e-2b-i, e-2c all done; e-2b-ii → **unblocked via Task 56** (below), not yet actionable until Task 56's read-path sub-task lands; e-2d, e-2e remain independently blocked/not-actionable; see this repo's own No-skip-ahead rule before substituting a different top-level task)
+## Task 52 — Implement every gap Task 51's capability matrix flagged: build out Juicyway/Korapay/Paystack/Flutterwave fully so the domain-based routing model is real, not aspirational [ ] (e-1, e-2a, e-2b-i, e-2b-ii, e-2c all done; e-2d, e-2e remain independently blocked/not-actionable; see this repo's own No-skip-ahead rule before substituting a different top-level task)
 
 **Scope note, read first:** this task exists because Task 51 recorded
 a *decision* (Juicyway defaults for every international-rails
@@ -9485,7 +9515,7 @@ untouched (`/banks`, e-2c, still reads it). Verified with `node
 passed (African-rails currencies with no explicit provider → korapay,
 international currencies → juicyway, explicit provider always wins).
 
-###### e-2b-ii. `GET /payout/verify` [ ] → **see Task 56 (below): unblocked, resolution path decided, not yet built**
+###### e-2b-ii. `GET /payout/verify` [x] → **resolved via Task 56/d-4 (below) — built 2026-09-08**
 
 **Superseded 2026-09-08 (later same day): Option (a) below (the
 `currency` query param) was initially confirmed by the product owner,
@@ -10221,7 +10251,7 @@ real Korapay credentials) — same narrower scope as d-3-b's own note.
 part's changes was generated and handed to the product owner directly
 — not applied or merged by this session.**
 
-#### d-4. Read path — `GET /payout/verify` looks up `currency` (and `provider`) by `reference` [ ]
+#### d-4. Read path — `GET /payout/verify` looks up `currency` (and `provider`) by `reference` [x]
 
 Looks up the `transactions` row by `reference` before calling
 `classifyDomain(currency)`; on a miss, falls through to today's
@@ -10232,6 +10262,50 @@ update Task 52's own top-of-task status line to drop the "blocked via
 Task 56" cross-reference, and re-evaluate e-2d/e-2e's status at that
 point (both are untouched by this task and remain exactly as blocked/
 not-actionable as Task 52's own entries already describe).
+
+**Built (2026-09-08):** added `getTransactionByReference(reference)`
+to `utils/supabase.js` — the read counterpart to `recordTransaction()`
+(d-3-a), same "never throws" contract: a missing config, an
+unreachable project, a Postgres/PostgREST-level error, and a genuine
+no-row miss (`maybeSingle()` resolving `data: null` with no error) all
+resolve to `null`, never a thrown error. The fallback decision itself
+stays in `routes.js`, not this helper, matching this file's existing
+separation between provider modules (facts) and route handlers
+(decisions).
+
+In `GET /payout/verify`: when no explicit `?provider=` is given, the
+handler now calls `getTransactionByReference(reference)` first. On a
+hit with a `currency`, it routes via the same
+`classifyDomain()` → `DOMAIN_DEFAULT_PROVIDER` model `POST /pay` and
+`GET /banks` already use. On a miss (or no `currency` on the row),
+it falls straight through to today's existing `ROUTING_RULES.payout`
+(Korapay) default — exactly (a)'s accepted trade-off, no new query
+param. An explicit `?provider=` still wins outright and skips the
+lookup entirely, unchanged from before.
+
+**Verified:** `node --check routes.js` and `node --check
+utils/supabase.js` both pass. Functional check (no live project):
+(1) no env vars set — `getTransactionByReference()` resolves `null`
+in ~3ms, doesn't throw; (2) dummy `SUPABASE_URL` pointed at a
+nonexistent project — resolves `null`, doesn't throw. **Flagging
+plainly, not papering over it:** unlike d-3-a/b/c's fire-and-forget
+writes, this lookup is `await`-ed on the request's critical path (the
+route needs the result to pick a provider before it can call
+`verifyPayout()`) — the unreachable-project case above took **~7s**
+to resolve (DNS/connect timeout), not the ~10ms d-3-b/d-3-c saw for
+their non-blocking writes. On a real outage this adds real latency to
+every `GET /payout/verify` call made without an explicit `?provider=`,
+rather than degrading silently and instantly. No timeout/circuit-
+breaker was added here — out of scope for this part, but worth a
+future task if Supabase reliability for this route becomes a problem
+in practice. **Not exercised end-to-end against a real `POST
+/payout` → `GET /payout/verify` pair** (needs a live Supabase project
+with real rows) — same narrower scope as d-3-b/d-3-c's own notes.
+
+**Per the Patch Handoff Convention, a patch file covering this part's
+changes (routes.js, utils/supabase.js, this handover.md update) was
+generated and handed to the product owner directly — not applied or
+merged by this session.**
 
 #### d-5. RLS policy design for the `transactions` table [ ]
 

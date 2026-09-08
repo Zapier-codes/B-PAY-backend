@@ -3,8 +3,54 @@
 > **▶ START HERE — read this box only, then go straight to work. Skip
 > everything else below unless you get stuck.**
 >
-> **Newest note (2026-09-08, latest of all, supersedes the "actual next
-> task is blocked" note below) — Task 52/e-1's blocking product
+> **Newest note (2026-09-08, latest of all) — Landing check + Task
+> 52/e-2 part a built.** Checked `origin/main` before starting: the
+> prior session's `feat(routing): Task 52/e-1` commit had **not yet
+> landed** on `origin/main` (still sitting as a locally-committed,
+> patch-handed-off change, per the Patch Handoff Convention — the
+> product owner hadn't run `git am` + `git push` yet as of this
+> session's start). This does not block picking up the next task —
+> this session's own local clone already has e-1's commit in its
+> history regardless of what's landed upstream, so work continues on
+> top of it locally, same as any other session-to-session patch queue.
+> **Whoever applies patches should apply both this session's and the
+> prior session's in order** (e-1's patch, then this one) if e-1's
+> still hasn't landed by the time this is read.
+>
+> **Built this session: Task 52/e-2, part a only** (of a 5-way a/b/c/d/e
+> split — see Task 52/e-2's own entry for all five). `POST /pay`'s
+> provider-resolution now tries an explicit `provider` field first
+> (unchanged — this already covers "explicit fallback request"), then
+> falls back to `classifyDomain(currency)` (e-1) → a new
+> `DOMAIN_DEFAULT_PROVIDER` table matching Task 51's defaults exactly
+> (korapay for african_rails, juicyway for international). The old
+> `action` → `ROUTING_RULES[action]` lookup is no longer used for
+> `/pay` — **intentional behavior change, not an oversight:** a client
+> sending `action: 'collect_payment'` with no explicit `provider`
+> previously got Paystack, now gets routed by currency instead.
+> `ROUTING_RULES` itself is untouched; `/payout`, `/payout/verify`, and
+> `/banks` still read it directly — those are e-2b/e-2c, not done this
+> session. Verified with `node --check` plus a throwaway sanity script
+> (deleted after use): 8/8 cases passed (African-rails currencies →
+> korapay, international currencies → juicyway, explicit provider wins
+> regardless of currency).
+>
+> **Not done this session (each is its own e-2 sub-leaf below):**
+> e-2b (`/payout` + `/payout/verify`), e-2c (`/banks`), e-2d (the
+> promote-to-default mechanism — still a genuinely open design
+> question, not guessed), e-2e (Task 55/b's capability-mix flows).
+> **e-2b is the likely next pick** — same shape as e-2a, no open
+> product question blocking it.
+>
+> **Per the Patch Handoff Convention, a patch file covering this
+> session's `routes.js` change plus this `handover.md` update was
+> generated and handed to the product owner directly — not applied or
+> pushed by this session.**
+>
+> *(Superseded note, kept for its own record below rather than
+> deleted.)*
+>
+> **Previous newest note (2026-09-08) — Task 52/e-1's blocking product
 > decision is now RESOLVED, and e-1 itself is done.** The product
 > owner chose **option (a)**, currency-based inference — explicitly
 > **not** (b) a separate country field or (c) a client-supplied
@@ -8752,7 +8798,7 @@ below, now unblocked but not started this session. Patch handed to the
 product owner per the Patch Handoff Convention, not applied/pushed by
 this session.
 
-#### e-2. Rewrite `ROUTING_RULES`/`getProvider()` to route by domain, with explicit fallback/promote-to-default support [ ]
+#### e-2. Rewrite `ROUTING_RULES`/`getProvider()` to route by domain, with explicit fallback/promote-to-default support [ ] (split into a/b/c/d/e this session, per the mandatory task-splitting rule — a done, b/c/d/e not started)
 
 Once e-1 exists: replace the current flat `action -> provider` map
 with domain-aware routing that picks the Task 51 default, and exposes
@@ -8766,6 +8812,59 @@ dashboard) is an open design question for this leaf, not decided here.
 for capability-mix flows (KYC via one provider, payout via another,
 within the same logical operation) rather than assuming a single
 provider serves an entire flow end-to-end — see Task 55/b below.
+
+##### e-2a. `POST /pay` — domain-aware provider resolution (collection capability) [x]
+
+**Done this session (2026-09-08).** Added a `DOMAIN_DEFAULT_PROVIDER`
+table (`{ african_rails: 'korapay', international: 'juicyway' }`) in
+`routes.js`, matching Task 51/b-1 and b-2's defaults exactly, and
+switched `POST /pay`'s provider-resolution precedence to: (1) explicit
+`provider` field, unchanged — this already satisfies "expose a way to
+explicitly request a fallback" for this leaf, no new mechanism needed;
+(2) `classifyDomain(resolvedCurrency)` (Task 52/e-1) → the matching
+`DOMAIN_DEFAULT_PROVIDER` entry. The old `action` field / flat
+`ROUTING_RULES[action]` lookup is no longer consulted for `/pay` —
+Task 51 explicitly states the domain model supersedes it. **Flagging
+plainly:** this is an intentional behavior change, not an oversight —
+a client sending `action: 'collect_payment'` with no explicit
+`provider` previously got Paystack, now gets routed by currency
+instead. `action` is still accepted in the request body (harmless,
+unread) for backward compatibility with any client still sending it.
+`ROUTING_RULES` itself is untouched — `/payout`, `/payout/verify`, and
+`/banks` (parts b/c below) still read it directly.
+
+Verified with `node --check` on `routes.js`, plus a throwaway sanity
+script (deleted after use) exercising the resolution precedence
+directly: all African-rails currencies with no explicit provider
+resolve to korapay, all tested international currencies (USD/CAD/USDT)
+resolve to juicyway, and an explicit `provider` always wins regardless
+of currency — 8/8 cases passed.
+
+##### e-2b. `POST /payout` + `GET /payout/verify` — domain-aware provider resolution (payout capability) [ ]
+
+Not started. Same shape as e-2a, but for the payout domain — today
+both routes hardcode `ROUTING_RULES.payout` (`'korapay'`) as the
+default regardless of currency, which is wrong under Task 51's model
+for an international payout (should default to Juicyway). Needs the
+same explicit-provider-wins-then-domain-default precedence as e-2a.
+
+##### e-2c. `GET /banks` — domain-aware provider resolution (bank-list-lookup capability) [ ]
+
+Not started. `/banks` hardcodes `getProvider('korapay')` unconditionally
+today, with no currency-based routing and no explicit-provider
+override at all. Needs both added, same precedence pattern as e-2a/b.
+
+##### e-2d. Promote-to-default mechanism design + implementation [ ]
+
+Not started — this is the leaf's own open design question (env var vs.
+config file vs. admin-dashboard toggle), genuinely undecided, not
+guessed here. Should be confirmed with the product owner before
+building, same as e-1 was.
+
+##### e-2e. Capability-mix flow support (Task 55/b cross-reference) [ ]
+
+Not started — deferred, see Task 55/b below for the full description
+of what this needs to account for.
 
 ---
 

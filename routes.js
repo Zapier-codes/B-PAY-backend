@@ -2,7 +2,7 @@ import express from 'express';
 import { Paystack } from './providers/paystack.js';
 import { Juicyway } from './providers/juicyway.js';
 import { Korapay } from './providers/korapay.js';
-import { log, formatPayload, generateReference, getSupportedCurrencies, isValidCurrencyCode, isValidEmail, providerRequiresEmail, requireInternalApiKey } from './utils/helpers.js';
+import { log, formatPayload, generateReference, getSupportedCurrencies, isValidCurrencyCode, isValidEmail, providerRequiresEmail, requireInternalApiKey, classifyDomain } from './utils/helpers.js';
 import { handleGatewayEvent } from './webhookGateway.js';
 
 const router = express.Router();
@@ -156,6 +156,19 @@ const ROUTING_RULES = {
   collect_payment: 'paystack',
   bank_transfer: 'korapay',
   payout: 'korapay',
+  international: 'juicyway',
+};
+
+// Task 52/e-2, part a (2026-09-08) — Task 51's collection-domain
+// defaults, keyed by classifyDomain()'s two possible return values.
+// Deliberately its own small table, not folded into ROUTING_RULES
+// above: ROUTING_RULES is the OLD action-string model Task 51 is
+// superseding; ROUTING_RULES itself is left untouched here since
+// /payout and /banks (Task 52/e-2 parts b/c, not done this session)
+// still read it directly. Only POST /pay's own provider-resolution
+// logic below has been switched over to this table.
+const DOMAIN_DEFAULT_PROVIDER = {
+  african_rails: 'korapay',
   international: 'juicyway',
 };
 
@@ -474,6 +487,10 @@ const webhookHandlers = {
 // commit only covers this backend's own side of the change.
 router.post('/pay', requireInternalApiKey, async (req, res) => {
   try {
+    // `action` is still accepted in the request body for backward
+    // compatibility (old clients may still send it) but is
+    // deliberately not read here anymore — see the routing-precedence
+    // comment below for why (Task 52/e-2 part a).
     const { action, provider, amount, customer, currency, reference, payment_currency, settlement_currency, channels, default_channel } = req.body;
 
     log(`Payment Request Received: ${formatPayload(req.body)}`);
@@ -489,12 +506,32 @@ router.post('/pay', requireInternalApiKey, async (req, res) => {
     assertValidCurrencyFormat(resolvedCurrency);
 
     // Smart Routing: Determine provider from action OR explicit provider field
+    //
+    // Task 52/e-2, part a (2026-09-08): replaced the old
+    // action -> ROUTING_RULES lookup with Task 51's domain-based model
+    // for POST /pay specifically (collection capability only — /payout,
+    // /payout/verify, /banks are separate leaves, still on the old
+    // ROUTING_RULES path, not touched here). Precedence, in order:
+    //   1. Explicit `provider` field — client-requested override/
+    //      fallback, unchanged from before this change. This already
+    //      satisfies e-2's "expose a way to explicitly request a
+    //      fallback" requirement for this leaf; no new mechanism
+    //      needed for that part.
+    //   2. Task 51's per-domain default, via classifyDomain(currency) +
+    //      DOMAIN_DEFAULT_PROVIDER above — juicyway for international,
+    //      korapay for african_rails.
+    // The old `action` field / ROUTING_RULES[action] lookup is
+    // deliberately NOT consulted here anymore — Task 51 explicitly
+    // states this action-string model is what the domain model
+    // supersedes for POST /pay. A client still sending `action` (e.g.
+    // 'collect_payment') without an explicit `provider` now gets
+    // routed by domain instead of by that old action string; flagging
+    // this plainly since it's an intentional behavior change, not an
+    // oversight, in case any caller was relying on the old mapping.
     let providerName = provider;
-    if (!providerName && action) {
-      providerName = ROUTING_RULES[action] || 'paystack';
-    }
     if (!providerName) {
-      providerName = 'paystack'; // Default fallback
+      const domain = classifyDomain(resolvedCurrency);
+      providerName = DOMAIN_DEFAULT_PROVIDER[domain];
     }
 
     log(`Routing to provider: '${providerName}'`);

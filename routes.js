@@ -4,6 +4,7 @@ import { Juicyway } from './providers/juicyway.js';
 import { Korapay } from './providers/korapay.js';
 import { log, formatPayload, generateReference, getSupportedCurrencies, isValidCurrencyCode, isValidEmail, providerRequiresEmail, requireInternalApiKey, classifyDomain } from './utils/helpers.js';
 import { recordTransaction, getTransactionByReference } from './utils/supabase.js';
+import { getMissingFields } from './utils/fieldRequirements.js';
 import { handleGatewayEvent } from './webhookGateway.js';
 
 const router = express.Router();
@@ -681,7 +682,36 @@ router.post('/pay', requireInternalApiKey, async (req, res) => {
     assertValidReferenceFormat(providerName, reference);
 
     const providerInstance = getProvider(providerName);
-    
+
+    // Task 57/b (3/4): field-requirements registry wired in. Placed
+    // after getProvider() above (not before) so a provider name
+    // getProvider() itself doesn't recognize still fails with that
+    // pre-existing "not supported" error first, unchanged — this
+    // check only ever runs for a provider that already resolved.
+    // Checked against req.body directly (not paymentData below),
+    // since the registry's own `path` values (utils/fieldRequirements.js)
+    // are documented as dot-paths into the request body, including
+    // `provider_data.<provider>.*` fields exactly as the caller sent
+    // them. Closes the gap Task 57/a's own writeup flagged as still
+    // open: previously nothing stopped an incomplete request (e.g.
+    // JuicyWay missing its required order/customer fields) from
+    // reaching the provider's API and failing there with a less
+    // specific error — this returns a clean 400 naming every missing
+    // field instead, per Task 57's own "name exactly which field is
+    // missing" design. Now enforces something real for Paystack and
+    // Korapay too (not just JuicyWay), since (2/4) gave them registry
+    // entries first — a provider with no entry at all still gets an
+    // empty array back (see getMissingFields's own doc comment) and
+    // is completely unaffected, same as before this part.
+    const missingFields = getMissingFields(providerName, req.body);
+    if (missingFields.length > 0) {
+      const err = new Error(
+        `Missing required field(s) for provider '${providerName}': ${missingFields.map((f) => f.label).join(', ')}`
+      );
+      err.statusCode = 400;
+      throw err;
+    }
+
     const ref = reference || generateReference(providerName);
     
     const paymentData = {

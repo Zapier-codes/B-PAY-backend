@@ -10,40 +10,39 @@
 // convention). Adding a field or a new provider means adding an
 // entry here, not editing conditionals spread across routes.js.
 //
-// Split 1 of 4 (done, prior session): the registry's shape + accessor
-// helpers, and JuicyWay's own entry only — the provider Task 57/a
-// already migrated onto the `provider_data` envelope, so it's the
-// one with a real gap to close (see routes.js's own `/pay` handler:
-// nothing today stops a caller from omitting JuicyWay's required
-// nested fields and reaching JuicyWay's API with an incomplete
-// payload).
+// Split 1 of 4 (done): the registry's shape + accessor helpers, and
+// JuicyWay's own entry only — the provider Task 57/a already migrated
+// onto the `provider_data` envelope, so it's the one with a real gap
+// to close (see routes.js's own `/pay` handler: nothing today stops a
+// caller from omitting JuicyWay's required nested fields and reaching
+// JuicyWay's API with an incomplete payload).
 //
-// THIS PART (57/b, split 2 of 4): Paystack, Korapay, and Flutterwave
-// registry entries, added below so `/pay` validation doesn't end up
-// half-migrated once (3/4) wires this registry in — JuicyWay alone on
-// the registry while everyone else stayed on inline checks would just
-// recreate the unmaintainable-branching problem this registry exists
-// to fix. Each entry is sourced from that provider's own
-// `processPayment()` (what it actually reads off the request body
-// today), cross-referenced against the doc citations already in that
-// file, not guessed — same sourcing bar Split 1 held JuicyWay's entry
-// to. Universal fields already enforced unconditionally for every
-// provider (`amount`, `currency` shape) are deliberately NOT
-// repeated here, same convention Split 1 established by omitting them
-// from JuicyWay's entry too — this registry only records
-// provider-*specific* requirements. Flutterwave's entry is added even
-// though `providers/flutterwave.js` isn't wired into routes.js's
-// `getProvider()` yet (see that file's own top comment) — Task 57/b's
-// own scope says existing providers get entries too, and there's no
-// reason for this registry to lag behind whenever that separate
-// wiring (Task 52/e) lands.
+// Split 2 of 4 (done): Paystack, Korapay, and Flutterwave registry
+// entries, added so `/pay` validation doesn't end up half-migrated
+// once (3/4) wired this registry in — JuicyWay alone on the registry
+// while everyone else stayed on inline checks would just recreate the
+// unmaintainable-branching problem this registry exists to fix. Each
+// entry is sourced from that provider's own `processPayment()` (what
+// it actually reads off the request body), cross-referenced against
+// the doc citations already in that file, not guessed. Flutterwave's
+// entry was added even though `providers/flutterwave.js` isn't wired
+// into routes.js's `getProvider()` yet.
 //
-// Deliberately NOT in this part, left for the remaining 2/4 of this
+// THIS PART (57/b, split 3 of 4): wired into routes.js's `/pay`
+// handler. `getMissingFields(providerName, req.body)` is now called
+// right after `getProvider(providerName)` resolves (see that call
+// site's own comment in routes.js for exactly why there and not
+// earlier/later) — a request missing a required field now gets a
+// clean 400 naming it, instead of reaching the provider's API and
+// failing there with a less specific error. This is what actually
+// makes every entry above (JuicyWay's from split 1, Paystack/Korapay/
+// Flutterwave's from split 2) enforce anything; before this part the
+// whole registry was inert.
+//
+// Deliberately NOT in this part, left for the remaining 1/4 of this
 // split:
-//   - Wiring this registry into routes.js's `/pay` handler (nothing
-//     calls getMissingFields() yet — this file is still inert; that's
-//     3/4)
-//   - node --check / throwaway-script verification and the
+//   - node --check / throwaway-script verification of the wired-in
+//     check, end-to-end reasoning about the change, and the
 //     handover.md write-up marking the whole 57/b split done (4/4)
 //
 // Each field descriptor:

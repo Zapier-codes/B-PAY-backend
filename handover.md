@@ -7923,7 +7923,7 @@ match afterward, not the other way around.
 
 ---
 
-## Task 52 — Implement every gap Task 51's capability matrix flagged: build out Juicyway/Korapay/Paystack/Flutterwave fully so the domain-based routing model is real, not aspirational [ ] (a-3 is X, per the 2026-09-08 session's resolution of a-2 — see Task Numbering & Workflow Convention above)
+## Task 52 — Implement every gap Task 51's capability matrix flagged: build out Juicyway/Korapay/Paystack/Flutterwave fully so the domain-based routing model is real, not aspirational [ ] (b is X, per the 2026-09-08 session's resolution of a-3 and, with it, all of (a) — see Task Numbering & Workflow Convention above)
 
 **Scope note, read first:** this task exists because Task 51 recorded
 a *decision* (Juicyway defaults for every international-rails
@@ -7939,17 +7939,16 @@ Convention, not to close the gap itself (no code was written this
 session — decision/scoping record only, same as Task 51).
 
 **Exactly one leaf below carries the `X` marker at any time, per the
-Workflow Convention.** This session (2026-09-08) closed a-1 (i-iv) and
-a-2 — see each section below for citations and the accompanying code
-patches, including a-2's finding that JuicyWay payouts must be
-verified by JuicyWay's own returned `id`, not the caller's `reference`.
-`X` now moves to **a-3**, to be split into the same i/zi/zo shape as
-a-1/a-2 were once someone picks it up. Whichever session picks this up
-next works ONLY on a-3 until it's solved, then moves `X` to b, then c,
-then d, then e — unless the product owner explicitly reprioritizes, in
+Workflow Convention.** This session (2026-09-08) closed a-1 (i-iv),
+a-2, and now a-3 — all of section (a), JuicyWay, is fully resolved.
+See each subsection below for citations and the accompanying code
+patches. `X` now moves to **b** (Korapay), to be split into the same
+i/zi/zo shape once someone picks it up. Whichever session picks this
+up next works ONLY on b until it's solved, then moves `X` to c, then
+d, then e — unless the product owner explicitly reprioritizes, in
 which case update this line to say so and move `X` accordingly.
 
-### a. Juicyway — build the missing international-rails methods [ ]
+### a. Juicyway — build the missing international-rails methods [x]
 
 Today `providers/juicyway.js` only implements `processPayment`,
 `verifyTransaction`, and `verifyWebhookSignature`. Task 51 made
@@ -8164,12 +8163,41 @@ they want to verify it later** — this codebase does not do that
 anywhere yet (a `routes.js`/persistence concern for (e), not this
 leaf).
 
-#### a-3. `getBanks` — international bank/institution list lookup [ ]
+#### a-3. `getBanks` — international bank/institution list lookup [x]
 
-Needs Juicyway's bank/institution-list endpoint (if one exists — flag
-to the product owner if JuicyWay's docs don't expose one at all,
-rather than guessing a shape) confirmed and implemented matching
-`Korapay.getBanks`'s shape.
+Resolved this session (2026-09-08), fully confirmed against a primary
+source (unlike a-1-iv/a-2, no unconfirmed-path caveat needed here):
+`docs.juicyway.com/transfers/transfers/list-ngn-banks` documents
+**`GET /payment-methods/banks`** directly, including a full worked
+response example: `{ "data": [ { "code": "000014", "name": "ACCESS
+BANK" }, ... ] }`. Base host `api.spendjuice.com` — the same host
+Task 45a already flagged from the bulk-transfers/resolve-account-number
+pages, now independently confirmed a third time.
+
+**Real shape difference from Korapay, not a straight port:**
+`Korapay.getBanks(currency = 'NGN')` takes a `currency` query param
+and is written to support multiple currencies/countries. JuicyWay's
+endpoint is explicitly, only "List **Nigerian** Banks" — nothing in
+its docs (or anywhere else surfaced this session) suggests an
+equivalent multi-currency/multi-country bank-list endpoint exists for
+JuicyWay at all. `Juicyway.getBanks()` here takes no currency
+argument and does not pretend to support one — if a non-NGN caller
+needs this, that's a real product gap to flag to the product owner
+(JuicyWay may simply not expose a bank list outside Nigeria), not
+something to paper over with an unused parameter.
+
+**Cross-reference, not this leaf's job to fix:** the page's own code
+samples show JuicyWay's `Authorization` header written three
+different ways across three different doc pages now seen this session
+— `Bearer YOUR_API_KEY` (bulk-transfers), plain `YOUR_API_KEY` with no
+`Bearer` (resolve-ngn-account-number), and `' YOUR_API_KEY'` with a
+stray leading space in the string literal (this page) — all on
+`docs.juicyway.com` itself, not a transcription issue on this file's
+side. This implementation keeps the existing `Bearer` convention
+already used elsewhere in `juicyway.js` for consistency within this
+codebase; if that turns out to be wrong for a specific endpoint,
+that's a sandbox-testing finding for whoever runs (e)'s wiring, not
+something guessable from three contradictory doc samples.
 
 **Cross-reference, not a duplicate:** Juicyway's amount-unit rule for
 *collection* (base vs. subunits) is already tracked as its own open

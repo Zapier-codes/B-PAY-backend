@@ -156,6 +156,45 @@ export class Juicyway {
     return result;
   }
 
+  // ==================================================
+  // 🏦 GET BANKS (Nigerian bank/institution list)
+  // ==================================================
+  // Task 52/a-3 (2026-09-08). Fully confirmed against a primary
+  // source: docs.juicyway.com/transfers/transfers/list-ngn-banks
+  // documents GET /payment-methods/banks directly, with a full worked
+  // response example matching the shape returned below.
+  //
+  // Unlike Korapay.getBanks(currency), this takes NO currency
+  // argument -- JuicyWay's docs only expose a Nigerian bank list
+  // ("List Nigerian Banks"), and nothing found this session suggests
+  // an equivalent endpoint exists for any other country/currency. If
+  // a non-NGN bank list is ever needed, that's a product gap to raise
+  // with the product owner, not something to paper over here.
+  async getBanks() {
+    log('Juicyway Banks Request (Nigeria only — see this method\'s own docblock)');
+
+    const result = await handleApiCall(async () => {
+      const response = await fetch(`${this.baseUrl}/payment-methods/banks`, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${this.apiKey}`,
+          'Content-Type': 'application/json',
+        },
+      });
+
+      const responseData = await response.json();
+
+      if (!response.ok) {
+        throw providerError(responseData.message || 'Juicyway bank list failed');
+      }
+
+      return responseData;
+    }, 'juicyway');
+
+    log(`Juicyway Banks Response: ${formatPayload(result)}`);
+    return result;
+  }
+
   async processPayment(data) {
     const ref = data.reference || generateReference('juicyway');
 

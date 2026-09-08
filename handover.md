@@ -3,7 +3,87 @@
 > **▶ START HERE — read this box only, then go straight to work. Skip
 > everything else below unless you get stuck.**
 >
-> **Newest note (2026-09-08, latest of all) — Task 56/d-3-b built:
+> **Newest note (2026-09-08, latest of all) — Task 56/d-3-c built:
+> `POST /payout` now calls `recordTransaction()` after
+> `processPayout()` resolves, same fire-and-forget/`'pending'` pattern
+> as d-3-b's own `/pay` wiring. Per the No-skip-ahead rule, this was
+> the next unchecked buildable part after d-3-b. This also completes
+> Task 56/d-3 as a whole (a/b/c all done) — **Task 56/d-4 is next**,
+> now genuinely actionable rather than only nominally unblocked, since
+> `/payout` finally writes rows for it to look up.**
+>
+> **Before starting:** confirmed `git fetch origin` showed
+> `origin/main` at `a00ad36`, matching this sandbox's own local d-3-b
+> commit byte-for-byte (`git diff` empty) — d-3-a and d-3-b are both
+> confirmed live upstream. Branched fresh off `origin/main` for this
+> part, back to this file's own usual "reset before starting" pattern
+> (no stacking-on-an-unmerged-local-commit exception needed this time,
+> unlike d-3-b's own note).
+>
+> **A real bug found and fixed while building this, not a pre-existing
+> flag:** `POST /payout` never computed its own `reference` up front
+> the way `POST /pay` already does — it just forwarded the caller's
+> `reference` (possibly `undefined`) straight into
+> `provider.processPayout()`, which falls back to ITS OWN internally
+> generated reference when omitted (e.g. Korapay's own
+> `processPayout()`: `data.reference || generateReference('korapay-payout')`).
+> That provider-generated value was never returned to the route's own
+> scope. Left as-is, `recordTransaction()` would have logged the wrong
+> reference (or `undefined`) for any payout caller that omitted one —
+> silently breaking d-4's future by-reference lookup for exactly those
+> payouts, the same class of bug this whole Task 56 effort exists to
+> close, just one level down. **Fixed as part of this part** (not
+> spun out as its own task) since d-3-c cannot correctly write a
+> transaction record without it: the handler now computes `payoutRef =
+> reference || generateReference(providerName)` up front, matching
+> `/pay`'s own pattern exactly, and forwards that explicit value into
+> `processPayout()` instead of letting the provider generate its own.
+> **Flagging plainly:** this changes the auto-generated reference's
+> prefix for a caller that omits `reference` on `/payout` — was e.g.
+> `KORAPAY-PAYOUT-...` (generated inside the provider), is now
+> `KORAPAY-...` (generated in the route, matching `/pay`'s own
+> convention) — still a valid, still-unique reference, just a
+> different prefix. No caller behavior this repo controls depends on
+> the old prefix specifically, as far as this session could confirm,
+> but noted here in case Mavins-web's own side ever parsed it.
+>
+> **What was built:** in the `POST /payout` handler, `recordTransaction()`
+> called right after `provider.processPayout(...)` resolves —
+> `type: 'payout'`, `provider: providerName`, `currency`, `amount`,
+> `reference: payoutRef` (the newly-computed value above), `status:
+> 'pending'`. Not awaited, same fire-and-forget reasoning as d-3-b.
+> `status: 'pending'`, not `'success'`, for the same reason as d-3-b —
+> Korapay's own `processPayout()` resolving confirms only that the
+> disbursement request was *accepted*, not that the transfer completed
+> (see `providers/korapay.js`'s own extensive existing comment on this
+> exact point, directly above its `return result`) — real completion
+> is confirmed later via webhook or `GET /payout/verify`. Using the
+> same `'pending'` value as `/pay` keeps one consistent meaning for the
+> column across both write sites rather than inventing a
+> payout-specific status value outside migration `0001`'s own `CHECK`
+> constraint list (`'pending'` / `'success'` / `'failed'`).
+>
+> **Verified:** `node --check routes.js` passes. Isolated functional
+> check (no live server, no live project): confirmed the reference
+> computation matches `/pay`'s own convention/prefix, and confirmed
+> the `recordTransaction()` call is genuinely fire-and-forget — a
+> simulated response was available in ~9ms regardless of the insert's
+> own outcome. **Not exercised end-to-end against a real `POST
+> /payout` request** (needs real Korapay credentials) — same narrower
+> scope as d-3-b's own note, not more thorough than that here either.
+>
+> **Per the No-skip-ahead rule: no other task was substituted in Task
+> 56/d-3-c's place.**
+>
+> **Per the Patch Handoff Convention, a single patch file covering
+> this session's changes was generated and handed to the product
+> owner directly — not applied, not merged, and no live route has
+> actually executed this code path yet.**
+>
+> *(Superseded note, kept for its own record below rather than
+> deleted.)*
+>
+> **Previous newest note (2026-09-08) — Task 56/d-3-b built:
 > `POST /pay` now calls `recordTransaction()` (d-3-a) after
 > `processPayment()` resolves, fire-and-forget, `status: 'pending'`.
 > Per the No-skip-ahead rule, this was the next unchecked buildable
@@ -10028,7 +10108,7 @@ a future session doesn't miss it.
 handed to the product owner directly — not applied, and no secret
 values set, by this session.**
 
-#### d-3. Write path — persist a transaction record at `/pay` and `/payout` time [ ] (split into a/b/c this session, per the standing mandatory task-splitting rule — a done, b/c not started)
+#### d-3. Write path — persist a transaction record at `/pay` and `/payout` time [x] (split into a/b/c this session, per the standing mandatory task-splitting rule — a/b/c all done)
 
 Best-effort, non-blocking: a failed insert (Supabase unreachable, etc.)
 must **not** fail the underlying payment/payout call — this backend's
@@ -10056,10 +10136,9 @@ pointed at an unreachable host — resolves without throwing, logs the
 resulting fetch failure. `npm audit`: same 6 pre-existing/transitive
 vulnerabilities as d-2's own note, unchanged, still out of scope here.
 
-**Not yet wired into any route** — `POST /pay` and `POST /payout`
-don't call this function yet; no transaction rows are written by any
-live request today. That's d-3-b (`/pay`) and d-3-c (`/payout`),
-still open, in that order per this task's own splitting.
+**Wired into both routes** — `POST /pay` (d-3-b) and `POST /payout`
+(d-3-c) both now call this function; every successful payment/payout
+request writes a `'pending'` transaction row today.
 
 **Per the Patch Handoff Convention, a patch file covering this part's
 changes was generated and handed to the product owner directly — not
@@ -10099,14 +10178,48 @@ than d-3-a's, noted explicitly rather than implied otherwise.
 changes was generated and handed to the product owner directly — not
 applied or merged by this session.**
 
-##### d-3-c. Wire `recordTransaction()` into `POST /payout` [ ]
+##### d-3-c. Wire `recordTransaction()` into `POST /payout` [x]
 
-Not started. Same pattern as d-3-b, with `type: 'payout'`, in the
-`/payout` handler after `provider.processPayout(...)` resolves. This
-is also the part that, once landed, gives d-4's read path
-(`GET /payout/verify`) rows to actually look up — d-4 stays blocked on
-this part in practice even though nothing marks it as a formal
-dependency below.
+**Built (2026-09-08):** in the `POST /payout` handler,
+`recordTransaction()` is called right after `provider.processPayout(...)`
+resolves — `type: 'payout'`, `provider: providerName`, `currency`,
+`amount`, `status: 'pending'` (same reasoning as d-3-b: Korapay's own
+`processPayout()` resolving confirms only that the disbursement was
+*accepted*, not completed — see `providers/korapay.js`'s own comment
+directly above its `return result`). Not awaited, same fire-and-forget
+pattern as d-3-b.
+
+**A real bug found and fixed as part of building this:** unlike
+`POST /pay`, this handler never computed its own `reference` up
+front — it forwarded the caller's `reference` (possibly `undefined`)
+straight into `provider.processPayout()`, which falls back to ITS OWN
+internally generated one when omitted (e.g. Korapay's own
+`processPayout()`: `data.reference || generateReference('korapay-payout')`),
+a value never returned to this route's own scope. Left alone,
+`recordTransaction()` would have logged the wrong reference (or none)
+for any payout caller that omitted one, breaking d-4's future
+by-reference lookup for exactly those payouts. Fixed here (not spun
+into a separate task, since d-3-c can't correctly write a record
+without it): the handler now computes `payoutRef = reference ||
+generateReference(providerName)` up front, matching `/pay`'s own
+pattern, and forwards that explicit value into `processPayout()`
+instead of letting the provider generate its own. **Behavior change,
+flagged plainly:** a caller that omits `reference` now gets a
+`KORAPAY-...`-prefixed auto-reference (matching `/pay`'s own
+convention) instead of the old `KORAPAY-PAYOUT-...` prefix generated
+inside the provider — still valid, still unique, different prefix.
+
+**Verified:** `node --check routes.js` passes. Isolated functional
+check (no live server, no live project): confirmed the new reference
+computation matches `/pay`'s own convention, and confirmed the
+`recordTransaction()` call is genuinely fire-and-forget (~9ms to a
+simulated response regardless of the insert's own outcome). **Not
+exercised end-to-end against a real `POST /payout` request** (needs
+real Korapay credentials) — same narrower scope as d-3-b's own note.
+
+**Per the Patch Handoff Convention, a single patch file covering this
+part's changes was generated and handed to the product owner directly
+— not applied or merged by this session.**
 
 #### d-4. Read path — `GET /payout/verify` looks up `currency` (and `provider`) by `reference` [ ]
 

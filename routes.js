@@ -64,18 +64,67 @@ router.post('/payout', requireInternalApiKey, async (req, res) => {
 
     assertCurrencySupported(providerName, currency);
 
+    // Task 56/d-3-c: this route (unlike POST /pay) has never computed
+    // its own `reference` up front — it just forwards the caller's
+    // `reference` (possibly undefined) straight into
+    // provider.processPayout(), which falls back to its OWN internally
+    // generated one (e.g. Korapay's processPayout(): `data.reference ||
+    // generateReference('korapay-payout')`) when omitted. That
+    // provider-generated value was never returned to this scope before
+    // now, so recordTransaction() below would have logged the wrong
+    // reference (or none) for any caller that omitted one — silently
+    // breaking Task 56/d-4's future by-reference lookup for exactly
+    // those payouts. Fixed here by computing the reference in this
+    // handler up front, the same way POST /pay already does (`ref =
+    // reference || generateReference(providerName)`), and forwarding
+    // that explicit value into processPayout() instead of leaving the
+    // provider to generate its own. Flagging plainly: this changes the
+    // auto-generated reference's prefix for a caller that omits
+    // `reference` (was e.g. `KORAPAY-PAYOUT-...` from inside the
+    // provider, is now `KORAPAY-...` — matching /pay's own convention)
+    // — a caller relying on the old prefix specifically would see a
+    // different (still valid, still unique) format.
+    const payoutRef = reference || generateReference(providerName);
+
     const result = await provider.processPayout({
       amount,
       currency,
       bank_code,
       account_number,
       narration,
-      reference,
+      reference: payoutRef,
       customer,
       payment_method,
     });
 
     log(`Payout success via ${providerName}: ${formatPayload(result)}`);
+
+    // Task 56/d-3-c: best-effort transaction record, same
+    // fire-and-forget pattern as POST /pay's own d-3-b — not awaited,
+    // so a slow/unreachable Supabase insert can never delay this
+    // route's response; recordTransaction() (d-3-a) already never
+    // throws, so there's nothing to `.catch()` here either.
+    //
+    // status: 'pending', same reasoning as d-3-b — Korapay's own
+    // processPayout() resolving confirms only that the disbursement
+    // request was *accepted*, explicitly NOT that the transfer
+    // completed (see providers/korapay.js's own extensive comment on
+    // this above `return result` — Kora's real lifecycle state lives
+    // in `data.status: 'processing'`, confirmed later via webhook or
+    // GET /payout/verify). Using the same 'pending' value POST /pay
+    // uses keeps one consistent meaning for the column across both
+    // write sites, rather than inventing a payout-specific status
+    // value not in migration 0001's own CHECK constraint list
+    // ('pending' | 'success' | 'failed').
+    recordTransaction({
+      reference: payoutRef,
+      type: 'payout',
+      provider: providerName,
+      currency,
+      amount,
+      status: 'pending',
+    });
+
     res.json({ status: 'success', data: result });
   } catch (error) {
     log(`Payout error: ${error.message}`, 'error');

@@ -3,7 +3,31 @@
 > **▶ START HERE — read this box only, then go straight to work. Skip
 > everything else below unless you get stuck.**
 >
-> **Newest note (2026-09-08, latest of all) — Task 57/e built: `/pay`
+> **Newest note (2026-09-08, latest of all) — Task 57 (a–e) fully
+> closed; next item in the queue is blocked, per the No-skip-ahead
+> rule — no code or migration this session, documentation only.**
+> With Task 57/e applied and pushed, this session checked what's
+> actually next: Task 52 is the top-level task Tasks 56 and 57 were
+> each explicitly carved out of by direct product-owner instruction,
+> and its own header still names two remaining leaves, unchanged by
+> anything built since: **e-2d** (promote-to-default mechanism —
+> genuinely undecided design question: env var vs. config file vs.
+> admin-dashboard toggle) and **e-2e** (capability-mix flow support —
+> not blocked on a decision, just not yet actionable, since no
+> multi-step route like KYC → payout exists in this codebase to apply
+> it to). Neither has changed since last flagged. **Per the
+> No-skip-ahead rule, this session is NOT substituting a different
+> open task from elsewhere in the queue (Tasks 44–55 all still have
+> unchecked items further down)** — recording the block here instead
+> and asking the product owner the actual open question (e-2d's
+> mechanism choice) directly. **Per the Patch Handoff Convention, only
+> this handover.md update is owed as a patch — no code changed, no
+> `db/migrations/` file touched.**
+>
+> *(Superseded note, kept for its own record below rather than
+> deleted.)*
+>
+> **Previous newest note (2026-09-08, latest of all) — Task 57/e built: `/pay`
 > wired end-to-end, closing the whole a–e split — Task 57 itself is
 > now `[x]`.** `routes.js`'s `/pay` handler now calls Task 57/d's
 > `resolveCustomer()` right after `getProvider()` resolves; the

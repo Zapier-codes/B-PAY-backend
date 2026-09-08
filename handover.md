@@ -3,7 +3,52 @@
 > **▶ START HERE — read this box only, then go straight to work. Skip
 > everything else below unless you get stuck.**
 >
-> **Newest note (2026-09-08, latest of all) — Landing check + Task
+> **Newest note (2026-09-08, latest of all) — Landing confirmed + Task
+> 52/e-2 part b-i built.** Checked `origin/main` before starting: both
+> commits from the prior session's combined patch (Task 52/e-1 +
+> e-2a) **had landed** — confirmed via `git fetch origin` and
+> `git log origin/main`. PR #2 to upstream (`Phoenix-Boss/B-PAY-
+> backend`) is still open/unmerged, the expected steady state, not a
+> blocker. Local clone reset to match `origin/main` before starting
+> new work.
+>
+> **Built this session: Task 52/e-2, part b-i only** (e-2b itself was
+> further split into i/ii — i done, ii not started, see e-2b's own
+> entry for why ii needed its own split rather than being done
+> together). `POST /payout` now uses the same explicit-provider-wins-
+> then-domain-default precedence as `/pay` (e-2a): `req.body.provider`
+> first, else `classifyDomain(currency)` → the same
+> `DOMAIN_DEFAULT_PROVIDER` table e-2a added. The old
+> `ROUTING_RULES.payout` (always Korapay) default is no longer
+> consulted here — **intentional behavior change:** a caller that
+> omitted `provider` and relied on always getting Korapay now gets
+> routed by currency instead. Verified with `node --check` plus a
+> throwaway sanity script (deleted after use): 7/7 cases passed.
+>
+> **e-2b-ii (`GET /payout/verify`) deliberately NOT done — real gap
+> found, not a mechanical rewrite like the others:** this route's
+> request shape (`?reference=...&provider=...`) has no `currency`
+> field, and this backend has no database to look up a payout's
+> original currency from its `reference`. Two options recorded in
+> e-2b-ii's own entry (add an optional `currency` query param vs. leave
+> the default exactly as-is and only let explicit `provider` override
+> it) — a real design question for next session, not guessed here.
+>
+> **Not done this session:** e-2b-ii (see above), e-2c (`/banks`),
+> e-2d (promote-to-default mechanism — still a genuinely open design
+> question), e-2e (Task 55/b capability-mix). **e-2c is the likely
+> next pick** — same mechanical shape as e-2a/e-2b-i, no open question
+> blocking it (unlike e-2b-ii).
+>
+> **Per the Patch Handoff Convention, a patch file covering this
+> session's `routes.js` change plus this `handover.md` update was
+> generated and handed to the product owner directly — not applied or
+> pushed by this session.**
+>
+> *(Superseded note, kept for its own record below rather than
+> deleted.)*
+>
+> **Previous newest note (2026-09-08) — Landing check + Task
 > 52/e-2 part a built.** Checked `origin/main` before starting: the
 > prior session's `feat(routing): Task 52/e-1` commit had **not yet
 > landed** on `origin/main` (still sitting as a locally-committed,
@@ -8840,13 +8885,52 @@ resolve to korapay, all tested international currencies (USD/CAD/USDT)
 resolve to juicyway, and an explicit `provider` always wins regardless
 of currency — 8/8 cases passed.
 
-##### e-2b. `POST /payout` + `GET /payout/verify` — domain-aware provider resolution (payout capability) [ ]
+##### e-2b. `POST /payout` + `GET /payout/verify` — domain-aware provider resolution (payout capability) [ ] (split into i/ii this session — i done, ii not started)
 
-Not started. Same shape as e-2a, but for the payout domain — today
-both routes hardcode `ROUTING_RULES.payout` (`'korapay'`) as the
-default regardless of currency, which is wrong under Task 51's model
-for an international payout (should default to Juicyway). Needs the
-same explicit-provider-wins-then-domain-default precedence as e-2a.
+Same shape as e-2a, but for the payout domain — both routes previously
+hardcoded `ROUTING_RULES.payout` (`'korapay'`) as the default regardless
+of currency, which was wrong under Task 51's model for an
+international payout (should default to Juicyway).
+
+###### e-2b-i. `POST /payout` [x]
+
+**Done this session (2026-09-08).** Same explicit-provider-wins-then-
+domain-default precedence as e-2a: `req.body.provider` first
+(unchanged), else `classifyDomain(currency)` (currency is already a
+required body field on this route, unlike verify below) →
+`DOMAIN_DEFAULT_PROVIDER` (the same table e-2a added, shared, not
+redefined). The old `ROUTING_RULES.payout` fallback is no longer
+consulted here. Flagged plainly: intentional behavior change — a
+caller that omitted `provider` and relied on always getting Korapay
+now gets routed by currency instead. `ROUTING_RULES` itself is
+untouched (`/banks`, e-2c, still reads it). Verified with `node
+--check` plus a throwaway sanity script (deleted after use): 7/7 cases
+passed (African-rails currencies with no explicit provider → korapay,
+international currencies → juicyway, explicit provider always wins).
+
+###### e-2b-ii. `GET /payout/verify` [ ]
+
+**Not started — real gap found, worth flagging before building it.**
+Unlike `/payout`, this route's request shape is `?reference=...&
+provider=...` — **no `currency` field at all**, and this backend has
+no database (confirmed architecture, see `index.js`'s own "stateless
+by design" note) to look up the original payout's currency from a
+stored `reference`. So `classifyDomain(currency)` has nothing to
+classify with when `provider` is omitted here — this isn't the same
+mechanical rewrite e-2a/e-2b-i were. Two real options for next
+session, neither picked here:
+- **(a)** Add an optional `currency` query param to this route (the
+  caller re-supplies it, same as it already does for the original
+  `/payout` call) — enables real domain-aware routing when present,
+  falls back to the current `ROUTING_RULES.payout` default (Korapay)
+  when it's omitted, so this stays backward-compatible either way.
+- **(b)** Leave this route's default exactly as-is (Korapay,
+  unconditional) since it has no reliable signal to route by, and
+  only let an explicit `provider` override it — i.e. don't pretend to
+  be domain-aware here at all, rather than routing on a guess.
+This is a real design question, not guessed here — whoever picks this
+up next should decide (a) vs (b) (or confirm with the product owner)
+before writing code.
 
 ##### e-2c. `GET /banks` — domain-aware provider resolution (bank-list-lookup capability) [ ]
 

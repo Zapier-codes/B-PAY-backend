@@ -44,7 +44,21 @@ router.post('/payout', requireInternalApiKey, async (req, res) => {
       throw err;
     }
 
-    const providerName = req.body.provider || ROUTING_RULES.payout;
+    // Task 52/e-2, part b-i (2026-09-08): same domain-aware precedence
+    // as POST /pay (e-2a) — explicit `provider` wins (unchanged,
+    // already satisfies "explicit fallback request"), otherwise
+    // classifyDomain(currency) -> DOMAIN_DEFAULT_PROVIDER (defined
+    // further down this file, shared with /pay). Replaces the old
+    // flat ROUTING_RULES.payout ('korapay' always) default, which was
+    // wrong under Task 51's model for an international payout (should
+    // default to Juicyway, not Korapay). Flagging plainly: this is an
+    // intentional behavior change for any caller that omitted
+    // `provider` and expected Korapay regardless of currency.
+    let providerName = req.body.provider;
+    if (!providerName) {
+      const domain = classifyDomain(currency);
+      providerName = DOMAIN_DEFAULT_PROVIDER[domain];
+    }
     const provider = getProvider(providerName);
 
     assertCurrencySupported(providerName, currency);

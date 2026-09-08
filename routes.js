@@ -144,17 +144,39 @@ router.get('/payout/verify', requireInternalApiKey, async (req, res) => {
   }
 });
 
-// GET /banks — returns Korapay's supported bank list for a currency.
-// Query: ?currency=NGN (defaults to NGN)
+// GET /banks — returns a bank/institution list for a currency.
+// Query: ?currency=NGN (defaults to NGN), ?provider=korapay (optional
+// explicit override)
+//
+// Task 52/e-2, part c (2026-09-08): same explicit-provider-wins-then-
+// domain-default precedence as e-2a/e-2b-i. Previously this route
+// unconditionally called Korapay regardless of currency, with no way
+// for a caller to request a different provider at all — under Task
+// 51's model an international-currency bank-list lookup should
+// default to Juicyway, and there was no explicit-fallback mechanism
+// here to begin with (unlike /pay and /payout, which already had
+// req.body.provider). Both gaps close together here since they're the
+// same fix. Flagged plainly: intentional behavior change — a caller
+// relying on this route always hitting Korapay regardless of currency
+// now gets routed by currency instead (still Korapay for African-rails
+// currencies, the common case, so most existing callers are
+// unaffected; only a caller passing a non-African-rails `currency`
+// changes behavior).
 router.get('/banks', async (req, res) => {
   try {
     const currency = (req.query.currency || 'NGN').toString().toUpperCase();
     assertValidCurrencyFormat(currency);
 
-    const provider = getProvider('korapay');
+    let providerName = req.query.provider;
+    if (!providerName) {
+      const domain = classifyDomain(currency);
+      providerName = DOMAIN_DEFAULT_PROVIDER[domain];
+    }
+
+    const provider = getProvider(providerName);
     const result = await provider.getBanks(currency);
 
-    res.json({ status: 'success', data: result });
+    res.json({ status: 'success', provider: providerName, data: result });
   } catch (error) {
     log(`Banks list error: ${error.message}`, 'error');
     res.status(error.statusCode || 500).json({

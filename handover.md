@@ -4,6 +4,55 @@
 > everything else below unless you get stuck.**
 >
 > **Newest note (2026-09-08, latest of all) — Landing confirmed + Task
+> 52/e-2 part c built; Task 52 now genuinely blocked, per this repo's
+> own No-skip-ahead rule.** Checked `origin/main` before starting: the
+> prior session's `e-2b-i` commit had landed. Local clone reset to
+> match before starting new work.
+>
+> **Built this session: Task 52/e-2, part c only.** `GET /banks`
+> previously had no explicit-provider override at all and
+> unconditionally called Korapay — both closed together: now accepts
+> `?provider=` (wins if present), else `classifyDomain(currency)` →
+> the same shared `DOMAIN_DEFAULT_PROVIDER` table e-2a/e-2b-i use.
+> Response now echoes `provider` in the JSON body too, matching
+> `/payout/verify`'s existing shape. Flagged as an intentional
+> behavior change for a caller passing a non-African-rails currency
+> (now routes to Juicyway instead of Korapay) — the default `NGN`/
+> African-rails case, the common one, is unaffected. Verified with
+> `node --check` plus a throwaway sanity script (deleted after use):
+> 7/7 cases passed.
+>
+> **Task 52/e-2's mechanical rewrites are now fully done (a, b-i, c) —
+> every route with a usable currency signal has been converted.**
+> What's left of Task 52 is genuinely blocked, not just unbuilt, per
+> this repo's own No-skip-ahead rule:
+> - **e-2b-ii** (`GET /payout/verify`) — no `currency` in its request
+>   shape and no database to look one up from `reference`; two options
+>   recorded in its own entry (add an optional `currency` query param,
+>   vs. leave the Korapay default as-is and only accept explicit
+>   `provider`), not decided here.
+> - **e-2d** (promote-to-default mechanism) — env var vs. config file
+>   vs. admin-dashboard toggle, the leaf's own stated open design
+>   question, not decided here.
+> - **e-2e** (capability-mix) — re-checked this session: NOT actually
+>   blocked on a decision (Task 55/b already settled the principle) —
+>   there's just no concrete multi-step route (e.g. KYC → payout) in
+>   this codebase yet to apply it to. Revisit once one exists.
+>
+> **Per the No-skip-ahead rule: no other top-level task in this repo's
+> queue (Task 44, Task 45, Task 53/54/55, etc.) was substituted in
+> Task 52's place this session** — this session stops here and reports
+> this, rather than picking up a different open task.
+>
+> **Per the Patch Handoff Convention, a patch file covering this
+> session's `routes.js` change plus this `handover.md` update was
+> generated and handed to the product owner directly — not applied or
+> pushed by this session.**
+>
+> *(Superseded note, kept for its own record below rather than
+> deleted.)*
+>
+> **Previous newest note (2026-09-08) — Landing confirmed + Task
 > 52/e-2 part b-i built.** Checked `origin/main` before starting: both
 > commits from the prior session's combined patch (Task 52/e-1 +
 > e-2a) **had landed** — confirmed via `git fetch origin` and
@@ -8294,7 +8343,7 @@ match afterward, not the other way around.
 
 ---
 
-## Task 52 — Implement every gap Task 51's capability matrix flagged: build out Juicyway/Korapay/Paystack/Flutterwave fully so the domain-based routing model is real, not aspirational [ ] (e-1 done this session; e-2 is next — actual routing rewrite, unblocked but not started)
+## Task 52 — Implement every gap Task 51's capability matrix flagged: build out Juicyway/Korapay/Paystack/Flutterwave fully so the domain-based routing model is real, not aspirational [ ] (e-1, e-2a, e-2b-i, e-2c all done; every remaining leaf — e-2b-ii, e-2d, e-2e — is blocked on a decision or not yet actionable, not code left to write; see this repo's own No-skip-ahead rule before substituting a different top-level task)
 
 **Scope note, read first:** this task exists because Task 51 recorded
 a *decision* (Juicyway defaults for every international-rails
@@ -8843,7 +8892,7 @@ below, now unblocked but not started this session. Patch handed to the
 product owner per the Patch Handoff Convention, not applied/pushed by
 this session.
 
-#### e-2. Rewrite `ROUTING_RULES`/`getProvider()` to route by domain, with explicit fallback/promote-to-default support [ ] (split into a/b/c/d/e this session, per the mandatory task-splitting rule — a done, b/c/d/e not started)
+#### e-2. Rewrite `ROUTING_RULES`/`getProvider()` to route by domain, with explicit fallback/promote-to-default support [ ] (split into a/b/c/d/e — a, b-i, c done; b-ii/d/e each blocked on their own real, undecided question, not started)
 
 Once e-1 exists: replace the current flat `action -> provider` map
 with domain-aware routing that picks the Task 51 default, and exposes
@@ -8932,11 +8981,31 @@ This is a real design question, not guessed here — whoever picks this
 up next should decide (a) vs (b) (or confirm with the product owner)
 before writing code.
 
-##### e-2c. `GET /banks` — domain-aware provider resolution (bank-list-lookup capability) [ ]
+##### e-2c. `GET /banks` — domain-aware provider resolution (bank-list-lookup capability) [x]
 
-Not started. `/banks` hardcodes `getProvider('korapay')` unconditionally
-today, with no currency-based routing and no explicit-provider
-override at all. Needs both added, same precedence pattern as e-2a/b.
+**Done this session (2026-09-08).** Two gaps closed together since
+they were the same fix: this route previously had no explicit-provider
+override at all (unlike `/pay`/`/payout`, which already had
+`req.body.provider`) AND unconditionally called Korapay regardless of
+currency. Now accepts an optional `?provider=` query param (wins if
+present), else `classifyDomain(currency)` → the shared
+`DOMAIN_DEFAULT_PROVIDER` table. Response now also echoes back which
+`provider` served the request, matching `/payout/verify`'s existing
+`{ status, provider, data }` shape (previously `/banks` omitted this).
+Flagged plainly: intentional behavior change — a caller passing a
+non-African-rails `currency` now gets routed to Juicyway instead of
+Korapay; the common case (African-rails currencies, the default `NGN`
+included) is unaffected. Verified with `node --check` plus a throwaway
+sanity script (deleted after use): 7/7 cases passed (African-rails
+currencies with no explicit provider → korapay, international
+currencies → juicyway, explicit provider always wins).
+
+**Task 52/e-2's mechanical rewrites (a, b-i, c) are now all done** —
+every route that had a clean currency signal to route by has been
+converted. What's left: b-ii and d are each blocked on a real,
+undecided question (see their own entries); e is a different kind of
+"not done" — see e-2e's own entry, it's not blocked on a decision, just
+not yet actionable.
 
 ##### e-2d. Promote-to-default mechanism design + implementation [ ]
 
@@ -8947,8 +9016,21 @@ building, same as e-1 was.
 
 ##### e-2e. Capability-mix flow support (Task 55/b cross-reference) [ ]
 
-Not started — deferred, see Task 55/b below for the full description
-of what this needs to account for.
+**Not started — but re-checked this session, and this is NOT a
+blocked-on-a-decision item the way b-ii/d are.** Task 55/b already
+resolved the principle (capability-mix, each step routes independently
+by its own domain's default+fallback table). The reason nothing's
+built here isn't an open question — it's that **there's no concrete
+route to apply it to yet**: KYC/KYB (Task 53/54) is still
+decision-record only, no actual `/kyc`-style route exists in this
+codebase to route independently from a payout call. Separately worth
+noting: e-2a/e-2b-i/e-2c's own design (each route classifies its own
+domain independently, with no shared/cached provider choice across
+calls) already happens to satisfy the capability-mix principle for
+every route that exists today — `/pay`, `/payout`, and `/banks` were
+never coupled to share one provider identity across a flow to begin
+with. Revisit this leaf once a real multi-step flow (e.g. KYC → payout)
+actually exists in code, not before.
 
 ---
 

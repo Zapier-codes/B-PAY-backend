@@ -3,8 +3,41 @@
 > **▶ START HERE — read this box only, then go straight to work. Skip
 > everything else below unless you get stuck.**
 >
-> **Newest note (2026-09-08, latest of all, supersedes the Task 52/c
-> note below) — Task 55 written: two more product decisions,
+> **Newest note (2026-09-08, latest of all, supersedes the Task 55
+> note below) — Task 52/d-2b built: `providers/flutterwave.js` gained
+> a `FlutterwaveV4` class, coexisting with the v3 `Flutterwave` class
+> above it (per Task 55/a's build-both decision), with a real OAuth2
+> client-credentials token manager (module-level cache, ~10min TTL).
+> `processPayment` (non-card only — card charges throw a clear
+> not-implemented error rather than guess at the unconfirmed AES-256-
+> GCM wire format), `processPayout` (currency-conditional: NGN
+> minimal, EUR/GBP/USD/ZAR full KYC, other currencies throw),
+> `verifyTransaction`/`verifyPayout` (endpoint paths inferred from REST
+> convention, NOT independently confirmed against a fetched reference
+> page — flagged in code, needs a real sandbox call before production),
+> and `verifyWebhookSignature` (canonical HMAC-SHA256(rawBody,
+> secretHash) base64 scheme, new `FLW_V4_SECRET_HASH` env var, not
+> v3's plain-string-compare `FLW_SECRET_HASH`). `getBanks` throws
+> explicitly — no v4 bank-list endpoint was confirmed this session; use
+> v3's `getBanks()` instead. New env vars needed on Render (manual
+> product-owner step, not yet added to `render.yaml`): `FLW_V4_CLIENT_ID`,
+> `FLW_V4_CLIENT_SECRET`, `FLW_V4_ENCRYPTION_KEY` (unused until card
+> support is built), `FLW_V4_SECRET_HASH`, optionally `FLW_V4_TOKEN_URL`
+> if `idp.flutterwave.com` turns out to be the wrong token host (see
+> the code's own comment on that unresolved inconsistency). Verified
+> with `node --check` on both changed files plus a standalone sanity
+> script (deleted after use) confirming the token manager, the three
+> deliberate throw-before-network-call cases, and webhook-signature
+> accept/reject all behave as designed. **`X` moves to Task 52/d-2c
+> (design and implement the runtime v3/v4 switch)** — that leaf is
+> unblocked now that d-2b exists, per this session's own note on d-2c.
+> **Per the Patch Handoff Convention, a patch file covering this
+> session's `providers/flutterwave.js` + `utils/helpers.js` changes,
+> plus this `handover.md` update, was generated and handed to the
+> product owner directly — not applied or pushed by this session.**
+>
+> **Newest note (2026-09-08, previous) — Task 55 written: two more
+> product decisions,
 > decision-record only, no code this session.** **(1) Flutterwave
 > v3-vs-v4 is no longer either/or — build both, dynamically
 > switchable at runtime**, resolving Task 52/d-1's blocking open item
@@ -7960,7 +7993,7 @@ match afterward, not the other way around.
 
 ---
 
-## Task 52 — Implement every gap Task 51's capability matrix flagged: build out Juicyway/Korapay/Paystack/Flutterwave fully so the domain-based routing model is real, not aspirational [ ] (d-2b is X, per this session's split of d-2 — see Task Numbering & Workflow Convention above)
+## Task 52 — Implement every gap Task 51's capability matrix flagged: build out Juicyway/Korapay/Paystack/Flutterwave fully so the domain-based routing model is real, not aspirational [ ] (d-2c is X, per this session's split of d-2 — see Task Numbering & Workflow Convention above)
 
 **Scope note, read first:** this task exists because Task 51 recorded
 a *decision* (Juicyway defaults for every international-rails
@@ -8433,9 +8466,9 @@ passing.
   dashboard — same manual-step pattern as `INTERNAL_API_KEY` (Task 42
   Part A).
 
-##### d-2b. Build the v4 method set on `providers/flutterwave.js` [ ] (this is the current X)
+##### d-2b. Build the v4 method set on `providers/flutterwave.js` [x]
 
-**Not started.** Same method set as d-2a (`processPayment`,
+**Done this session (2026-09-08).** Same method set as d-2a (`processPayment`,
 `verifyTransaction`, `processPayout`, `verifyPayout`, `getBanks`,
 `verifyWebhookSignature`), but built on the OAuth2 client-credentials
 flow the original discovery pass confirmed (`POST
@@ -8456,7 +8489,7 @@ the existing `Flutterwave` class — an open implementation choice for
 whoever builds this part, not decided here), not a replacement of
 d-2a's work.
 
-##### d-2c. Design and implement the runtime v3/v4 switch [ ] (not started, blocked on d-2b existing first)
+##### d-2c. Design and implement the runtime v3/v4 switch [ ] (this is the current X — unblocked now that d-2b exists)
 
 An explicit open design question, not decided here: whether the
 version is chosen per-call (a `version` field on the request), per-

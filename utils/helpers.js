@@ -218,6 +218,21 @@ export function getProviderKey(provider, type) {
       public: process.env.FLW_PUBLIC_KEY || '',
       secret: process.env.FLW_SECRET_KEY || '',
     },
+    // Task 52/d-2b — v4's OAuth2 client-credentials pair, deliberately
+    // a separate keyMap entry from v3's static public/secret pair
+    // above, since the two are structurally different credential
+    // shapes on the same underlying Flutterwave merchant account (per
+    // handover.md's own v4 Environments note: same dashboard, a
+    // toggle reveals v4 credentials instead of v3's). `encryption_key`
+    // is a THIRD, distinct secret (per the v4 Encryption discovery
+    // note) used client-side only to AES-256-GCM-encrypt card fields
+    // before a charge request is built — never sent to the token
+    // endpoint or reused as client_secret.
+    flutterwave_v4: {
+      client_id: process.env.FLW_V4_CLIENT_ID || '',
+      client_secret: process.env.FLW_V4_CLIENT_SECRET || '',
+      encryption_key: process.env.FLW_V4_ENCRYPTION_KEY || '',
+    },
   };
 
   const providerKeys = keyMap[providerLower];
@@ -433,6 +448,16 @@ export function getAmountFormat(provider, currency) {
       // — a currency-list-specific pass is real, separate follow-up
       // work, not done here; this case intentionally skips the
       // supported-list warning the paystack/korapay cases above do.
+      //
+      // Task 52/d-2b update: v4's own OpenAPI schema CONFIRMS `amount`
+      // as a decimal in major currency units (`12.34`, not `1234`) on
+      // both charge endpoints — a stronger-confidence source than v3's
+      // inferred-from-examples note above, and coincidentally the same
+      // numeric effect (`unit: 'base', multiplier: 1`), so this one
+      // case still covers both versions correctly. If a future session
+      // ever finds a real base/subunit divergence between v3 and v4
+      // for the same currency, this case needs a version parameter —
+      // not assumed necessary today.
       return { unit: 'base', multiplier: 1 };
 
     case 'juicyway':
@@ -528,6 +553,18 @@ export function getProviderBaseUrl(provider) {
     flutterwave: {
       development: 'https://api.flutterwave.com/v3',
       production: 'https://api.flutterwave.com/v3',
+    },
+    // Task 52/d-2b — v4 DOES have a real sandbox/production host
+    // split, unlike v3 above. Per handover.md's own v4 Environments
+    // note: sandbox = developersandbox-api..., production =
+    // f4bexperience... — confirmed from the page's own PROSE
+    // statements, deliberately NOT copying the same page's own
+    // "Multi-Environment Integrations" code sample, which has the two
+    // hosts swapped relative to its own prose (a confirmed bug in
+    // Flutterwave's own docs, not a detail to replicate here).
+    flutterwave_v4: {
+      development: 'https://developersandbox-api.flutterwave.com',
+      production: 'https://f4bexperience.flutterwave.com',
     },
   };
   

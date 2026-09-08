@@ -7849,7 +7849,7 @@ box) is to preserve what changed and when, not just the current state.
 |---|---|
 | Domain covers | Cross-border collection, international bank transfer/receive (e.g. **ACH** and other non-African transfer rails), international payout/disbursement, international verify-payout, international bank/institution list lookup, stablecoin (USDT/USDC), any currency outside NGN/GHS/KES/ZAR/XAF/XOF/EGP/TZS |
 | **Default** | **Juicyway** — default for every capability in this domain (collection, local-transfer/ACH-equivalent, payout, verify payout, bank-list lookup), not collection-only |
-| Fallback 1 | Korapay (covers NGN/GHS/KES/ZAR/USD/XAF/XOF/EGP/TZS overlap only — not CAD/USDT/USDC; today only has payout/verify-payout/bank-list built for African rails, so would need those extended to cover non-African currencies/rails before it's a full fallback here) |
+| Fallback 1 | Korapay (covers NGN/GHS/KES/ZAR/USD/XAF/XOF/EGP/TZS overlap only — not CAD/USDT/USDC. **Corrected 2026-09-08 (Task 52/b): this is NOT a "needs more code" gap.** Kora's own support documentation (`support.korapay.com`, "Payouts via Payouts API") confirms their payout API is architecturally scoped to exactly six currencies — NGN (bank transfer, any Nigerian bank), GHS/KES/XAF/XOF (mobile money only, specific named network providers per currency), ZAR (bank transfer, any South African bank) — with no non-African bank-account/card/wallet destination type documented anywhere, and no indication such a thing exists to extend into. This is a hard product-scope ceiling, not an implementation gap: Korapay can be a fallback ONLY for payout/verify-payout/bank-list within its own six-currency overlap, never for JuicyWay's actual international scope (CAD, GBP, USDT/USDC, non-African USD bank destinations, ACH-equivalent transfer). Extending `Korapay.processPayout` with more code cannot change this — the ceiling is Kora's own product surface, not this codebase's.) |
 | Fallback 2 | Paystack (NGN/GHS/ZAR/KES/USD overlap only; payout/verify-payout/bank-list are still stubs — not a full fallback for those capabilities yet) |
 | Fallback 3 | Flutterwave — **not yet implemented** (`providers/flutterwave.js` does not exist; blocked on the v3-vs-v4 version decision, see this file's own Flutterwave research section above) — must be built before it can actually serve as a fallback, not just be listed as one |
 | Changelog | 2026-09-07 — table created this session, per product-owner direction (this task). 2026-09-07 (later same day) — domain coverage expanded per product-owner direction: Juicyway is now default for local-transfer/ACH-equivalent, payout, verify-payout, and bank-list lookup within this domain too, not collection-only. Rule stated as "anything not African rails defaults to Juicyway." |
@@ -7878,11 +7878,11 @@ match afterward, not the other way around.
 | African-rails collection | Fallback | Default | Fallback | Fallback (not implemented) |
 | International transfer (ACH-equivalent, etc.) | Default | Fallback (needs non-African rails extended) | Fallback (stub) | Fallback (not implemented) |
 | African-rails transfer (mobile money, traditional banks) | Fallback (no African-rails transfer support) | Default | Fallback (stub) | Fallback (not implemented) |
-| International payout / disbursement | Default | Fallback (needs extending beyond African rails) | Fallback (stub) | Fallback (not implemented) |
+| International payout / disbursement | Default | Fallback, six-currency overlap only — cannot be extended beyond that (Task 52/b, confirmed 2026-09-08) | Fallback (stub) | Fallback (not implemented) |
 | African-rails payout / disbursement | — (no African-rails payout support) | Default | Fallback (stub) | Fallback (not implemented) |
-| International verify payout | Default | Fallback (needs extending) | Fallback (stub) | Fallback (not implemented) |
+| International verify payout | Default | Fallback, six-currency overlap only — cannot be extended (Task 52/b) | Fallback (stub) | Fallback (not implemented) |
 | African-rails verify payout | — | Default | Fallback (stub) | Fallback (not implemented) |
-| International bank-list lookup | Default | Fallback (needs extending) | Fallback (stub) | Fallback (not implemented) |
+| International bank-list lookup | Default | Fallback, six-currency overlap only — cannot be extended (Task 52/b) | Fallback (stub) | Fallback (not implemented) |
 | African-rails bank-list lookup | — | Default | Fallback (stub) | Fallback (not implemented) |
 | Webhook verification | Done | Done | Done | Not implemented |
 | Confirmed amount-unit rule | Still unconfirmed (Task 49/a) | Confirmed | Confirmed | Unconfirmed |
@@ -7923,7 +7923,7 @@ match afterward, not the other way around.
 
 ---
 
-## Task 52 — Implement every gap Task 51's capability matrix flagged: build out Juicyway/Korapay/Paystack/Flutterwave fully so the domain-based routing model is real, not aspirational [ ] (b is X, per the 2026-09-08 session's resolution of a-3 and, with it, all of (a) — see Task Numbering & Workflow Convention above)
+## Task 52 — Implement every gap Task 51's capability matrix flagged: build out Juicyway/Korapay/Paystack/Flutterwave fully so the domain-based routing model is real, not aspirational [ ] (c is X, per the 2026-09-08 session's resolution of (b) — see Task Numbering & Workflow Convention above)
 
 **Scope note, read first:** this task exists because Task 51 recorded
 a *decision* (Juicyway defaults for every international-rails
@@ -7939,14 +7939,15 @@ Convention, not to close the gap itself (no code was written this
 session — decision/scoping record only, same as Task 51).
 
 **Exactly one leaf below carries the `X` marker at any time, per the
-Workflow Convention.** This session (2026-09-08) closed a-1 (i-iv),
-a-2, and now a-3 — all of section (a), JuicyWay, is fully resolved.
-See each subsection below for citations and the accompanying code
-patches. `X` now moves to **b** (Korapay), to be split into the same
-i/zi/zo shape once someone picks it up. Whichever session picks this
-up next works ONLY on b until it's solved, then moves `X` to c, then
-d, then e — unless the product owner explicitly reprioritizes, in
-which case update this line to say so and move `X` accordingly.
+Workflow Convention.** This session (2026-09-08) closed all of (a),
+JuicyWay, and now (b), Korapay — the latter resolved as a decision
+correction (Korapay's payout API is architecturally capped at six
+African currencies, confirmed via Kora's own support docs; Task
+51/b-1 and the capability matrix corrected accordingly), not code.
+`X` now moves to **(c) Paystack**. Whichever session picks this up
+next works ONLY on c until it's solved, then moves `X` to d, then e —
+unless the product owner explicitly reprioritizes, in which case
+update this line to say so and move `X` accordingly.
 
 ### a. Juicyway — build the missing international-rails methods [x]
 
@@ -8205,21 +8206,38 @@ item under Task 49/a — do not re-open that question here; a-1/a-2/a-3
 above are about payout-side endpoints existing at all, a distinct gap
 from the collection-side amount-unit question.
 
-### b. Korapay — confirm or extend payout/verify-payout/bank-list beyond African rails [ ]
+### b. Korapay — confirm or extend payout/verify-payout/bank-list beyond African rails [x]
 
-Korapay's `processPayout`/`verifyPayout`/`getBanks` already exist and
-work for African rails (Task 42's own history confirms `processPayout`
-was fixed and verified). Task 51/b-1 lists Korapay as international
-rails' Fallback 1 for payout/verify-payout/bank-list, but that's
-currently unconfirmed — Korapay's own currency list
-(`CONFIRMED_PROVIDER_CURRENCIES.korapay`) is African-currency-focused
-(NGN/GHS/KES/ZAR/USD/XAF/XOF/EGP/TZS), so before this can honestly be
-called a working international fallback, confirm whether Korapay's
-payout API even accepts a non-African-rail destination (a different
-country's bank account, a card, a wallet) at all — this may turn out
-to be a hard "no," not just an extension task, in which case Task
-51/b-1's Fallback 1 entry needs correcting to say so rather than
-implying it just needs more code.
+**Resolved this session (2026-09-08) as a decision-record correction,
+no code written — same as Task 51's own precedent, and for the same
+reason: this leaf's own original text predicted the answer might be
+"a hard no, not just an extension task," and that's exactly what a
+primary source confirmed.**
+
+Kora's own support documentation
+(`support.korapay.com/en/articles/6089899-payouts-via-payouts-api`,
+"Payouts via Payouts API") states directly, currency by currency,
+which destinations their payout API accepts: **NGN** via bank
+transfer to any Nigerian bank; **GHS**, **KES**, **XAF**, **XOF** via
+mobile money only, to specific named network providers per currency
+(e.g. GHS: MTN/Airtel/Vodafone; KES: Safaricom/Airtel; XAF & XOF:
+MTN/Orange); **ZAR** via bank transfer to any South African bank.
+**No non-African bank account, card, wallet, or any other destination
+type is documented anywhere on this page or found elsewhere this
+session.** This is a product-surface ceiling, not a code gap —
+`Korapay.processPayout`/`verifyPayout`/`getBanks` cannot be "extended"
+to reach CAD, GBP, USDT/USDC, or non-African USD destinations no
+matter how much code is written against them, because Kora's own API
+doesn't expose a way to name such a destination in the first place.
+
+**Correction applied to Task 51/b-1's Fallback 1 entry and the
+capability matrix (Task 51/c) above** — both previously implied this
+was an implementation gap ("would need those extended..."/"needs
+extending beyond African rails"), which this session's citation shows
+is not accurate. Korapay remains a valid fallback for
+payout/verify-payout/bank-list, but strictly within its confirmed
+six-currency overlap with JuicyWay's own currency list — not as a
+path toward covering JuicyWay's actual international scope.
 
 ### c. Paystack — build real (non-stub) payout/verify-payout/bank-list [ ]
 

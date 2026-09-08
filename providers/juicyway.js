@@ -254,7 +254,14 @@ export class Juicyway {
         // Task 13: same reasoning as paystack.js/korapay.js — this message
         // comes straight from Juicyway's own JSON response body, meant for
         // the end user, so mark it safe-to-surface.
-        throw providerError(responseData.message || 'Juicyway payment failed');
+        // Task 45c: was `responseData.message`, which JuicyWay's real error
+        // envelope ({ error: { code, message, type, details } }, confirmed
+        // against docs.juicyway.com) never populates -- that field is
+        // always undefined for a real JuicyWay error, so the hardcoded
+        // fallback fired on every single failure and JuicyWay's own
+        // specific, documented-safe-to-surface message (e.g. "Amount must
+        // be at least 100000") was silently discarded every time.
+        throw providerError(responseData.error?.message || 'Juicyway payment failed');
       }
 
       return responseData;
@@ -389,7 +396,9 @@ export class Juicyway {
       const responseData = await response.json();
 
       if (!response.ok) {
-        throw providerError(responseData.message || 'Juicyway verification failed');
+        // Task 45c: same fix as processPayment() above -- JuicyWay's real
+        // error message lives at `error.message`, not top-level `message`.
+        throw providerError(responseData.error?.message || 'Juicyway verification failed');
       }
 
       return responseData;

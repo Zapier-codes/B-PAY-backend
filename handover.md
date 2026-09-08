@@ -6251,7 +6251,7 @@ a real design decision, not just a payload literal to edit.
 **Blocked on that design decision plus JuicyWay sandbox keys for
 end-to-end confirmation.**
 
-### Task 45c — Fix JuicyWay's error-message extraction (reads the wrong field, always falls back to a generic string) [ ]
+### Task 45c — Fix JuicyWay's error-message extraction (reads the wrong field, always falls back to a generic string) [x]
 **Added by Task 8b's full audit pass (2026-09-06), doc-research only.**
 `providers/juicyway.js` reads `responseData.message` in both
 `processPayment` and `verifyTransaction` — JuicyWay's real error
@@ -6261,16 +6261,35 @@ coded, `responseData.message` is `undefined` for every real JuicyWay
 error, so the hardcoded fallback string (`'Juicyway payment failed'` /
 `'Juicyway verification failed'`) fires on every single failure,
 discarding JuicyWay's own specific, documented-safe-to-surface message
-(e.g. "Amount must be at least 100000") every time. **Fix:** change
-both to `responseData.error?.message || 'Juicyway ... failed'`. Not
-blocked on API keys to write (the shape is confirmed from docs), but
-real-error confirmation needs a live failing call. Also worth deciding
-alongside this fix, not blocking it: whether to also surface
-`responseData.error?.code` for programmatic branching (same open
-question Task 8's Paystack audit raised for `type`/`code` there, and
-DodoPayments' audit raised again for its own `code` field) or a 402
-card-decline branch specifically (JuicyWay documents `card_declined`
-as its own status code, distinct from generic 4xx).
+(e.g. "Amount must be at least 100000") every time.
+
+**Built.** Both call sites (`processPayment`'s `/payment-sessions`
+handler, `verifyTransaction`'s `/v1/charges/:reference` handler) now
+read `responseData.error?.message || 'Juicyway ... failed'` instead of
+`responseData.message || '...'`. Not split further — a single,
+atomic, two-line change, per this file's own "say so explicitly rather
+than leaving it looking like a part was skipped" rule for
+indivisible tasks.
+
+**Deliberately not done here, left for a future task:** surfacing
+`responseData.error?.code` for programmatic branching, or a dedicated
+402 `card_declined` branch — this task's own write-up flagged both as
+"worth deciding alongside this fix, not blocking it," and neither is
+touched by this change.
+
+**Verified:** `node --check providers/juicyway.js`. A throwaway
+inline script (not committed) exercised the extraction logic against
+three cases — a real JuicyWay-shaped error envelope (returns the real
+message), an empty response body (falls back correctly), and the old
+flat `{ message }` shape the previous code wrongly relied on
+(correctly ignored now, falls back rather than surfacing a
+non-JuicyWay-real string) — all three behaved as expected.
+
+**Not verified end-to-end against a real JuicyWay sandbox failure** —
+no live JuicyWay keys in this environment, same pre-existing blocker
+every prior JuicyWay task in this file has noted; this fix is
+confirmed correct against JuicyWay's documented error shape, not
+against a live failing call.
 
 ### Task 45d — Design and implement JuicyWay's reference-vs-ID verify flow [ ]
 **Added by Task 8b's full audit pass (2026-09-06), doc-research only.**

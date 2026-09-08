@@ -3,7 +3,82 @@
 > **▶ START HERE — read this box only, then go straight to work. Skip
 > everything else below unless you get stuck.**
 >
-> **Newest note (2026-09-08, latest of all) — Migration `0001` is now
+> **Newest note (2026-09-08, latest of all) — Task 56/d-3 split into
+> a/b/c (write helper, `/pay` wiring, `/payout` wiring); part (a) is
+> built: `recordTransaction()` added to `utils/supabase.js`, a shared,
+> best-effort, non-throwing insert into the `transactions` table
+> (migration `0001`). Per the No-skip-ahead rule, this was the next
+> unchecked buildable part after d-2. Not wired into `POST /pay` or
+> `POST /payout` yet — no request handler calls this function today,
+> so no transaction rows are written by any live traffic yet; that's
+> (b)/(c), still open.**
+>
+> **Before starting:** confirmed `origin/main` at `3b32cdc`, matching
+> this sandbox's own local clone byte-for-byte (`git diff` empty).
+> Local clone already reset to `origin/main`, per this file's own
+> pattern.
+>
+> **Also noted this session, fact only:** the product owner reports
+> real values for `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` have
+> now been set directly in Render's dashboard, on the actual service —
+> same manual, `sync: false` step every other secret in `render.yaml`
+> already uses, and independent of `render.yaml` itself being merged
+> (that file only declares the two key *names*, per d-2). **The d-2
+> patch (which added those `render.yaml` entries and
+> `utils/supabase.js` itself) has not been merged into `main` yet —
+> the product owner confirmed this repo is still mid-build, the pull
+> request stays open rather than merged for now.** This session's own
+> (d-3-a) work doesn't depend on that merge landing first — it's a
+> pure code addition, touches no live secret, and wasn't run against
+> any real project (see Verified, below). Flagging only so a future
+> session doesn't assume "credentials set" means "d-2's patch is live
+> in production" — those are two separate steps, and only the first
+> has happened so far.**
+>
+> **What was built:** `recordTransaction({ reference, type, provider,
+> currency, amount, status })`, exported from `utils/supabase.js`
+> alongside `getSupabaseClient()`. Inserts one row into `transactions`
+> via that same client. Never throws — every failure path (Supabase
+> unconfigured, i.e. `getSupabaseClient()`'s own `isConfigError`;
+> unreachable host; a Postgres/PostgREST-level insert error such as
+> the `status` `CHECK` constraint or the `reference` unique-index
+> collision) is caught and logged via the existing `log()` helper at
+> `'warn'` level, never propagated to a caller — this restates Task
+> 56/d-3's own stated product decision (a logging write failing must
+> never fail or delay the underlying payment/payout call), not a new
+> judgment call made here. Deliberately thin: one insert, no
+> update/upsert-by-reference logic — that's Task 56/d-4's read path
+> and any future status-update need, both separate and not built here.
+>
+> **Verified:** `node --check utils/supabase.js` passes. Functional
+> check, two cases, neither against any real/live project: (1) no env
+> vars set — `recordTransaction()` resolves without throwing, logs
+> `isConfigError`'s message via `log()`. (2) dummy `SUPABASE_URL`
+> pointed at an unreachable host — resolves without throwing, logs the
+> resulting `fetch failed` error. Both confirm the "never throws"
+> contract this part exists for. `npm audit` still reports the same 6
+> pre-existing/transitive vulnerabilities as d-2's own note (1 low, 1
+> moderate, 4 high) — unchanged by this part, still flagged/not fixed,
+> out of scope here.
+>
+> **`db/SCHEMA.md` updated**: its "not yet in this schema" list no
+> longer includes the write-helper itself, now split out as
+> d-3-a (done) vs. d-3-b/d-3-c (`/pay`/`/payout` wiring, still open).
+>
+> **Per the No-skip-ahead rule: no other task was substituted in Task
+> 56/d-3-a's place.**
+>
+> **Per the Patch Handoff Convention, a patch file covering this
+> session's changes was generated and handed to the product owner
+> directly — not applied, not merged, and no live route calls this
+> function yet, all per this session's own instruction to keep
+> documenting and handing over patches rather than merging while the
+> repo is still mid-build.**
+>
+> *(Superseded note, kept for its own record below rather than
+> deleted.)*
+>
+> **Previous newest note (2026-09-08) — Migration `0001` is now
 > LIVE. The product owner ran it themselves, from the second
 > environment, per the DB-Ops Handoff Process — `transactions` table,
 > its index, and its `set_updated_at()` trigger all confirmed created
@@ -9884,13 +9959,63 @@ a future session doesn't miss it.
 handed to the product owner directly — not applied, and no secret
 values set, by this session.**
 
-#### d-3. Write path — persist a transaction record at `/pay` and `/payout` time [ ]
+#### d-3. Write path — persist a transaction record at `/pay` and `/payout` time [ ] (split into a/b/c this session, per the standing mandatory task-splitting rule — a done, b/c not started)
 
 Best-effort, non-blocking: a failed insert (Supabase unreachable, etc.)
 must **not** fail the underlying payment/payout call — this backend's
 core job (moving money) doesn't get gated on a logging write
 succeeding. This is a real product decision, restated here so it isn't
 silently assumed differently by whoever builds this part.
+
+##### d-3-a. Shared `recordTransaction()` insert helper [x]
+
+**Built (2026-09-08):** `recordTransaction({ reference, type, provider,
+currency, amount, status })` added to `utils/supabase.js`. Calls
+`getSupabaseClient()` and inserts one row into `transactions`. Every
+failure path — missing config (`isConfigError`), unreachable Supabase,
+or a Postgres/PostgREST-level error from the insert itself (e.g. the
+`status` `CHECK` constraint, or a `reference` collision against the
+unique index) — is caught and logged via `log(..., 'warn')`, never
+thrown, per this task's own "must not fail the underlying call"
+decision. No update/upsert-by-reference logic — one insert only;
+that's out of scope for this part (see d-4 for the read side).
+
+**Verified:** `node --check utils/supabase.js` passes. Functional
+check (no live project used): (1) no env vars set — resolves without
+throwing, logs the `isConfigError` message; (2) dummy `SUPABASE_URL`
+pointed at an unreachable host — resolves without throwing, logs the
+resulting fetch failure. `npm audit`: same 6 pre-existing/transitive
+vulnerabilities as d-2's own note, unchanged, still out of scope here.
+
+**Not yet wired into any route** — `POST /pay` and `POST /payout`
+don't call this function yet; no transaction rows are written by any
+live request today. That's d-3-b (`/pay`) and d-3-c (`/payout`),
+still open, in that order per this task's own splitting.
+
+**Per the Patch Handoff Convention, a patch file covering this part's
+changes was generated and handed to the product owner directly — not
+applied or merged by this session.**
+
+##### d-3-b. Wire `recordTransaction()` into `POST /pay` [ ]
+
+Not started. Call `recordTransaction()` with `type: 'payment'` after
+`providerInstance.processPayment(paymentData)` resolves, using the
+same `ref`/`providerName`/`resolvedCurrency`/`amount` already in scope
+in that handler — fire-and-forget (or awaited only after the client
+response has already been decided), per d-3-a's "never blocks the
+underlying call" contract. `status` mapping (e.g. does a successful
+`processPayment()` call always mean `'success'`, or does that depend
+on the provider's own response shape) is an open detail for whoever
+builds this part, not decided here.
+
+##### d-3-c. Wire `recordTransaction()` into `POST /payout` [ ]
+
+Not started. Same pattern as d-3-b, with `type: 'payout'`, in the
+`/payout` handler after `provider.processPayout(...)` resolves. This
+is also the part that, once landed, gives d-4's read path
+(`GET /payout/verify`) rows to actually look up — d-4 stays blocked on
+this part in practice even though nothing marks it as a formal
+dependency below.
 
 #### d-4. Read path — `GET /payout/verify` looks up `currency` (and `provider`) by `reference` [ ]
 

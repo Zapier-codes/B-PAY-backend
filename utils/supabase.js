@@ -1,4 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
+import { log } from './helpers.js';
 
 // ==================================================
 // 🗄️ SUPABASE CLIENT (Task 56/d-2)
@@ -54,4 +55,60 @@ export function getSupabaseClient() {
   });
 
   return cachedClient;
+}
+
+// ==================================================
+// 🧾 TRANSACTION RECORDING (Task 56/d-3-a)
+// ==================================================
+// Shared, best-effort helper — the write half of the `transactions`
+// table (migration 0001). Split out of d-3 on its own, per the
+// mandatory task-splitting rule: this session builds only the helper
+// itself; wiring it into POST /pay (d-3-b) and POST /payout (d-3-c)
+// are separate, not-yet-built parts.
+//
+// "Best-effort, non-blocking" is a restated product decision (Task
+// 56/d-3's own text), not this session's own judgment call: this
+// backend's core job is moving money, and a logging write failing
+// (Supabase unreachable, RLS misconfigured, a bad column value, the
+// two env vars still unset on this environment, etc.) must NEVER fail
+// or delay the underlying payment/payout call. So this function never
+// throws — every failure path is caught and logged, not propagated —
+// and callers are expected to call it without awaiting its result on
+// the request's critical path (e.g. `recordTransaction(...).catch(() =>
+// {})` fire-and-forget, or an `await` placed after the
+// payment/payout response has already been decided) once d-3-b/d-3-c
+// actually wire it in.
+//
+// Deliberately thin: one row, one insert, no update/upsert-by-
+// reference logic — Task 56/d-4's read path and any future
+// status-update need are separate, not-yet-built concerns, not
+// silently included here.
+export async function recordTransaction({ reference, type, provider, currency, amount, status }) {
+  let client;
+  try {
+    client = getSupabaseClient();
+  } catch (err) {
+    // Covers getSupabaseClient()'s own isConfigError (env vars not
+    // set on this environment yet) the same way as any other
+    // unexpected failure below — either way, this is a log-and-move-on
+    // case, never a throw.
+    log(`recordTransaction skipped — Supabase not available: ${err.message}`, 'warn');
+    return;
+  }
+
+  try {
+    const { error } = await client
+      .from('transactions')
+      .insert({ reference, type, provider, currency, amount, status });
+
+    if (error) {
+      // A Postgres/PostgREST-level failure (e.g. the CHECK constraint
+      // on `status`, or a duplicate `reference` hitting the unique
+      // index) — surfaced the same as a thrown error, still swallowed
+      // here rather than propagated to the caller.
+      log(`recordTransaction insert failed for reference '${reference}': ${error.message}`, 'warn');
+    }
+  } catch (err) {
+    log(`recordTransaction failed for reference '${reference}': ${err.message}`, 'warn');
+  }
 }

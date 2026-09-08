@@ -198,11 +198,36 @@ export class Juicyway {
   async processPayment(data) {
     const ref = data.reference || generateReference('juicyway');
 
+    // Task 57/a: JuicyWay's real required body (confirmed against
+    // docs.juicyway.com, see Task 45b's own entry in handover.md) is
+    // much richer than the old flat { amount, email, reference,
+    // currency } shape -- it needs description, a payment_method
+    // type, an order identifier/items array, and a full customer
+    // object (first/last name, phone, billing address, type, IP
+    // address), none of which the shared canonical core (amount/
+    // currency/reference/customer.email) carries. Per the new
+    // canonical-envelope convention (handover.md Task 57), those
+    // JuicyWay-specific fields are read from the namespaced
+    // `provider_data.juicyway` object instead of being flattened onto
+    // the shared request shape -- mirrors how PaymentIntent nests
+    // method-specific fields under their own key rather than adding
+    // them to the top level. `email` stays sourced from the canonical
+    // `data.customer.email` regardless of what's in provider_data --
+    // the envelope's core fields always win, provider_data only ever
+    // supplies what the core doesn't already carry.
+    const jw = data.provider_data?.juicyway || {};
+
     const payload = {
       amount: data.amount,
-      email: data.customer?.email,
-      reference: ref,
       currency: data.currency,
+      reference: ref,
+      description: jw.description,
+      payment_method: jw.payment_method || { type: 'card' },
+      order: jw.order,
+      customer: {
+        ...jw.customer,
+        email: data.customer?.email,
+      },
     };
 
     log(`Juicyway Payment Request: ${formatPayload(payload)}`);

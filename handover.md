@@ -3,7 +3,41 @@
 > **▶ START HERE — read this box only, then go straight to work. Skip
 > everything else below unless you get stuck.**
 >
-> **Newest note (2026-09-08, latest of all) — Task 57 created
+> **Newest note (2026-09-08, latest of all) — Task 57/a built:
+> `provider_data` envelope live on `/pay`, JuicyWay's `processPayment`
+> migrated onto it.** `routes.js` now forwards a namespaced
+> `provider_data` object through to each provider (no-op for
+> providers that don't read it, same as `payment_currency`/`channels`
+> already were); `providers/juicyway.js#processPayment` reads
+> `provider_data.juicyway` for `description`/`payment_method`/`order`/
+> extended `customer` fields, with the canonical `data.customer.email`
+> always winning over anything `provider_data` supplies for that same
+> field. **This resolves Task 45b's blocking design decision via
+> cross-reference** — Task 45b itself stays `[ ]`, same convention as
+> Task 52/e-2b-ii against Task 56/d-4. **Still open, deliberately not
+> this part's job:** no validation yet that a caller actually supplied
+> JuicyWay's required nested fields (customer name/phone/billing/type/
+> IP, order identifier/items, description) — an incomplete request
+> still reaches JuicyWay's API and fails there rather than getting a
+> clean 400 naming the missing field. That's Task 57/b's job (the
+> field-requirements registry), next in the a–e split. **Verified:**
+> `node --check` on both changed files, plus a throwaway script
+> (deleted, not committed) exercising the payload-building logic
+> against three cases (full `provider_data`, no `provider_data`,
+> and a deliberate email-override attempt) — all assertions passed.
+> **Not verified end-to-end** — no JuicyWay sandbox keys in this
+> environment, same pre-existing blocker every prior JuicyWay task has
+> noted. Full write-up in Task 57/a's own entry below, `[x]`. Per rule
+> 8, drift-checked first — `git fetch origin` confirmed `origin/main`
+> at `5b06ae6` (this session's own known base, the just-landed Task 57
+> documentation commit), unmoved, so this is a fresh commit on top of
+> it. Per rule 7, only the Patch Handoff block is owed this time — no
+> `db/migrations/` file touched.
+>
+> *(Superseded note, kept for its own record below rather than
+> deleted.)*
+>
+> **Previous newest note (2026-09-08, latest of all) — Task 57 created
 > (canonical `provider_data` envelope + field-requirements registry +
 > Customer Vault), and the new Stripe-as-Reference-Model Convention
 > added — read that section before touching any future design
@@ -5977,8 +6011,20 @@ correctly blocked by this sandbox's own egress proxy; direct source
 inspection above was sufficient for a pure string/literal change like
 this one.
 
-### Task 45b — Fix JuicyWay's request payload shape (missing required nested fields) [ ]
+### Task 45b — Fix JuicyWay's request payload shape (missing required nested fields) [ ] → **resolved via Task 57/a (below) — built 2026-09-08**
 **Added by Task 8b's full audit pass (2026-09-06), doc-research only.**
+**Update, 2026-09-08:** the design decision this task was blocked on
+(does `/pay`'s body grow JuicyWay-specific fields, or does JuicyWay
+get its own route?) was resolved via a third option — see the new
+Stripe-as-Reference-Model Convention and Task 57 — rather than by
+picking either option below. `providers/juicyway.js#processPayment`
+now reads its full documented shape from a namespaced
+`provider_data.juicyway` object; the flat-body problem this entry
+describes no longer exists in the current code. **This entry's own
+`[ ]` is left as-is rather than flipped to `[x]`** — same convention
+Task 52's `e-2b-ii` used against Task 56/d-4 — since the fix landed
+under Task 57/a's own tracked writeup, not this task's. Original
+entry, kept for its own record, follows below.
 `providers/juicyway.js#processPayment` currently builds `{ amount,
 email, reference, currency }` — the documented required body is `{
 amount, currency, description, reference, payment_method: { type:
@@ -10954,24 +11000,55 @@ the envelope now; build the vault as its own tracked follow-on.
 **Split into a–e, per the standing mandatory task-splitting rule — one
 part per session:**
 
-### a. Canonical envelope + `provider_data` on `/pay`, JuicyWay migrated onto it [ ]
-`routes.js`'s `/pay` handler gains a `provider_data` object on the
-request body; `providers/juicyway.js#processPayment` is migrated to
-read its extra required fields (`description`, `payment_method`,
-`order.identifier`, `order.items`, and the full `customer` block —
-first/last name, phone, billing address, type, IP address) from
-`provider_data.juicyway` instead of the flat shape Task 45b's entry
-described. **This is the part that unblocks Task 45b** — Task 45b's
-entry gets updated to point here once this part lands. Existing
-optional fields already on `/pay` today (`payment_currency`,
-`settlement_currency`, `channels`, `default_channel`) are **not**
-migrated into `provider_data` as part of this part — left as their own
-explicit decision (fold into `provider_data.korapay` for consistency,
-or leave as-is since they predate this convention) rather than
-silently expanding this part's scope. Not blocked on API keys to
-write the plumbing; end-to-end confirmation against real JuicyWay
-sandbox keys is still the same pre-existing blocker Task 45b's own
-entry already noted.
+### a. Canonical envelope + `provider_data` on `/pay`, JuicyWay migrated onto it [x]
+**Built 2026-09-08.** `routes.js`'s `/pay` handler now destructures a
+`provider_data` object off the request body and forwards it as-is into
+`paymentData` (same harmless-no-op-for-other-providers pattern already
+established by `payment_currency`/`channels`). `providers/juicyway.js#processPayment`
+reads `data.provider_data?.juicyway` (defaulting to `{}` when absent)
+and builds JuicyWay's real documented body from it: `description`,
+`payment_method` (defaults to `{ type: 'card' }` when not supplied),
+`order`, and a `customer` object that spreads `jw.customer` first and
+then sets `email` from the canonical `data.customer.email` last — so
+the canonical core's email always wins even if `provider_data` tries
+to supply a conflicting one, per the envelope's own "core fields
+always win" rule stated in this task's top-level writeup.
+
+**This is the part that unblocks Task 45b** — Task 45b's own entry
+below is updated to point here, resolved-via-cross-reference, the same
+pattern Task 52/e-2b-ii used against Task 56/d-4. Task 45b is not
+itself marked `[x]` by this — no first/last name, phone, billing
+address, customer type, IP address, order identifier/items, or
+description validation was added; a caller can still send none of it
+and get JuicyWay's `payment_method`-only default, so nothing stops an
+incomplete request from reaching JuicyWay's API and failing there.
+That gap is deliberately Task 57/b's job (the field-requirements
+registry), not silently absorbed into this part.
+
+**Existing optional fields already on `/pay` today**
+(`payment_currency`, `settlement_currency`, `channels`,
+`default_channel`) were **not** migrated into `provider_data` as part
+of this part — left as their own explicit decision (fold into
+`provider_data.korapay` for consistency, or leave as-is since they
+predate this convention) rather than silently expanding this part's
+scope, per this task's own top-level writeup flagging that choice in
+advance.
+
+**Verified:** `node --check` on both changed files; a throwaway script
+(deleted, not committed) exercising the exact payload-building
+expression against three cases — full `provider_data` supplied,
+`provider_data` entirely absent (old-style caller, confirms backward
+compatibility), and a `provider_data.juicyway.customer.email` deliberately
+set to conflict with the canonical email (confirms the canonical value
+wins) — all assertions passed. **Not verified end-to-end** against a
+real JuicyWay sandbox call — same pre-existing blocker (no sandbox
+keys in this environment) every prior JuicyWay task has noted.
+
+**Per the Patch Handoff Convention, a patch file covering this part's
+changes (`routes.js`, `providers/juicyway.js`, this handover.md
+update) was generated and handed to the product owner directly,
+together with the exact apply/push command block per rule 7 — not
+applied or merged by this session.**
 
 ### b. Field-requirements registry [ ]
 Data-driven registry (one entry per provider) declaring required/

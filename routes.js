@@ -605,7 +605,16 @@ router.post('/pay', requireInternalApiKey, async (req, res) => {
     // compatibility (old clients may still send it) but is
     // deliberately not read here anymore — see the routing-precedence
     // comment below for why (Task 52/e-2 part a).
-    const { action, provider, amount, customer, currency, reference, payment_currency, settlement_currency, channels, default_channel } = req.body;
+    // Task 57/a: `provider_data` is the new namespaced envelope for
+    // provider-specific fields that don't belong on the shared
+    // canonical core (see handover.md Task 57) -- e.g.
+    // `provider_data.juicyway` carries JuicyWay's description/
+    // payment_method/order/extended-customer fields. Forwarded as-is;
+    // each provider's own processPayment() decides what (if anything)
+    // to read from its own namespaced key. Harmless no-op for any
+    // provider that doesn't look at it, same as payment_currency/
+    // channels below already are for non-Korapay providers.
+    const { action, provider, amount, customer, currency, reference, payment_currency, settlement_currency, channels, default_channel, provider_data } = req.body;
 
     log(`Payment Request Received: ${formatPayload(req.body)}`);
 
@@ -699,6 +708,9 @@ router.post('/pay', requireInternalApiKey, async (req, res) => {
       // none of their processPayment() implementations read these keys.
       channels,
       default_channel,
+      // Task 57/a: namespaced provider-specific envelope -- see the
+      // destructuring comment above for what this carries and why.
+      provider_data,
     };
 
     const result = await providerInstance.processPayment(paymentData);

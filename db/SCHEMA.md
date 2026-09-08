@@ -6,16 +6,20 @@ is a short, current index so a session doesn't have to reconstruct the
 schema by reading every migration in order. **Update this file in the
 same session as any migration that changes it.**
 
-**Migration `0001` is confirmed live** (2026-09-08) — applied by the
-product owner via `psql -f`, from the second (proot-distro Ubuntu)
-environment, against project ref `mfekzzwsoiezqkovabmp`. Every
-migration after `0001` in `db/migrations/` still needs its own
-confirmation the same way before this file should be treated as
-describing live state for it — check `handover.md`'s per-migration
-notes, or run `\dt`/`\d <table>` yourself, rather than assuming
-everything in this directory has been applied just because `0001` has.
-Migrations `0002` (transactions RLS), `0003` (customers table), and
-`0004` (customers RLS) are not yet confirmed live as of this update.
+**Migrations `0001`, `0003`, and `0004` are confirmed live** (2026-09-08)
+— `0001` applied by the product owner via `psql -f`, from the second
+(proot-distro Ubuntu) environment, against project ref
+`mfekzzwsoiezqkovabmp`; `0003`/`0004` applied the same way, same
+session as this update (`CREATE TABLE` / `CREATE TRIGGER` / `ALTER
+TABLE` / `CREATE POLICY` all confirmed — the `DROP TRIGGER IF EXISTS`
+"does not exist, skipping" notice is expected on a brand-new table,
+same as `0001` saw for `transactions`). Every migration in
+`db/migrations/` not listed here still needs its own confirmation the
+same way before this file should be treated as describing live state
+for it — check `handover.md`'s per-migration notes, or run
+`\dt`/`\d <table>` yourself, rather than assuming everything in this
+directory has been applied just because some of it has. Migration
+`0002` (transactions RLS) is not yet confirmed live as of this update.
 
 ## Shared conventions (locked in by migration `0001`, followed by every migration after)
 
@@ -98,9 +102,9 @@ same pattern as `transactions_service_role_all` above, same reasoning.
 No policy for `anon`/`authenticated`.
 
 **Not yet wired to anything.** Task 57/d (vault read/write logic) and
-Task 57/e (`/pay` end-to-end wiring) are still open — this table
-exists in the schema but nothing in the running application reads
-from or writes to it as of this update.
+Task 57/e (`/pay` end-to-end wiring) are still open — this table is
+now live in the schema (confirmed above) but nothing in the running
+application reads from or writes to it as of this update.
 
 ## Functions
 

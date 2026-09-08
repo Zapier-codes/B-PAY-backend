@@ -3,7 +3,36 @@
 > **▶ START HERE — read this box only, then go straight to work. Skip
 > everything else below unless you get stuck.**
 >
-> **Newest note (2026-09-08, latest of all) — Task 57/c built:
+> **Newest note (2026-09-08, latest of all) — Task 57/c's migrations
+> confirmed live: `customers` table + RLS now exist in this backend's
+> Supabase project.** The product owner ran both `psql -f
+> db/migrations/0003_create_customers_table.sql` and `psql -f
+> db/migrations/0004_customers_rls.sql` against project ref
+> `mfekzzwsoiezqkovabmp`, from the second (proot-distro Ubuntu)
+> environment — `CREATE TABLE`, `CREATE TRIGGER`, `ALTER TABLE`,
+> `CREATE POLICY` all confirmed (the `DROP TRIGGER IF EXISTS` "does not
+> exist, skipping" notice is expected on a brand-new table, same as
+> `0001` saw for `transactions`). `customers` is live with RLS enabled
+> — same status `transactions` reached at the end of Task 56/d, reached
+> here in this same task's own patch rather than split across two.
+> **No code changed this update** — this is a documentation-only
+> confirmation, recorded in Task 57/c's own entry below (new "Applied
+> live" paragraph, added alongside — not replacing — its existing
+> "Verified" paragraph) and in `db/SCHEMA.md` (migration-confirmed-live
+> note now includes `0003`/`0004`; only `0002`, transactions RLS,
+> remains unconfirmed). Per rule 8, drift-checked first — `git fetch
+> origin` confirmed `origin/main` unmoved from this session's own known
+> base (the just-landed Task 57/c patch, itself already applied — this
+> update only adds the live-confirmation fact on top, no re-application
+> of anything). Per rule 7, only the Patch Handoff block is owed for
+> this update — nothing here touches `db/migrations/` itself, and no
+> new live command is being handed over (the live commands already ran,
+> successfully, per the product owner's own report above).
+>
+> *(Superseded note, kept for its own record below rather than
+> deleted.)*
+>
+> **Previous newest note (2026-09-08, latest of all) — Task 57/c built:
 > `customers` table (the "Customer Vault", Task 57 Piece 2) + RLS,
 > migrations `0003`/`0004`.** `0003_create_customers_table.sql` adds
 > `first_name`/`last_name`/`phone_number`/`billing_address`/
@@ -11276,17 +11305,26 @@ reads/writes it).
 **Verified:** both migrations parsed successfully against real
 Postgres grammar via `pglast` (`parse_sql`) — 3 statements in `0003`,
 2 in `0004`, no syntax errors. Same verification method Task 56/d-1
-used for migration `0001`. **Not run against any live database** — per
-the Patch Handoff Convention and the DB-Ops Handoff Process, no
-session applies a migration to a live Supabase project on its own
-authority; that step is the product owner's, from the second
-environment.
+used for migration `0001`.
+
+**Applied live (2026-09-08, later the same day), by the product owner
+themselves, from the second environment:** `psql -f
+db/migrations/0003_create_customers_table.sql` then `psql -f
+db/migrations/0004_customers_rls.sql`, both against project ref
+`mfekzzwsoiezqkovabmp` — `CREATE TABLE`, `CREATE TRIGGER`, `ALTER
+TABLE`, `CREATE POLICY` all confirmed (the `DROP TRIGGER IF EXISTS`
+"does not exist, skipping" notice is expected on a brand-new table,
+same as `0001` saw for `transactions`). `customers` is now live in
+this backend's Supabase project, with RLS enabled — same live/RLS
+status `transactions` reached at the end of Task 56/d, reached here
+in this same session's own patch rather than split across two.
 
 `db/SCHEMA.md` updated in the same session: `customers`' own entry
 added (columns, exclusions, RLS, "not yet wired to anything" note),
-the migration-confirmed-live note extended to flag `0002`-`0004` as
-all not yet confirmed live, and the "Not yet in this schema" section
-updated to record (c) as built and (d)/(e) as the remaining open work.
+the migration-confirmed-live note extended to include `0003`/`0004`
+alongside `0001` (only `0002`, transactions RLS, remains
+unconfirmed), and the "Not yet in this schema" section updated to
+record (c) as built and (d)/(e) as the remaining open work.
 
 **Per the Patch Handoff Convention, a patch file covering this part's
 changes (both new migrations, `db/SCHEMA.md`, this handover.md update)

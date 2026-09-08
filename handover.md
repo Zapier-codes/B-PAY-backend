@@ -7923,7 +7923,7 @@ match afterward, not the other way around.
 
 ---
 
-## Task 52 — Implement every gap Task 51's capability matrix flagged: build out Juicyway/Korapay/Paystack/Flutterwave fully so the domain-based routing model is real, not aspirational [ ] (a-2 is X, per the 2026-09-08 session's resolution of a-1 in full — see Task Numbering & Workflow Convention above)
+## Task 52 — Implement every gap Task 51's capability matrix flagged: build out Juicyway/Korapay/Paystack/Flutterwave fully so the domain-based routing model is real, not aspirational [ ] (a-3 is X, per the 2026-09-08 session's resolution of a-2 — see Task Numbering & Workflow Convention above)
 
 **Scope note, read first:** this task exists because Task 51 recorded
 a *decision* (Juicyway defaults for every international-rails
@@ -7939,16 +7939,15 @@ Convention, not to close the gap itself (no code was written this
 session — decision/scoping record only, same as Task 51).
 
 **Exactly one leaf below carries the `X` marker at any time, per the
-Workflow Convention.** This session (2026-09-08) closed out all of
-a-1 (i through iv) — see a-1's own section below for citations and
-the accompanying code patch, including one carried-forward caveat
-(a-1-iv's endpoint path feeds into Task 45a rather than blocking this
-board). `X` now moves to **a-2**, to be split into the same i/zi/zo
-shape as a-1 was once someone picks it up. Whichever session picks
-this up next works ONLY on a-2 until it's solved, then moves `X` to
-a-3, then b, then c, then d, then e — unless the product owner
-explicitly reprioritizes, in which case update this line to say so
-and move `X` accordingly.
+Workflow Convention.** This session (2026-09-08) closed a-1 (i-iv) and
+a-2 — see each section below for citations and the accompanying code
+patches, including a-2's finding that JuicyWay payouts must be
+verified by JuicyWay's own returned `id`, not the caller's `reference`.
+`X` now moves to **a-3**, to be split into the same i/zi/zo shape as
+a-1/a-2 were once someone picks it up. Whichever session picks this up
+next works ONLY on a-3 until it's solved, then moves `X` to b, then c,
+then d, then e — unless the product owner explicitly reprioritizes, in
+which case update this line to say so and move `X` accordingly.
 
 ### a. Juicyway — build the missing international-rails methods [ ]
 
@@ -8136,13 +8135,34 @@ rather than hidden:**
 
 
 
-#### a-2. `verifyPayout` — international verify-payout [ ]
+#### a-2. `verifyPayout` — international verify-payout [x]
 
-Needs Juicyway's payout-verification endpoint confirmed (by reference?
-by provider-side transaction ID? — this file's own JuicyWay research
-above already flagged a reference-lookup gap on the collection side;
-check whether the same gap exists on payout before assuming it
-doesn't), then implemented matching `Korapay.verifyPayout`'s shape.
+Resolved this session (2026-09-08). Endpoint located via
+`docs.juicyway.com/llms.txt` ("Get payout details", sibling to a-1's
+confirmed `POST /payouts` in the same reference tree, immediately
+after "Generate a payout receipt" / "Get charge for a payout" and
+before "List payouts") — the dedicated reference page itself could
+not be fetched this session (same fetch-tool restriction that blocked
+a-1-iv's Create Beneficiary page), so the exact path is inferred from
+JuicyWay's own consistent sibling pattern (`GET /bulk-transfers/{id}`
+confirmed for "Get bulk payout details") rather than confirmed
+directly — flagged the same way a-1-iv's endpoint was, NOT presented
+as settled.
+
+**The real finding here, and the reason this isn't a straight
+`Korapay.verifyPayout` port:** a-1-i-zo's own worked-example response
+(`initiate-bank-transfer.md`) has no `reference` field in its response
+body at all — only JuicyWay's own `id`. `Korapay.verifyPayout(reference)`
+looks a payout up by the caller's own reference string; nothing
+confirms JuicyWay supports that. So `Juicyway.verifyPayout()` here
+takes the JuicyWay-assigned `id` (returned from `processPayout()`'s
+response as `result.data.id`), not the caller's own reference — this
+is the exact "reference-lookup gap" this leaf's own original text
+predicted checking for, now confirmed to exist on the payout side too.
+**Callers must store `data.id` from the `processPayout()` response if
+they want to verify it later** — this codebase does not do that
+anywhere yet (a `routes.js`/persistence concern for (e), not this
+leaf).
 
 #### a-3. `getBanks` — international bank/institution list lookup [ ]
 

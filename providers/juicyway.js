@@ -106,6 +106,56 @@ export class Juicyway {
     return result;
   }
 
+  // ==================================================
+  // 🔍 VERIFY PAYOUT
+  // ==================================================
+  // Task 52/a-2 (2026-09-08). Endpoint located via
+  // docs.juicyway.com/llms.txt ("Get payout details", sibling to
+  // processPayout()'s confirmed POST /payouts in the same reference
+  // tree) -- the dedicated reference page itself would not fetch this
+  // session, so `/payouts/{id}` below is inferred from JuicyWay's own
+  // consistent sibling pattern (GET /bulk-transfers/{id} is confirmed
+  // for bulk payouts), NOT independently confirmed. Same "verify
+  // before relying on this outside a sandbox smoke test" caveat as
+  // createBeneficiary()'s endpoint above.
+  //
+  // IMPORTANT, and the reason this does NOT take a `reference` string
+  // the way Korapay.verifyPayout does: the worked-example response in
+  // processPayout()'s own docblock has no `reference` field at all --
+  // only Juicyway's own `id`. So this takes that `id` (whatever
+  // processPayout()'s response returned as `data.id`), not the
+  // caller's own reference. Callers must persist that id themselves;
+  // this codebase does not do so anywhere yet.
+  async verifyPayout(id) {
+    log(`Juicyway Payout Verification Request for: ${id}`);
+
+    const result = await handleApiCall(async () => {
+      const response = await fetch(`${this.baseUrl}/payouts/${encodeURIComponent(id)}`, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${this.apiKey}`,
+          'Content-Type': 'application/json',
+        },
+      });
+
+      const responseData = await response.json();
+
+      // Same reasoning as Korapay.verifyPayout: this call's whole
+      // purpose is to learn the payout's lifecycle state, including a
+      // failed one -- so, unlike processPayout(), this does NOT throw
+      // on a failed/rejected status. It only throws if Juicyway
+      // itself couldn't find/return the payout at all.
+      if (!response.ok) {
+        throw providerError(responseData.message || 'Juicyway payout verification failed');
+      }
+
+      return responseData;
+    }, 'juicyway');
+
+    log(`Juicyway Payout Verification Response: ${formatPayload(result)}`);
+    return result;
+  }
+
   async processPayment(data) {
     const ref = data.reference || generateReference('juicyway');
 

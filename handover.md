@@ -3,7 +3,57 @@
 > **▶ START HERE — read this box only, then go straight to work. Skip
 > everything else below unless you get stuck.**
 >
-> **Newest note (2026-09-08, latest of all) — Second (Termux →
+> **Newest note (2026-09-08, latest of all) — Task 56/d-1 built:
+> migration `0001` creates the `transactions` table and locks in this
+> repo's shared schema conventions; `db/SCHEMA.md` created. Per the
+> No-skip-ahead rule, this was the next unchecked buildable part in
+> the queue. Not applied to any live database — that's still the
+> product owner's own step, from the second environment, once Task
+> 56/c's "which Supabase project" question is answered.**
+>
+> **Before starting:** confirmed the previous session's docs patch had
+> actually landed — `git fetch origin` showed `origin/main` at
+> `5cf2188`, matching this sandbox's own locally-committed version of
+> the same change byte-for-byte (`git diff` against it was empty).
+> Local clone reset to `origin/main` before starting new work, per
+> this file's own "reset to match before starting" pattern.
+>
+> **What was built:** `db/migrations/0001_create_transactions_table.sql`
+> — exactly the columns Task 56/d-1 specifies (`reference` unique/
+> indexed, `type` payment-vs-payout, `provider`, `currency`, `amount`,
+> `status`, `created_at`/`updated_at`), plus a shared
+> `set_updated_at()` trigger function since Postgres has no built-in
+> `ON UPDATE` clause. Conventions locked in for every migration after
+> this one, per Task 56/b: `id` is `uuid` / `gen_random_uuid()` (via
+> `pgcrypto`, declared rather than assumed enabled); timestamps are
+> `timestamptz` / `default now()`; `status` is `text` + `CHECK`, not a
+> Postgres `enum`. No `business_id` or other FK — per (b)'s "no
+> placeholder FKs" rule, that waits for a `businesses` table to
+> actually exist. `db/SCHEMA.md` created alongside it as the running
+> schema index Task 56/b calls for.
+>
+> **Verified:** the migration file parses successfully against real
+> Postgres grammar (`pglast.parse_sql`, 6/6 statements, no errors) —
+> a static syntax check only. **Not run against any live database**,
+> and not going to be by any session on its own authority — per Task
+> 56/b's own table and the DB-Ops Handoff Process section below, that
+> step is the product owner's, and Task 56/c's own "same project as
+> Reseller/VTU, or a separate one" question is still open ahead of it.
+>
+> **Per the No-skip-ahead rule: no other task in this repo's queue was
+> substituted in Task 56/d-1's place** — this was the genuinely next,
+> genuinely unblocked (for *writing*, not applying) part, per Task
+> 56/d's own "one per session, in order" instruction.
+>
+> **Per the Patch Handoff Convention, a patch file covering this
+> migration, `db/SCHEMA.md`, and this `handover.md` update was
+> generated and handed to the product owner directly — not applied,
+> and not run against any database, by this session.**
+>
+> *(Superseded note, kept for its own record below rather than
+> deleted.)*
+>
+> **Previous newest note (2026-09-08) — Second (Termux →
 > proot-distro Ubuntu) environment stood up for live DB operations;
 > Supabase Postgres connectivity confirmed working; schema still
 > empty. New "DB-Ops Handoff Process" convention adopted, MANDATORY
@@ -9653,7 +9703,7 @@ it `[x]` with the usual verification/patch-handoff write-up — same
 discipline as every other multi-part task in this file (e.g. Task
 52/d-2's own a/b/c split).
 
-#### d-1. Write migration `0001`: create the `transactions` table + lock in shared conventions + create `db/SCHEMA.md` [ ]
+#### d-1. Write migration `0001`: create the `transactions` table + lock in shared conventions + create `db/SCHEMA.md` [x]
 
 Columns needed to resolve e-2b-ii specifically: `reference` (unique,
 indexed — this is what `/payout/verify` looks up by), `type`
@@ -9664,6 +9714,33 @@ here per d-3), `provider`, `currency`, `amount`, `status`,
 a `businesses` table actually exists. This is also where the
 id/timestamp/status conventions in (b) get decided, once, for every
 table after.
+
+**Built (2026-09-08):** `db/migrations/0001_create_transactions_table.sql`
+creates `transactions` with exactly the columns above, plus a unique
+index on `reference` and a shared `set_updated_at()` trigger function
+(Postgres has no built-in `ON UPDATE` clause) so `updated_at` stays
+current without per-table logic. Conventions locked in, per (b): `id`
+is `uuid` / `gen_random_uuid()` (via `pgcrypto`, declared with
+`create extension if not exists` rather than assumed already enabled);
+`created_at`/`updated_at` are `timestamptz`, `default now()`; `status`
+is `text` + a `CHECK` constraint (`'pending'` / `'success'` /
+`'failed'`), not a Postgres `enum`, so a later migration can extend
+the allowed list without an `ALTER TYPE`. `db/SCHEMA.md` created
+alongside it, documenting both the table and the shared conventions
+for every migration after this one to follow.
+
+**Verified:** parsed successfully against real Postgres grammar via
+`pglast` (`parse_sql`) — 6 statements, no syntax errors. **Not** run
+against any live database — per Task 56/b's own table and the DB-Ops
+Handoff Process, no session applies a migration to a live Supabase
+project on its own authority; that step is the product owner's, from
+the second environment, once Task 56/c's still-open "which project"
+question is answered.
+
+**Per the Patch Handoff Convention, a patch file covering this
+migration, `db/SCHEMA.md`, and this `handover.md` update was generated
+and handed to the product owner directly — not applied, and not run
+against any database, by this session.**
 
 #### d-2. Wire a Supabase client into this backend [ ]
 

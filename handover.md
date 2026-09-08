@@ -3,6 +3,43 @@
 > **▶ START HERE — read this box only, then go straight to work. Skip
 > everything else below unless you get stuck.**
 >
+> **Newest note (2026-09-08, latest of all, supersedes the Task 52/c
+> note below) — Task 55 written: two more product decisions,
+> decision-record only, no code this session.** **(1) Flutterwave
+> v3-vs-v4 is no longer either/or — build both, dynamically
+> switchable at runtime**, resolving Task 52/d-1's blocking open item
+> (previously "pick one before writing any code"). **(2) "Capability-
+> mix" formalized as an explicit architectural principle**: a single
+> logical operation (e.g. a payout for an already-KYC'd customer) is
+> composed of independently-routed steps — KYC via one provider,
+> payout via another — each governed by its own domain's default+
+> fallback table (Task 51, Task 54/a), not required to stay within one
+> provider end-to-end. This wasn't a new capability so much as making
+> explicit what Task 53/d's KYC-once-reused-everywhere and Task 54/a's
+> per-domain routing tables already implied. See Task 55 below for the
+> full write-up and what changes in Task 52/d as a result (`X` moves
+> from d-1 to d-2, d-2 itself re-split to cover both API generations
+> plus the runtime switch). **Per the Patch Handoff Convention, a
+> patch file covering this handover.md update was generated and handed
+> to the product owner directly — not applied or pushed by this
+> session.**
+>
+> **Newest note (2026-09-08, previous) — Task 52/c written: Paystack
+> payout/verify-payout/bank-list implemented for real (not a decision-
+> record leaf — actual code, see this session's patch).**
+> `providers/paystack.js` gained `createTransferRecipient`,
+> `processPayout`, `verifyPayout`, `getBanks`, confirmed against
+> Paystack's transfer-surface primary docs for the first time (Task 8
+> had only ever audited the charge surface). Real gap flagged, not
+> hidden: a transfer's `status` comes back `"otp"` unless Transfers OTP
+> is disabled on the dashboard, and an `"otp"` transfer needs manual
+> finalization this codebase does not implement. `X` moved to (d)
+> Flutterwave — now superseded by Task 55's split above. **Per the
+> Patch Handoff Convention, a patch file covering this handover.md
+> update, plus the `providers/paystack.js` code change, was generated
+> and handed to the product owner directly — not applied or pushed by
+> this session.**
+>
 > **Newest note (2026-09-07, latest of all, supersedes the Task 53
 > note below) — Task 54 written: three more product decisions,
 > decision-record only, no code this session.** **(1) KYC/KYB is now
@@ -7923,7 +7960,7 @@ match afterward, not the other way around.
 
 ---
 
-## Task 52 — Implement every gap Task 51's capability matrix flagged: build out Juicyway/Korapay/Paystack/Flutterwave fully so the domain-based routing model is real, not aspirational [ ] (d is X, per the 2026-09-08 session's resolution of (c) — see Task Numbering & Workflow Convention above)
+## Task 52 — Implement every gap Task 51's capability matrix flagged: build out Juicyway/Korapay/Paystack/Flutterwave fully so the domain-based routing model is real, not aspirational [ ] (d-2 is X, per Task 55's resolution of d-1 — see Task Numbering & Workflow Convention above)
 
 **Scope note, read first:** this task exists because Task 51 recorded
 a *decision* (Juicyway defaults for every international-rails
@@ -7944,9 +7981,12 @@ JuicyWay, and (b), Korapay — the latter resolved as a decision
 correction (Korapay's payout API is architecturally capped at six
 African currencies, confirmed via Kora's own support docs; Task
 51/b-1 and the capability matrix corrected accordingly), not code —
-and now (c), Paystack, this time with real code (see (c)'s own entry
-below). `X` now moves to **(d) Flutterwave**. Whichever session picks
-this up next works ONLY on d until it's solved, then moves `X` to e —
+and (c), Paystack, with real code (see (c)'s own entry below). `X`
+then moved to **(d) Flutterwave**, specifically **d-1**, the
+v3-vs-v4 decision — which Task 55 has now resolved (build both,
+dynamically switchable; see Task 55 below, and (d)'s own updated
+entry). `X` now moves to **d-2**. Whichever session picks this up
+next works ONLY on d-2 until it's solved, then moves `X` to e —
 unless the product owner explicitly reprioritizes, in which case
 update this line to say so and move `X` accordingly.
 
@@ -8298,26 +8338,46 @@ No `providers/flutterwave.js` exists. This file's own prior research
 doc-audit; this branch is about turning that research into working
 code, which is a different kind of work and should stay its own leaf.
 
-#### d-1. Resolve the v3-vs-v4 version decision [ ]
+#### d-1. Resolve the v3-vs-v4 version decision [x]
 
-Blocks every other Flutterwave leaf. This file's research found
-Flutterwave "currently publishes two overlapping API generations" with
-the older v3 matching this repo's existing provider shape and v4 being
-actively promoted as the new default — this is a product decision
-(which version to build against), not something resolvable from docs
-alone. Needs the product owner's direct input, same pattern as Task 49
-resolved JuicyWay's stablecoin question.
+**Resolved by the product owner, Task 55 (2026-09-08) — decision-
+record only, no code this session.** Not "pick one" as originally
+scoped: **build both v3 and v4, dynamically switchable at runtime**,
+so either generation can be selected per call (or per environment)
+without a code deploy — see Task 55/a below for the full write-up,
+including what this means for `getProviderKey()`'s existing shape (v3
+needs only a static secret key; v4 needs a `client_id`/`client_secret`
+pair plus the in-memory token-refresh manager the original discovery
+pass already flagged as a new category of moving part for this repo).
 
-#### d-2. Implement `providers/flutterwave.js` against whichever version d-1 picks [ ]
+#### d-2. Implement `providers/flutterwave.js` against BOTH v3 and v4, with a runtime switch [ ]
 
-`processPayment`, `verifyTransaction`, `processPayout`, `verifyPayout`,
-`getBanks`, `verifyWebhookSignature` — full parity with Korapay's
-method set, since Task 51 lists Flutterwave as a fallback candidate in
-*both* domains. This file's own Flutterwave research above already has
-confirmed findings for several of these (webhook header name,
-OAuth/bearer-token flow for v4, base-URL env-select bug to avoid
-copying) — reread that section before starting, don't re-research from
-scratch.
+**Re-scoped from the original d-2 ("against whichever version d-1
+picks") to reflect Task 55/a's "build both" decision — this is the
+current `X`.** Needs, per version:
+- **v3**: `processPayment`, `verifyTransaction`, `processPayout`,
+  `verifyPayout`, `getBanks`, `verifyWebhookSignature` — full parity
+  with Korapay's method set, matching this repo's existing static-key
+  pattern exactly (`getProviderKey('flutterwave', 'secret')` needs no
+  new shape for this half).
+- **v4**: the same method set, but built on the OAuth2 client-
+  credentials flow the original discovery pass confirmed (`POST
+  https://idp.flutterwave.com/realms/flutterwave/protocol/openid-
+  connect/token`, `access_token` cached in-process and refreshed
+  before its ~10-minute `expires_in` lapses — no DB per Task 0's
+  constraint, so this cache does not survive a cold start). Reread
+  that discovery section (search "Flutterwave — FULL API discovery
+  pass") before starting, including its two flagged inconsistencies
+  (the swapped-base-URL bug in Flutterwave's own sample code; the
+  two different token-endpoint hosts named across its own docs) —
+  neither is resolved yet and both need a real sandbox call to settle
+  before trusting either one in production.
+- **The runtime switch itself**: an explicit open design question, not
+  decided here — whether the version is chosen per-call (a `version`
+  field on the request), per-environment (an env var), or via the same
+  promote-to-default mechanism Task 52/e-2 already left open for
+  routing in general. Whoever picks up d-2 should decide this as part
+  of the leaf, not invent a fourth option silently.
 
 ### e. Routing-layer rewrite — make `routes.js` actually use the Task 51 model [ ]
 
@@ -8344,6 +8404,11 @@ stated reason for keeping fallbacks fully built) promote a fallback to
 default without a code deploy — whether that's an env var, a config
 file, or an admin-dashboard toggle (Task 46 already scoped an admin
 dashboard) is an open design question for this leaf, not decided here.
+
+**Cross-reference, Task 55/b:** this leaf now also needs to account
+for capability-mix flows (KYC via one provider, payout via another,
+within the same logical operation) rather than assuming a single
+provider serves an entire flow end-to-end — see Task 55/b below.
 
 ---
 
@@ -8589,5 +8654,89 @@ changes. This task exists so the next session has all three decisions
 demotion) on record before picking up implementation. Task 52's `X`
 marker (Juicyway `processPayout`, Task 52/a-1) is unaffected and
 remains the current single atomic unit of work on the board.
+
+---
+
+## Task 55 — Flutterwave v3-vs-v4 resolved as build-both-dynamically-switchable; capability-mix across providers within one operation formalized [ ]
+
+**Scope note, read first:** decision-record only, same discipline as
+Tasks 51/52-b/53/54. No code, no schema, no `providers/*.js` changes
+this session — the `providers/paystack.js` code from this session's
+earlier Task 52/c work is a separate patch, already committed before
+this task was written. Per the Patch Handoff Convention, a
+`git format-patch` file covering this handover.md update is generated
+and handed to the product owner directly this session — not applied
+or pushed here.
+
+### a. Flutterwave v3-vs-v4 — resolved as "build both", not "pick one"
+
+**Stated directly by the product owner this session, superseding Task
+52/d-1's original either/or framing:** rather than choosing v3 or v4,
+`providers/flutterwave.js` builds **both** API generations and
+switches between them **dynamically at runtime**, so either can be
+used per call (or per environment) without a code deploy — the same
+default-with-swappable-fallback *spirit* Task 51 established for
+provider routing, applied here one level down, to API generations of
+a single provider rather than to providers themselves.
+
+| Field | Value |
+|---|---|
+| Decision | Build v3 AND v4 in `providers/flutterwave.js`, selectable at runtime — not a build-time choice |
+| v3 shape | Static secret key, `Authorization: Bearer {secret_key}` — matches this repo's existing `getProviderKey()` pattern exactly, no new credential category |
+| v4 shape | OAuth2 client-credentials (`client_id`/`client_secret` → `access_token`, ~10min `expires_in`) — needs this repo's first token-refresh-manager, held in-process memory only (no DB, per Task 0's constraint), re-fetched on cold start |
+| Switch mechanism | **Not decided this session** — left as an explicit open question for Task 52/d-2 (per-call field vs. per-environment env var vs. the same promote-to-default mechanism Task 52/e-2 already left open for routing) |
+| Effect on Task 52 | Re-splits d-2 (see Task 52/d's own updated entry) — `X` moves from d-1 (now resolved) to d-2 |
+| Changelog | 2026-09-08 — table created this session, per product-owner direction (this task) |
+
+**Real open item, not resolved by this decision:** the original
+discovery pass's two flagged inconsistencies in Flutterwave's own
+v4 docs (a swapped-base-URL bug in Flutterwave's sample code; two
+different token-endpoint hosts named across the same page) still need
+a real sandbox call to settle — building "both" doesn't remove that
+verification step for the v4 half, it just means it now blocks half
+the provider instead of all of it.
+
+### b. Capability-mix across providers within one operation — formalized as an explicit principle
+
+**Stated directly by the product owner this session, in response to a
+direct clarifying question this session asked** (three options were
+offered — parallel/race, amount-split, and capability-mix; the product
+owner chose capability-mix): a single logical operation is not
+required to stay within one provider end-to-end. Different **steps**
+of the same flow can be routed to different providers independently —
+e.g. KYC/KYB verification via PaymentPoint, then a payout for that
+same now-verified customer via Juicyway or Korapay — each step
+governed by its own domain's existing default+fallback table (Task 51
+for payment rails, Task 54/a for KYC/KYB), not bound to whichever
+provider handled an earlier step in the same flow.
+
+**This is not a new capability so much as making explicit what this
+file's own prior decisions already implied but never stated as a named
+principle:** Task 53/d's "verified once, reused across Korapay,
+Juicyway, or any future provider without a redundant re-verification
+call" already described exactly this pattern for KYC specifically;
+Task 54/a's per-domain default+fallback tables already implied each
+domain (KYC/KYB, payment rails, gift cards, VTU) routes independently.
+What this task adds is naming it as a cross-cutting architectural rule
+so future sessions building e-1/e-2 (Task 52/e) design the routing
+layer around independently-routed steps from the start, rather than
+accidentally coupling a whole flow to one provider's identity and
+having to retrofit capability-mix in later.
+
+**Explicitly NOT decided by this task, left for Task 52/e-2 or a
+future leaf:** parallel/race (calling multiple providers at once,
+first success wins) and amount-split (dividing one payout across
+providers) — both were offered as alternative interpretations this
+session and both were declined in favor of capability-mix. Neither is
+in scope; a future session should not assume either is wanted just
+because "multi-provider" appears in this file's history.
+
+### c. Not yet done, this session, deliberately
+
+No code, no schema, no `providers/flutterwave.js`, no `ROUTING_RULES`
+changes. This task exists so the next session has both decisions
+(Flutterwave build-both-dynamically-switchable, capability-mix as a
+named principle) on record before picking up Task 52/d-2, which is
+where actual Flutterwave code gets written.
 
 ---

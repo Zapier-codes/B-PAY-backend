@@ -7923,7 +7923,7 @@ match afterward, not the other way around.
 
 ---
 
-## Task 52 — Implement every gap Task 51's capability matrix flagged: build out Juicyway/Korapay/Paystack/Flutterwave fully so the domain-based routing model is real, not aspirational [ ] (c is X, per the 2026-09-08 session's resolution of (b) — see Task Numbering & Workflow Convention above)
+## Task 52 — Implement every gap Task 51's capability matrix flagged: build out Juicyway/Korapay/Paystack/Flutterwave fully so the domain-based routing model is real, not aspirational [ ] (d is X, per the 2026-09-08 session's resolution of (c) — see Task Numbering & Workflow Convention above)
 
 **Scope note, read first:** this task exists because Task 51 recorded
 a *decision* (Juicyway defaults for every international-rails
@@ -7940,12 +7940,13 @@ session — decision/scoping record only, same as Task 51).
 
 **Exactly one leaf below carries the `X` marker at any time, per the
 Workflow Convention.** This session (2026-09-08) closed all of (a),
-JuicyWay, and now (b), Korapay — the latter resolved as a decision
+JuicyWay, and (b), Korapay — the latter resolved as a decision
 correction (Korapay's payout API is architecturally capped at six
 African currencies, confirmed via Kora's own support docs; Task
-51/b-1 and the capability matrix corrected accordingly), not code.
-`X` now moves to **(c) Paystack**. Whichever session picks this up
-next works ONLY on c until it's solved, then moves `X` to d, then e —
+51/b-1 and the capability matrix corrected accordingly), not code —
+and now (c), Paystack, this time with real code (see (c)'s own entry
+below). `X` now moves to **(d) Flutterwave**. Whichever session picks
+this up next works ONLY on d until it's solved, then moves `X` to e —
 unless the product owner explicitly reprioritizes, in which case
 update this line to say so and move `X` accordingly.
 
@@ -8239,16 +8240,56 @@ payout/verify-payout/bank-list, but strictly within its confirmed
 six-currency overlap with JuicyWay's own currency list — not as a
 path toward covering JuicyWay's actual international scope.
 
-### c. Paystack — build real (non-stub) payout/verify-payout/bank-list [ ]
+### c. Paystack — build real (non-stub) payout/verify-payout/bank-list [x]
 
-Paystack's payout/verify-payout/bank-list are stubs today (Task 43's
-"stub until fully integrated" state, confirmed still true as of this
-session). Needs implementing against Paystack's own transfer/recipient
-API (paystack.com/docs — a primary source this file hasn't audited yet
-for the transfer surface specifically, only the charge surface per
-Task 8) so Paystack can be a genuine fallback in both the African-rails
-domain (per Task 51/b-2) and, per Task 51/b-1, a currency-limited
-fallback in the international domain too.
+**Resolved this session (2026-09-08), real code (see this session's
+patch) — not a decision-record leaf like (b).** Paystack's transfer
+surface was audited against primary sources for the first time (Task
+8 had only ever audited the charge surface): confirmed directly
+against `paystack.com/docs/api/transfer-recipient/`,
+`paystack.com/docs/api/transfer/`, `paystack.com/docs/transfers/
+creating-transfer-recipients/`, `paystack.com/docs/transfers/single-
+transfers/`, and `paystack.com/docs/transfers/bulk-transfers/`
+("Verify via polling" section).
+
+**Implemented in `providers/paystack.js`:**
+- `createTransferRecipient(data)` — new helper, `POST
+  /transferrecipient`. Unlike Korapay's `processPayout`, which takes
+  a raw `bank_code`/`account_number` inline, Paystack requires a
+  recipient to exist first and returns a `recipient_code` the actual
+  transfer references. Paystack's own docs confirm a duplicate
+  `account_number` returns the existing record rather than erroring,
+  so this is safe to call on every payout, not just the first.
+- `processPayout(data)` — calls `createTransferRecipient` internally,
+  then `POST /transfer` with the resulting `recipient_code`. Amount
+  goes through the existing `convertAmountForProvider()` subunit rule
+  (already correct for GHS pesewas as well as NGN kobo — Task 9's
+  x100 rule was already currency-generic, not NGN-specific, so no
+  change was needed there).
+- `verifyPayout(reference)` — `GET /transfer/verify/{reference}`,
+  same "failed is a normal successfully-verified answer, not an
+  error" pattern as `Korapay.verifyPayout`.
+- `getBanks(currency)` — `GET /bank?currency=XXX`.
+
+**Real gap surfaced, not hidden:** Paystack's own docs state a
+transfer's `status` comes back `"otp"` — not `"pending"` — unless the
+Transfers OTP requirement is disabled on the integration's dashboard,
+and an `"otp"` transfer needs a human to finalize it with a one-time
+code (`/transfer/finalize_transfer`, NOT implemented here — a
+server-side integration has no way to receive or supply that code).
+`processPayout` does not treat `'otp'` as an error since it's a real
+documented outcome, but callers must not assume it behaves like
+Korapay's `'processing'` — it will NOT resolve on its own. Disabling
+OTP account-side (a dashboard setting, not code) or implementing
+`finalize_transfer` are both open items for whichever session or the
+product owner picks this up, not solved by this leaf.
+
+Paystack is now a genuine (non-stub) fallback per Task 51/b-2
+(African rails) and Task 51/b-1 (currency-limited international
+fallback), same caveat Task 52/b already established for Korapay:
+"fallback" here means within Paystack's own confirmed currency list
+(`getSupportedCurrencies('paystack')`), not a path to JuicyWay's full
+international scope.
 
 ### d. Flutterwave — full provider build, from zero [ ]
 

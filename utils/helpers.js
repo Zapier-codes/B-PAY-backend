@@ -376,8 +376,15 @@ export function sanitizePhone(phone) {
 // target countries can actually route through Korapay DCC today.
 const CONFIRMED_PROVIDER_CURRENCIES = {
   // paystack.com developer docs, corroborated by multiple integration
-  // guides (Chargebee, Zoho, mctaba.com).
-  paystack: ['NGN', 'GHS', 'ZAR', 'KES', 'USD'],
+  // guides (Chargebee, Zoho, mctaba.com). Task 8d (2026-09-06/08):
+  // Paystack's own primary docs ("Supported currency" table) list a
+  // SIXTH currency the third-party integration guides above didn't
+  // cover — XOF (West African CFA Franc). No amount-unit change
+  // needed alongside it: Paystack's own docs state "While there is no
+  // subunit for XOF, developers must multiply the amount by 100
+  // regardless," so the existing uniform subunit/×100 rule in
+  // getAmountFormat('paystack', ...) below already covers it.
+  paystack: ['NGN', 'GHS', 'ZAR', 'KES', 'USD', 'XOF'],
   // developers.korapay.com/docs/accept-payments +
   // /docs/payout-via-api (both primary/official). Cross-checked against
   // Mavins-web's reconciled list, Task 9b — see comment above.

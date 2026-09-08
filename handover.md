@@ -3,8 +3,47 @@
 > **▶ START HERE — read this box only, then go straight to work. Skip
 > everything else below unless you get stuck.**
 >
-> **Newest note (2026-09-08, latest of all, supersedes the Task
-> 52/d-2b note below) — Task 52/d-2c built: the runtime v3/v4 switch.**
+> **Newest note (2026-09-08, latest of all, supersedes the Task 52/d-2c
+> note below) — Task 8d done: `XOF` added to Paystack's confirmed-
+> currency list.** One-line addition to
+> `CONFIRMED_PROVIDER_CURRENCIES.paystack` in `utils/helpers.js` —
+> already fully confirmed against Paystack's own docs, no ambiguity,
+> not blocked on keys (a static list, not a live call). No
+> `getAmountFormat` change needed — Paystack's own docs already state
+> the ×100 subunit rule applies to XOF too, despite XOF having no
+> real subunit. Verified with `node --check` plus a one-line sanity
+> check. **This session stayed inside this repo only, per direct
+> instruction — did not evaluate or touch any sibling repo's queue.**
+>
+> **Still genuinely open in this repo, in rough order of how
+> unblocked each one is:**
+> - **Task 8c** (fix `GET /api/verify` to surface Paystack's real
+>   per-transaction status) — a real logic fix, blocked only on a
+>   design decision (does the provider method or the route own "did
+>   this actually succeed"), not on keys or docs. The next likely pick.
+> - **Task 45a–45e** (JuicyWay: wrong endpoint path/auth header,
+>   payload shape, error-message extraction, reference-vs-ID verify
+>   flow, three-way currency-list conflict) — all confirmed-real bugs
+>   from a full discovery pass, not yet fixed.
+> - **Task 6** (Payscribe webhook) — likely **moot now**: Payscribe was
+>   fully removed from this codebase by Task 51. A future session
+>   should confirm that and close/strike this task rather than work
+>   it, not assume it's still live.
+> - **Task 52/e-1** (domain-detection: international vs. African
+>   rails) — genuinely blocked on a product decision, not code; see
+>   Task 52's own entry below.
+> - **Task 9, Task 10, Task 14** — broader/older items, largely
+>   superseded or narrowed by later decisions (Task 51's routing
+>   model, the "Korapay only" focus); read each one's own entry before
+>   assuming it's still actionable as originally scoped.
+>
+> **Per the Patch Handoff Convention, a patch file covering this
+> session's `utils/helpers.js` change plus this `handover.md` update
+> was generated and handed to the product owner directly — not
+> applied or pushed by this session.**
+>
+> **Newest note (2026-09-08, previous) — Task 52/d-2c built: the
+> runtime v3/v4 switch.**
 > `providers/flutterwave.js` gained `getFlutterwaveProvider(options)`,
 > a factory choosing between the v3 `Flutterwave` and v4
 > `FlutterwaveV4` classes: explicit per-call `options.version` wins,
@@ -4770,7 +4809,7 @@ itself — but this is a pure logic fix (no API call shape changes), so
 it can be written and unit-reasoned-about without live keys; only the
 final end-to-end confirmation needs them.
 
-### Task 8d — Add `XOF` to Paystack's confirmed-currency list [ ]
+### Task 8d — Add `XOF` to Paystack's confirmed-currency list [x]
 **Added by Task 8's full audit pass (2026-09-06), doc-research only —
 not fixed as part of that pass since editing
 `CONFIRMED_PROVIDER_CURRENCIES` is Task 9/9b's territory (currency-list
@@ -4793,9 +4832,14 @@ XOF too; this is a pure addition to the array, not a new branch.
 Not blocked on API keys (this is a static list, not a call this repo
 makes) — could be picked up any time regardless of the "Current
 focus: Korapay only" narrowing's usual rule, since it's a one-line,
-already-fully-confirmed change with no ambiguity to resolve. Left
-unchecked/undone here anyway, per this session's scope being
-doc-only, not because it's blocked.
+already-fully-confirmed change with no ambiguity to resolve.
+**Done this session (2026-09-08):** `'XOF'` added to
+`CONFIRMED_PROVIDER_CURRENCIES.paystack` in `utils/helpers.js`, no
+`getAmountFormat` change needed (confirmed above). Verified with
+`node --check` plus a one-line `node -e` sanity check confirming
+`getSupportedCurrencies('paystack')` includes `'XOF'` and
+`getAmountFormat('paystack', 'XOF')` still returns `{ unit: 'subunit',
+multiplier: 100 }`.
 
 ### Task 8b — Juicyway: verify the payment-initialization endpoint path [x] (doc-only; confirmed WRONG, not fixed here)
 **Resolved this session (2026-09-06) by a full API-discovery pass —

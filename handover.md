@@ -3,7 +3,76 @@
 > **▶ START HERE — read this box only, then go straight to work. Skip
 > everything else below unless you get stuck.**
 >
-> **Newest note (2026-09-08, latest of all) — Task 56/d-3 split into
+> **Newest note (2026-09-08, latest of all) — Task 56/d-3-b built:
+> `POST /pay` now calls `recordTransaction()` (d-3-a) after
+> `processPayment()` resolves, fire-and-forget, `status: 'pending'`.
+> Per the No-skip-ahead rule, this was the next unchecked buildable
+> part after d-3-a. d-3-c (`POST /payout`) is next, not started.**
+>
+> **Before starting:** this session's own d-3-a commit
+> (`1d60202`) hadn't landed on `origin/main` yet — per the Patch
+> Handoff Convention, that patch is still sitting with the product
+> owner, unmerged, matching the "PR 3 stays open until everything's
+> built" instruction given directly this session. Branched this part
+> off d-3-a's own local commit (not off `origin/main`) since d-3-b
+> genuinely depends on `recordTransaction()` existing — flagging
+> plainly since this is a deliberate exception to this file's usual
+> "reset to `origin/main` before starting" pattern, not an oversight.
+> **Also confirmed, restated from the product owner directly this
+> session:** real `SUPABASE_URL`/`SUPABASE_SERVICE_ROLE_KEY` values
+> are already set on the Render service hosting the upstream
+> (`phoenix-boss/B-Pay-backend`) branch this eventually merges into —
+> same fact as the previous note, restated with the specific upstream
+> target named. Doesn't change anything about how this part was built
+> or verified (still no live project touched by this session, see
+> Verified below) — recorded here for continuity only.
+>
+> **What was built:** in `routes.js`'s `POST /pay` handler, immediately
+> after `const result = await providerInstance.processPayment(...)`
+> resolves and the success log line, a `recordTransaction({ reference:
+> ref, type: 'payment', provider: providerName, currency:
+> resolvedCurrency, amount, status: 'pending' })` call — deliberately
+> **not awaited**, so a slow or unreachable Supabase insert can never
+> delay this route's response, per Task 56/d-3's own "must not block
+> the underlying call" decision (recordTransaction() itself already
+> never throws, per d-3-a, so there's nothing here to `.catch()`
+> either). **`status: 'pending'`, not `'success'`** — resolved this
+> session's own open question from d-3-a's write-up: `processPayment()`
+> resolving only confirms the charge was *initialized* with the
+> provider (e.g. Korapay's `/charges/initialize` returns a checkout
+> URL, not a completed payment) — real completion is confirmed later,
+> out-of-band, via that provider's webhook (Task 3/4/5) or `GET
+> /verify`. Flagging plainly in case a different mapping (e.g. treating
+> `processPayment()` resolving as `'success'` outright) was actually
+> intended — this session picked the one that matches how every other
+> part of this file already talks about payment completion.
+>
+> **Verified:** `node --check routes.js` passes. All variables used in
+> the new call (`ref`, `providerName`, `resolvedCurrency`, `amount`)
+> confirmed already in scope at that point in the handler — no new
+> variables introduced. Functional check (isolated, not a live server
+> or live project): the `recordTransaction()` call is fire-and-forget
+> — a simulated response was available in ~10ms regardless of the
+> insert's own (slow/unconfigured) outcome, and the background call
+> still ran and logged afterward. Did not spin up the actual Express
+> server or exercise a real `POST /pay` request end-to-end (that needs
+> real provider keys, out of scope for this one part) — this is a
+> narrower check than d-3-a's own, flagged plainly rather than implied
+> to be more thorough than it is.
+>
+> **Per the No-skip-ahead rule: no other task was substituted in Task
+> 56/d-3-b's place.**
+>
+> **Per the Patch Handoff Convention, a patch file covering this
+> session's changes was generated and handed to the product owner
+> directly — not applied, not merged, and no live route has actually
+> executed this code path yet (this session touched no live server or
+> live Supabase project).**
+>
+> *(Superseded note, kept for its own record below rather than
+> deleted.)*
+>
+> **Previous newest note (2026-09-08) — Task 56/d-3 split into
 > a/b/c (write helper, `/pay` wiring, `/payout` wiring); part (a) is
 > built: `recordTransaction()` added to `utils/supabase.js`, a shared,
 > best-effort, non-throwing insert into the `transactions` table
@@ -9996,17 +10065,39 @@ still open, in that order per this task's own splitting.
 changes was generated and handed to the product owner directly — not
 applied or merged by this session.**
 
-##### d-3-b. Wire `recordTransaction()` into `POST /pay` [ ]
+##### d-3-b. Wire `recordTransaction()` into `POST /pay` [x]
 
-Not started. Call `recordTransaction()` with `type: 'payment'` after
-`providerInstance.processPayment(paymentData)` resolves, using the
-same `ref`/`providerName`/`resolvedCurrency`/`amount` already in scope
-in that handler — fire-and-forget (or awaited only after the client
-response has already been decided), per d-3-a's "never blocks the
-underlying call" contract. `status` mapping (e.g. does a successful
-`processPayment()` call always mean `'success'`, or does that depend
-on the provider's own response shape) is an open detail for whoever
-builds this part, not decided here.
+**Built (2026-09-08):** in the `POST /pay` handler, `recordTransaction()`
+is called right after `providerInstance.processPayment(paymentData)`
+resolves — `type: 'payment'`, `provider: providerName`, `currency:
+resolvedCurrency`, `reference: ref`, the same values already in scope
+in that handler, no new variables introduced. Called without `await`
+(fire-and-forget), so a slow/unreachable Supabase insert can never
+delay the route's response — `recordTransaction()` itself already
+never throws (d-3-a), so there's no `.catch()` needed either.
+
+**Status mapping resolved this session:** `status: 'pending'`, not
+`'success'`. `processPayment()` resolving confirms only that the
+charge was *initialized* with the provider (e.g. Korapay's own
+`/charges/initialize` returns a checkout URL for the payer to
+complete, not a completed payment) — actual completion is confirmed
+later, out-of-band, via that provider's webhook (Task 3/4/5) or `GET
+/verify`. This was an explicitly open detail as of d-3-a's own
+write-up; flagging the choice plainly here in case a different mapping
+was actually wanted.
+
+**Verified:** `node --check routes.js` passes; all variables used
+confirmed in scope. Functional check, isolated (no live server, no
+live Supabase project): confirmed the call is genuinely
+fire-and-forget — a simulated response was available in ~10ms
+regardless of the insert call's own outcome, and the background call
+still ran and logged. **Not exercised end-to-end against a real `POST
+/pay` request** (needs real provider keys) — narrower verification
+than d-3-a's, noted explicitly rather than implied otherwise.
+
+**Per the Patch Handoff Convention, a patch file covering this part's
+changes was generated and handed to the product owner directly — not
+applied or merged by this session.**
 
 ##### d-3-c. Wire `recordTransaction()` into `POST /payout` [ ]
 

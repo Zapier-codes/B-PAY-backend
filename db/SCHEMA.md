@@ -55,9 +55,8 @@ actually exists.
 
 ## Not yet in this schema
 
-Everything else Task 56/d's remaining sub-tasks cover: the write path
-at `/pay`/`/payout` (d-3-b/d-3-c — the shared insert helper itself,
-d-3-a, is now built in `utils/supabase.js`, see `handover.md`), the
+Everything else Task 56/d's remaining sub-tasks cover: the `/payout`
+write path (d-3-c — `/pay`'s own write path, d-3-b, is now built), the
 read path at `/payout/verify` (d-4), and RLS policy design (d-5) —
 none of that is schema, so none of it belongs in this file until it
 produces its own migration or a schema-relevant change.

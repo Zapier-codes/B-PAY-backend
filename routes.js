@@ -3,6 +3,7 @@ import { Paystack } from './providers/paystack.js';
 import { Juicyway } from './providers/juicyway.js';
 import { Korapay } from './providers/korapay.js';
 import { log, formatPayload, generateReference, getSupportedCurrencies, isValidCurrencyCode, isValidEmail, providerRequiresEmail, requireInternalApiKey, classifyDomain } from './utils/helpers.js';
+import { recordTransaction } from './utils/supabase.js';
 import { handleGatewayEvent } from './webhookGateway.js';
 
 const router = express.Router();
@@ -626,6 +627,34 @@ router.post('/pay', requireInternalApiKey, async (req, res) => {
     const result = await providerInstance.processPayment(paymentData);
 
     log(`Payment Success: ${providerName} - ${ref}`);
+
+    // Task 56/d-3-b: best-effort transaction record. Deliberately NOT
+    // awaited — recordTransaction() (d-3-a) already never throws, and
+    // not awaiting it means a slow or unreachable Supabase insert can
+    // never delay this response, per Task 56/d-3's own "must not fail
+    // or block the underlying call" decision. Fire-and-forget only.
+    //
+    // status: 'pending', not 'success' — processPayment() resolving
+    // here only confirms the charge was *initialized* with the
+    // provider (e.g. Korapay's own /charges/initialize returns a
+    // checkout URL for the payer to complete, not a completed
+    // payment); real completion is confirmed later, out-of-band, via
+    // the provider's webhook (Task 3/4/5) or GET /verify. This status
+    // mapping was an explicitly open detail as of d-3-a — resolved
+    // here, this session, not assumed beforehand. `amount` (not
+    // `resolvedCurrency`'s own pre-conversion value) is the same raw
+    // request amount forwarded to the provider above — this table
+    // doesn't yet track provider-specific subunit conversion
+    // (Task 9/9b's own concern), consistent with `paymentData.amount`
+    // itself.
+    recordTransaction({
+      reference: ref,
+      type: 'payment',
+      provider: providerName,
+      currency: resolvedCurrency,
+      amount,
+      status: 'pending',
+    });
 
     return res.status(200).json({
       status: true,

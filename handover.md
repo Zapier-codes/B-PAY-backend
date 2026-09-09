@@ -1,5 +1,65 @@
 # B-Pay Backend — Session Handover
 
+> **🔖 NEXT TASK — read only this box, then jump straight to the named
+> task's own section. Nothing else in this file is required reading to
+> start work.**
+>
+> **Task 58 — Step 1: confirm `telcos.opik.net`'s auth header format
+> against the live server** (`Authorization: Bearer <api_key>` vs raw
+> `x-api-key: <api_key>` vs other — see Task 58/c). **This is currently
+> blocked** — needs a live account/credentials on `telcos.opik.net`
+> (register or log in, make one authenticated call, read the actual
+> request the working example uses). Per the No-skip-ahead rule: if
+> you don't have that access either, **don't silently substitute a
+> different task** — say so plainly and ask the product owner, the
+> same way this box has flagged every prior genuine blocker.
+>
+> **If Task 58 truly can't be progressed this session** (blocked, not
+> just inconvenient), the next unblocked leaf in reading order is
+> **Task 45e** (JuicyWay's three-way currency-list conflict) — check
+> its own entry before assuming it's still open, since this pointer
+> can go stale between sessions the same way the old box did.
+>
+> **Updating this box:** when you finish your leaf, replace the two
+> paragraphs above with the new next task — don't append a new dated
+> note on top of the old one. If you want to leave a record of what
+> you did, add ONE line (task id + one-sentence result) to the top of
+> "Session Log" further down, newest first. This box must stay short
+> enough to read in ten seconds; a box that grows narrative again is
+> the exact failure mode this restructure (2026-09-09) exists to fix —
+> see `Session Pointer Archive` below for the ~2,300-line box this
+> replaced, kept only as a record.
+
+---
+
+## 📝 Session Log (newest first — one line per session, optional)
+
+Add at most one line here when you finish a leaf, if you want a
+record beyond what the pointer box above and the task's own section
+already carry. Not required reading — this is a changelog, not
+context. Don't write paragraphs here; that's what turned the old
+box into 2,300 lines (see archive below).
+
+- 2026-09-09 — Restructured the START HERE box into this lean
+  pointer + archive + this log, per direct product-owner
+  instruction. Documented Task 58 (VTU via `telcos.opik.net`,
+  Stripe-pattern resource namespace) as a full plan, no code.
+
+---
+
+## 📚 Session Pointer Archive — historical status notes (kept for record only)
+
+**Not required reading to start work.** This is the accumulated
+chain of "START HERE" notes every session wrote from this repo's
+very first session through 2026-09-09 — each one prepended on top
+of the last rather than replacing it, which is exactly how this grew
+into a ~2,300-line box a session had to read end-to-end just to
+orient. Restructured 2026-09-09 into the short pointer box above
+plus this archive, per direct product-owner instruction. Kept
+verbatim, unedited, for anyone auditing how a past decision was
+reached — but the lean box above is the only required reading to
+start a session now.
+
 > **▶ START HERE — read this box only, then go straight to work. Skip
 > everything else below unless you get stuck.**
 >
@@ -12048,5 +12108,185 @@ local commit.
 above is now marked `[x]`.** Task 45b's blocking design decision
 remains resolved-via-cross-reference to Task 57/a, unchanged by this
 part.
+
+---
+
+## Task 58 — VTU integration: `telcos.opik.net` client, Stripe-pattern resource namespace — full plan, no code this session [ ]
+
+**Scope note, read first:** resolves Task 44's carried-forward open
+question ("what does VTU concretely mean for this repo's own route
+surface"). Direct product-owner decision (2026-09-09), applying the
+Stripe-as-Reference-Model Convention (same convention Task 52/e-2d and
+e-2e already applied): Stripe never overloads a generic endpoint for a
+structurally different product line — PaymentIntents, Payouts,
+Transfers, and Issuing (`/v1/issuing/cards`, `/v1/issuing/
+authorizations`, `/v1/issuing/transactions`) each get their own
+resource namespace. VTU (airtime/data purchase via `telcos.opik.net`)
+is the same kind of distinct product line relative to `/pay`/
+`/payout` — its own namespace, not folded into either. This task
+documents the complete implementation plan so the next session
+executes directly against it without re-reading Tasks 44/45/48/54/57
+to reconstruct the design from scratch. **No code, no migration, no
+route — plan only, this session,** matching this repo's own
+established pattern (see Task 0/45's own closing notes).
+
+**a. Route surface — decided.** Five routes, all behind
+`requireInternalApiKey` (same money-adjacent sensitivity class as
+`/pay`/`/payout` — a wallet-funded purchase is not lower-stakes than a
+payout just because the amounts are typically smaller):
+- `GET /api/vtu/plans` — passthrough to `telcos.opik.net`'s
+  `GET /plans`, `network`/`category` query params forwarded as-is.
+- `GET /api/vtu/wallet` — passthrough to `GET /wallet`.
+- `POST /api/vtu/data` — passthrough to `POST /purchase/data`.
+- `POST /api/vtu/airtime` — passthrough to `POST /purchase/airtime`.
+- `GET /api/vtu/transactions` — passthrough to `GET /transactions`,
+  `limit`/`offset` query params forwarded as-is (default `20`/`0`,
+  matching `telcos.opik.net`'s own defaults per
+  `docs/guides/06-transactions.md`).
+
+Response envelope: this repo's own `{ status: 'success'|'error',
+data }` shape (matching `/banks`, `/payout/verify`), **not**
+`telcos.opik.net`'s raw `{ success, data }` — same "normalize into our
+own envelope, don't leak the provider's raw shape" convention every
+other provider response already gets in `routes.js` today.
+
+**b. Provider file — `providers/telcosOpik.js`.** `export class
+TelcosOpik`, mirroring the exact class-per-provider shape
+`Korapay`/`Paystack` already use in this repo (constructor + one
+`async` method per operation) — no new pattern introduced:
+```js
+export class TelcosOpik {
+  constructor() {
+    this.apiKey = getProviderKey('telcosopik', 'secret');
+    this.baseUrl = getProviderBaseUrl('telcosopik');
+  }
+  async getPlans({ network, category } = {}) { /* GET /plans */ }
+  async getWallet() { /* GET /wallet */ }
+  async purchaseData({ planId, phoneNumber, network }) { /* POST /purchase/data */ }
+  async purchaseAirtime({ network, phoneNumber, amount }) { /* POST /purchase/airtime */ }
+  async getTransactions({ limit = 20, offset = 0 } = {}) { /* GET /transactions */ }
+}
+```
+Every method built on `handleApiCall()` + `providerError()` from
+`utils/helpers.js`, same as every existing provider file — no new
+error-handling mechanism.
+
+**c. Credentials — single-key pattern, not the public/secret
+`keyMap` branch.** `telcos.opik.net`'s own `POST /auth/register`/
+`POST /auth/login` returns one `api_key` per business
+(`docs/guides/02-authentication.md`), not a pair — so
+`getProviderKey('telcosopik', ...)` should follow **Juicyway's own
+single-key branch** in `utils/helpers.js` (checks one env var,
+throws `isConfigError: true` if absent, same as every provider), not
+the multi-provider `keyMap` object every public/secret provider uses.
+Proposed env var: `TELCOS_OPIK_API_KEY`.
+
+**⚠️ Blocked — this is the hardest, first blocker on the whole
+task.** The exact header format is unconfirmed (Task 45/a's own
+open-item #1): `Authorization: Bearer <api_key>`, raw
+`x-api-key: <api_key>`, or something else. `handleApiCall()`'s
+request-building code cannot be written correctly against a guess —
+confirm directly against the live server (or its docs/source) before
+writing (b). Do not default to `Authorization: Bearer` just because
+it's the most common pattern; `docs/guides/02-authentication.md`
+already flags that exact assumption as unconfirmed once before.
+
+**d. Base URL — `https://telco.opik.net/api/v1`.** Per Task 45/a's
+confirmed capture (note: `telco.` not `telcos.` — the API's own base
+domain differs from the docs-hosting domain `telcos.opik.net`; this
+is Task 45/a's own already-recorded finding, not a typo introduced
+here). `getProviderBaseUrl('telcosopik')` should return this
+directly — no env-var override needed unless a sandbox/live split is
+confirmed to exist (not seen in the Task 45/a capture; only one
+server was listed).
+
+**e. Domain routing — no new routing-decision logic needed.** Task 54
+already decided `telcos.opik.net` is the default (and, until
+Flutterwave's VTU path is built per Task 48/e, the *only*) provider
+for the Gift Cards & VTU domain — the same `routing_config`-table-
+with-hardcoded-fallback pattern Task 52/e-2d already built for
+`african_rails`/`international`. Because exactly one provider is
+implemented for this domain today, the VTU routes in (a) call `new
+TelcosOpik()` directly rather than going through
+`resolveDomainDefaultProvider()`. **Deliberately not built now:** once
+Flutterwave's VTU path exists, a follow-up task adds a `vtu` row to
+`routing_config` and switches these routes to the same
+explicit-override-then-domain-default precedence `/pay`/`/banks`
+already use — out of scope here per the standing "only the current
+atomic leaf" task-splitting rule.
+
+**f. Request/response field mapping — transcribed directly from
+`docs/guides/03` through `06`, not re-derived or guessed:**
+- `POST /api/vtu/data` body → `{ planId, phoneNumber, network }`,
+  forwarded as-is to `POST /purchase/data`.
+- `POST /api/vtu/airtime` body → `{ network, phoneNumber, amount }`,
+  forwarded as-is to `POST /purchase/airtime`.
+- `GET /api/vtu/plans` → optional `network` (`MTN`/`AIRTEL`/`GLO`/
+  `9MOBILE`) and `category` (`data`/`airtime`) query params.
+- `GET /api/vtu/transactions` → optional `limit`/`offset`.
+
+**g. Validation — new field-requirements registry entries, same
+file/mechanism as Task 57/b, not a parallel system.**
+`utils/fieldRequirements.js` gets two new entries: `data` requires
+`planId`, `phoneNumber`, `network`; `airtime` requires `network`,
+`phoneNumber`, `amount`. **Deliberately not routed through the
+Customer Vault (Task 57/c–e)** — the vault fills a payment
+provider's `provider_data.<provider>.customer.*` fields, and a VTU
+purchase has no comparable "customer" concept to vault (a phone
+number is the purchase target, not a payment-customer record) — a
+new, smaller field-requirements entry is the right-sized fix, not a
+vault consumer.
+
+**h. Transaction recording — existing `transactions` table, no new
+schema/migration.** Every purchase attempt writes via the existing
+`recordTransaction()` (`utils/supabase.js`, migration `0001`), same
+non-blocking "never fail the request on a failed write" posture Task
+56/d-3 established for payments — `docs/guides/06-transactions.md`
+itself notes `telcos.opik.net`'s own `GET /transactions` shape was
+designed to be what this repo's `transactions` table mirrors, so this
+is a new call site, not new structure.
+
+**i. Webhooks — `POST /api/webhooks/telcosopik`, new case in
+`webhookGateway.js`'s existing per-provider switch, matching Paystack/
+Korapay/Juicyway's own handlers.** **Fully blocked**, separately from
+(c)'s auth blocker — Task 45/a's open items #6/#7 (signing scheme;
+whether `secret` is client- or server-supplied) are unconfirmed, and a
+money-adjacent webhook with guessed signature verification is worse
+than no webhook yet. Registering a webhook via `telcos.opik.net`'s own
+`POST /webhooks` is a separate, one-time manual setup step for the
+product owner once the signing scheme is confirmed — not code, and
+not this task's job to do.
+
+**j. Testing/verification convention, once built — same as every
+other provider task in this file, no exception carved out here:**
+`node --check` on every touched file; a throwaway, deleted-before-
+commit script exercising the pure logic (field validation, request-
+shape construction) without live credentials; end-to-end verification
+against the real `telcos.opik.net` API blocked until
+`TELCOS_OPIK_API_KEY` (or whatever (c) confirms the real credential
+to be) exists in this environment — "not verified end-to-end, flagged
+plainly," not silently assumed to work.
+
+**Order of execution for whichever session builds this** (so
+sequencing doesn't need re-deriving either):
+1. Confirm (c)'s auth header format against the live server — blocks
+   everything else.
+2. Confirm (i)'s webhook signing scheme, if webhooks are in scope for
+   the first pass (can be deferred to its own follow-up task if not —
+   (a)–(h) don't depend on it).
+3. Build `providers/telcosOpik.js` (b), verified with `node --check` +
+   a throwaway script.
+4. Add the five routes (a) to `routes.js`, wired directly to `new
+   TelcosOpik()` per (e).
+5. Add the two field-requirements entries (g).
+6. Wire `recordTransaction()` calls (h).
+7. Webhook handler (i), only after step 2 is confirmed — not before.
+8. Patch Handoff, per the standing convention — one patch covering
+   this leaf's worth of change, same discipline as every prior task.
+
+**Not done this session, deliberately — plan only.** No
+`providers/telcosOpik.js`, no route, no migration, no field-
+requirements entry, no webhook handler. `node --check` not
+applicable — no `.js` file touched this session.
 
 ---

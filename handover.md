@@ -165,6 +165,19 @@
 
 ## 📝 Session Log (newest first — one line per session, optional)
 
+- 2026-09-10 — Added the "Payment-infrastructure completion gate"
+  standing rule (no leaf finished): after correctly following the
+  cross-repo section into Mavins-web mid-build, product owner directed
+  that cross-repo work stay closed until the full payment-infra stack
+  (routing/schema/dashboard/platform-identity/card-issuance+white-label/
+  KYC-KYB/checkout — Tasks 45-47, 51-54, 0/d-1, per this file's own
+  existing scope) is actually complete, not just decided. Added as a
+  gate ahead of the "3-repo project" section with an explicit checklist,
+  a one-time exception to No-skip-ahead (skip cross-repo pointer tasks
+  specifically while the gate is open), and a propagation note (needs
+  mirroring into Mavins-web/Velune's own files to be effective from
+  every entry point — not done yet, flagged for next session touching
+  either). No code changed; only `handover.md`.
 - 2026-09-10 — Task 45e correction (no leaf finished, doc-only): its
   blocking premise was stale — Task 49/a already resolved and shipped
   the JuicyWay currency-list + amount-unit rule (`03037e9`, live on
@@ -2720,6 +2733,74 @@ The number of sessions here is NOT fixed. Add tasks as you find new
 issues. Split a task further if it's still too big once you're in it.
 There is no target count to hit — the queue is exactly as long as it
 needs to be.
+
+---
+
+## Payment-infrastructure completion gate — MANDATORY, effective 2026-09-10, overrides the cross-repo section below until satisfied
+
+**Direct product-owner instruction, added after a session read this
+file, correctly found a cross-repo pointer per the section below, and
+jumped into Mavins-web mid-payment-infrastructure build — which is
+exactly the behavior this gate exists to stop.** The cross-repo
+pattern described just below this box is not wrong on its own terms,
+but it assumes the payment infrastructure itself is already
+stable enough to build *around*. It isn't yet, and no session should
+treat a cross-repo pointer (Mavins-web, Velune, or B-PAY) as the next
+task, however correctly it's flagged as "next in order," while that
+remains true.
+
+**The gate:** no session may clone, read for task-picking purposes, or
+make changes in Mavins-web, Velune, or B-PAY until every item below is
+checked off in this file. If the first unchecked task in order is a
+cross-repo pointer and this gate is still open, **skip that pointer
+task specifically** (leave its checkbox as-is, don't mark it done or
+redirect it) and pick the next *B-Pay-backend-native* unchecked,
+unblocked task instead — this is the one standing exception to the
+No-skip-ahead rule below, and it exists for exactly this situation.
+
+**What "complete" means here — the full payment-infrastructure stack,
+not just provider integrations, per this file's own existing task
+scope (don't invent new criteria, use what's already documented):**
+
+- [ ] **Core provider/routing layer** — Task 51's domain-based routing
+      and Task 52's build-out (currently implemented in code but still
+      showing `[ ]` for documentation reasons — resolve that
+      documentation state as part of closing this gate, not by
+      re-doing the code)
+- [ ] **Database/schema** — Task 45's Supabase-backed schema and
+      Task 46's full admin-dashboard + Swagger UI decision, actually
+      built, not just decided
+- [ ] **Platform identity** — Task 47's "fully hidden underlying rail"
+      vision actually implemented end-to-end (not just resolved as a
+      product decision)
+- [ ] **Card issuance / white-label branding** — Task 53's Korapay
+      card-issuance build-out and dynamic name+theme white-labeling
+- [ ] **KYC/KYB** — Task 54's PaymentPoint-default, swappable-fallback
+      model, actually wired in, not just scoped
+- [ ] **Checkout UI** — the white-label checkout referenced across
+      this file (Task 0/d-1 and elsewhere) actually built and live,
+      not just described
+- [ ] **Dashboard** — Task 46's admin dashboard, live and usable by
+      the product owner, not just a Swagger stub
+
+A session that finds one of these further along than this box
+currently shows should update the box, cite the exact task/commit that
+closed it, and re-check whether the gate as a whole is now satisfied —
+same "check the code, don't guess, don't silently mark it lost"
+discipline this file already uses everywhere else. **Once every box
+above is checked, delete this section** (or mark it "CLOSED,
+[date]" and leave it as a one-line historical record, same convention
+this file uses for other resolved standing rules) — don't leave a
+satisfied gate sitting open indefinitely as dead weight future
+sessions have to re-read.
+
+**Propagation note:** this gate currently exists only in this repo's
+`handover.md`. It only fully does its job if a session starting in
+Mavins-web or Velune also sees it before jumping back into a
+half-finished B-Pay-backend thread — copy an equivalent version into
+Mavins-web's `handover.md` and Velune's `HANDOVER_CAMPAIGN.md` next
+time either is touched, same propagation convention already used for
+the "Unified hand-off command format" and "Build-focus" sections.
 
 ---
 

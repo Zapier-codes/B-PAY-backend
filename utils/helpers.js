@@ -496,18 +496,28 @@ export function getAmountFormat(provider, currency) {
       // not assumed necessary today.
       return { unit: 'base', multiplier: 1 };
 
-    case 'juicyway':
+    case 'juicyway': {
       // JuicyWay's CURRENCY LIST was confirmed by the product owner
-      // (Task 49/a, see CONFIRMED_PROVIDER_CURRENCIES above) but that
-      // is a separate question from the amount-unit rule below — no
-      // source audited so far has addressed base units vs. subunits
-      // for a JuicyWay charge (stablecoin-denominated or otherwise),
-      // so this still throws rather than assuming ×100 or ×1. A
-      // silent wrong guess here is a real-money bug, not a cosmetic
-      // one.
-      throw new Error(
-        `getAmountFormat: amount-unit rule for "${provider}" is not yet confirmed — see handover.md Task 49/a note before adding one`
-      );
+      // (Task 49/a, see CONFIRMED_PROVIDER_CURRENCIES above). The
+      // amount-unit rule below was left throwing for the same reason
+      // every other case here demands a real citation before
+      // guessing — now resolved, also per Task 49/a:
+      // docs.juicyway.com/payments/initialize-payment documents
+      // `amount` under "Universal Parameters — required for all
+      // payment initializations regardless of the payment method" as
+      // "Payment amount in minor units (e.g., cents, kobo) ...
+      // Example: 10000 = $100.00 USD" — subunit, ×100, stated to
+      // apply across every supported currency (NGN, USD, CAD, USDT,
+      // USDC) including the stablecoins, since it's listed as
+      // universal rather than per-method. Same confidence bar as the
+      // confirmed Korapay/Paystack rules above, not the
+      // inferred-from-examples caveat Flutterwave's own case carries.
+      const supported = getSupportedCurrencies('juicyway');
+      if (!supported.includes(currencyUpper)) {
+        log(`⚠️ Juicyway: currency ${currencyUpper} is not in the confirmed-supported list (${supported.join(', ')})`, 'warn');
+      }
+      return { unit: 'subunit', multiplier: 100 };
+    }
 
     default:
       throw new Error(`getAmountFormat: unsupported provider "${provider}"`);

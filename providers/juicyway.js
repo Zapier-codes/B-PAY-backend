@@ -1,6 +1,6 @@
 import fetch from 'node-fetch';
 import crypto from 'crypto';
-import { log, handleApiCall, getProviderKey, generateReference, formatPayload, getProviderBaseUrl, providerError } from '../utils/helpers.js';
+import { log, handleApiCall, getProviderKey, generateReference, formatPayload, getProviderBaseUrl, providerError, convertAmountForProvider } from '../utils/helpers.js';
 
 export class Juicyway {
   constructor() {
@@ -217,8 +217,17 @@ export class Juicyway {
     // supplies what the core doesn't already carry.
     const jw = data.provider_data?.juicyway || {};
 
+    // Task 49/a: confirmed (docs.juicyway.com/payments/initialize-payment,
+    // "Universal Parameters") -- amount is in minor units (subunit,
+    // ×100) across every supported currency, stablecoins included.
+    // Was `data.amount` raw -- previously blocked entirely, since
+    // getAmountFormat('juicyway', ...) threw rather than let this call
+    // site guess; now routes through the same confirmed-rule
+    // convention Korapay's/Paystack's own processPayment() already use.
+    const amount = convertAmountForProvider(data.amount, 'juicyway', data.currency);
+
     const payload = {
-      amount: data.amount,
+      amount,
       currency: data.currency,
       reference: ref,
       description: jw.description,

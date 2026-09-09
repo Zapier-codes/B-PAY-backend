@@ -9425,7 +9425,7 @@ Prestmit geography) called out explicitly rather than assumed away.
 
 ---
 
-## Task 49 — Product owner resolves JuicyWay's stablecoin question and Remita's base-URL ambiguity [ ] (a's currency-list edit done; a's amount-unit rule RESEARCHED+CITED, not yet implemented; b still open)
+## Task 49 — Product owner resolves JuicyWay's stablecoin question and Remita's base-URL ambiguity [ ] (a fully done — currency-list edit + amount-unit rule both built; b still open)
 
 **Scope note, read first:** this task was originally written as a
 decision-record only, per this file's own established pattern (Task
@@ -9471,16 +9471,42 @@ and verified in-session (`node --check` clean; a throwaway sanity
 check confirmed `getAmountFormat('juicyway', 'USD')` would return
 `{ unit: 'subunit', multiplier: 100 }`, and korapay/paystack stayed
 unchanged) but then reverted rather than committed — `origin/main`'s
-actual runtime behavior is unchanged by this session. **Concrete next
-step, fully unblocked:** re-apply that same change — add the
-`juicyway` case to `getAmountFormat` per the citation above, and wire
-`convertAmountForProvider(data.amount, 'juicyway', data.currency)`
-into `providers/juicyway.js`'s `processPayment`, matching the existing
-`paystack.js`/`korapay.js` pattern exactly. Keep it scoped to only the
-amount-unit fix — don't bundle in the separate, already-tracked
-endpoint-path (`/v1/charges` vs. the confirmed-correct
-`/payment-sessions`), auth-header, or payload-shape bugs under Task
-45a/45b; those remain their own leaf.
+actual runtime behavior was unchanged as of that session.
+
+**Built (2026-09-09).** Re-applied exactly the change scoped above:
+added the `juicyway` case to `getAmountFormat` (`utils/helpers.js`)
+returning `{ unit: 'subunit', multiplier: 100 }`, with the same
+supported-currency warning-not-throw pattern Paystack's/Korapay's own
+cases already use; wired
+`convertAmountForProvider(data.amount, 'juicyway', data.currency)` into
+`providers/juicyway.js`'s `processPayment`, replacing the raw
+`data.amount` that was sent before. Scoped to only the amount-unit fix,
+per this leaf's own instruction — no change to the endpoint-path,
+auth-header, or payload-shape fixes tracked separately under Task
+45a/45b.
+
+**Verified:** `node --check` on both changed files. A throwaway script
+(deleted, not committed) ran 8 assertions — JuicyWay now returns the
+correct format for both a fiat (NGN) and a stablecoin (USDT) currency,
+`convertAmountForProvider(100, 'juicyway', 'USD')` correctly returns
+`10000`, an unconfirmed currency warns rather than throws, and
+Korapay's/Paystack's own formats and conversions are byte-for-byte
+unchanged (regression check) — 8/8 passed. A live check instantiated
+the real `Juicyway` class and called `processPayment({ amount: 100,
+currency: 'USD', ... })` with a dummy key: the method's own pre-flight
+log line (`Juicyway Payment Request: ...`), which dumps the exact
+payload about to be sent, showed `"amount": 10000` — confirming the
+conversion happens before the request is built, not just in isolation.
+The actual outbound network call then failed, as expected in this
+sandbox with no route to JuicyWay's real API — unrelated to what this
+check was confirming.
+
+**Not verified against a real JuicyWay sandbox charge** — no live
+credentials or network access to JuicyWay's API in this environment,
+same pre-existing blocker every prior JuicyWay task in this file has
+noted; this fix is confirmed correct against JuicyWay's own documented
+"Universal Parameters" rule, not against a live charge's actual
+settled amount.
 
 **b. Remita — base URL supplied directly by the product owner:
 `https://api.remita.net/`.** Remita's own research section above found

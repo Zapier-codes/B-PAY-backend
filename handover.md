@@ -45,24 +45,72 @@
 > to confirm the insert itself lands — same pre-existing end-to-end
 > gap already flagged above, not newly introduced by this step.
 >
-> **Next task is Task 58 step 8 — but it's blocked, per the No-skip-
-> ahead rule (see that section below): the signing scheme for
-> `POST /api/webhooks/telcosopik` is still unconfirmed (Task 58/i, step
-> 2).** Per that rule, this session does not substitute a different,
-> easier, unblocked item from elsewhere in the queue. The concrete gap:
-> telcos.opik.net's webhook payload needs a confirmed signature/
-> verification scheme (header name + algorithm, mirroring how Tasks
-> 3/4/5 each nailed down Paystack/Korapay/JuicyWay's own schemes)
-> before a handler can be written — the same "find the real scheme"
-> pattern those tasks used applies here, but the actual doc page or
-> support answer confirming telcos.opik.net's scheme hasn't been found
-> yet. A session picking this up next should either (a) locate that
-> confirmation (docs page, support channel, or a real webhook payload
-> to inspect) and then implement step 8, or (b) if it's confirmed
-> genuinely undocumented, flag that plainly in this box (per the
-> No-skip-ahead rule's own step 2/3) rather than guessing a scheme.
+> **⏸️ Task 58 step 8 is PAUSED (2026-09-09), per direct product-owner
+> instruction — not merely blocked, deliberately skipped for now,
+> revisit later.** This supersedes the signing-scheme block noted
+> below; that gap is still real and still unresolved, but a second,
+> more fundamental gap was found underneath it this session, and the
+> product owner chose to pause rather than keep pushing on either:
 >
-> **Re-checked, still blocked (2026-09-09):** a live screenshot of
+> **Finding #1 — the base URL this repo's own code uses for
+> `telcosopik` does not resolve.** `utils/helpers.js`'s `telcosopik`
+> entry hardcodes `https://telco.opik.net/api/v1` (no "s"). Direct
+> `nslookup telco.opik.net` returns `NXDOMAIN` — this host does not
+> exist. The comment above that entry attributes the no-"s" spelling
+> to "Task 58/d" and "Task 45/a's own capture" — **neither citation
+> holds up**: "Task 58/d" does not exist anywhere else in this file,
+> and Task 45/a is documented elsewhere in this same file as a JuicyWay
+> discovery item (wrong endpoint path/auth header, payload shape),
+> unrelated to TelcosOpik. This config value was never actually
+> verified against anything and should not be trusted as-is.
+>
+> **Finding #2 — `telcos.opik.net` (with "s") resolves, but to the
+> product owner's own landing page, not confirmed to be the live VTU
+> API.** `nslookup telcos.opik.net` resolves via
+> `edges-landingpage.onrender.com` → Cloudflare. The product owner
+> has confirmed (2026-09-09) they own this deployment and that it's
+> the same app as `edges-landing-page.vercel.app`, and asserts this
+> *is* the correct API host — plausible, since a Next.js app can serve
+> real API routes alongside a landing page, not just static pages. A
+> live probe against it, however, did not confirm a working endpoint:
+> ```
+> curl -i -X POST https://telcos.opik.net/api/v1/auth/register \
+>   -H "Content-Type: application/json" \
+>   -d '{"email":"...","password":"...","firstName":"...","lastName":"...","companyName":"..."}'
+> ```
+> returned `HTTP/2 500` with body `{"error":"Failed to create user"}` —
+> a shape that matches neither `docs/guides/02-authentication.md`'s
+> documented success envelope (`{success, data: {id, email, api_key}}`)
+> nor its documented `ErrorResponse` schema. Response headers
+> (`rndr-id: 40fc0c63-da3d-4ecf`, `x-render-origin-server: Render`,
+> Next.js-specific `vary: rsc, next-router-state-tree, ...`) confirm
+> which deployment answered, and that `rndr-id` is a direct Render
+> log-lookup key for whoever investigates next. This error was not
+> traceable further from this repo — `B-Pay-backend` only contains the
+> *client* (`providers/telcosOpik.js`) that calls this endpoint, not
+> the server implementing it, so the actual cause (missing env var on
+> that deployment, a DB write failing, a duplicate-email collision from
+> this session's own repeated test registrations, etc.) needs
+> investigation on that project's own side (Render logs via the
+> `rndr-id` above, or the Vercel deployment directly).
+>
+> **Net effect: neither candidate host is a confirmed-working API
+> right now** — `telco.opik.net` doesn't exist, and `telcos.opik.net`
+> is confirmed-owned but not confirmed-functional for this endpoint.
+> Product owner's direct instruction (2026-09-09): pause Task 58 step 8
+> entirely rather than keep resolving this live, and revisit later.
+> A session resuming this should not re-run the same probe expecting a
+> different answer — it should start from whichever of these is
+> resolved first: (a) the real cause of the 500 on
+> `telcos.opik.net/api/v1/auth/register` (via Render logs / Vercel
+> deployment inspection), or (b) confirmation from the product owner
+> of the actual intended production API host, so `utils/helpers.js`'s
+> `telcosopik` entry can be corrected from its current unverified
+> `telco.opik.net` value. Only once a live host is confirmed does the
+> original signing-scheme gap (next paragraph) become actionable again.
+>
+> **Underlying signing-scheme gap (still unresolved, re-checked
+> 2026-09-09, now secondary to the above):** a live screenshot of
 > `https://telcos.opik.net/api/v1/docs`'s `Webhooks` section (`GET
 > /webhooks`, `POST /webhooks`) was compared against this repo's own
 > capture. It matches exactly — same `{ url, events[], secret }`
@@ -99,6 +147,18 @@ record beyond what the pointer box above and the task's own section
 already carry. Not required reading — this is a changelog, not
 context. Don't write paragraphs here; that's what turned the old
 box into 2,300 lines (see archive below).
+
+- 2026-09-09 — Task 58 step 8 (no leaf finished, session paused per
+  direct product-owner instruction): found the repo's own
+  `telcosopik` base URL (`telco.opik.net`, no "s") doesn't resolve
+  (`NXDOMAIN`) and its justifying comment cites a task ("58/d") that
+  doesn't exist plus mis-attributes another ("45/a", actually
+  JuicyWay); confirmed `telcos.opik.net` (with "s") is the product
+  owner's own landing-page deployment, owner asserts it's also the
+  real API host, but a live `POST /auth/register` probe against it
+  returned an undocumented `500`. Neither host confirmed-working —
+  see pointer box for full findings and next steps. No code changed
+  this session; only `handover.md` updated.
 
 - 2026-09-09 — Task 58/i re-check (no leaf finished): a live
   screenshot of `telcos.opik.net`'s `/webhooks` Swagger section

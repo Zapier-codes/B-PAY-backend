@@ -234,6 +234,41 @@ export const FIELD_REQUIREMENTS = {
       },
     ],
   },
+
+  // ==================================================
+  // Task 58/g — VTU (airtime/data) purchase routes. Keyed by action
+  // ('data'/'airtime'), NOT a provider name — unlike every entry
+  // above, these two routes don't go through getProvider()/
+  // ROUTING_RULES at all (Task 58/e: exactly one provider exists for
+  // this domain today, so routes.js calls `new TelcosOpik()`
+  // directly). getMissingFields() itself doesn't care either way —
+  // it just looks up whatever string key it's given — so reusing it
+  // with an action name as the key needs no signature change, just a
+  // different call-site convention (routes.js's POST /vtu/data and
+  // POST /vtu/airtime pass 'data'/'airtime' literally, not a
+  // provider variable). Field lists transcribed directly from Task
+  // 58/f (itself transcribed from docs/guides/05-purchasing-data-
+  // airtime.md), not re-derived here.
+  // ==================================================
+  data: {
+    // POST /api/vtu/data body, forwarded as-is to telcos.opik.net's
+    // POST /purchase/data (providers/telcosOpik.js#purchaseData).
+    fields: [
+      { path: 'planId', required: true, label: 'planId' },
+      { path: 'phoneNumber', required: true, label: 'phoneNumber' },
+      { path: 'network', required: true, label: 'network' },
+    ],
+  },
+
+  airtime: {
+    // POST /api/vtu/airtime body, forwarded as-is to telcos.opik.net's
+    // POST /purchase/airtime (providers/telcosOpik.js#purchaseAirtime).
+    fields: [
+      { path: 'network', required: true, label: 'network' },
+      { path: 'phoneNumber', required: true, label: 'phoneNumber' },
+      { path: 'amount', required: true, label: 'amount' },
+    ],
+  },
 };
 
 // Resolves a dot path (e.g. 'provider_data.juicyway.order.identifier')

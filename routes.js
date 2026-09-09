@@ -1019,12 +1019,6 @@ router.get('/verify', async (req, res) => {
 //
 // Deliberately NOT wired in this part (separate, later
 // order-of-execution steps — not an oversight):
-//   - step 6: utils/fieldRequirements.js registry entries for
-//     `data`/`airtime` — request bodies are forwarded to
-//     providers/telcosOpik.js as-is for now, same "no registry entry
-//     yet = not independently enforced here" gap every other
-//     unregistered provider already has (see getMissingFields's own
-//     doc comment).
 //   - step 7: recordTransaction() wiring.
 //   - step 8: POST /api/webhooks/telcosopik — blocked separately on
 //     the signing-scheme open item (Task 58/i).
@@ -1123,6 +1117,20 @@ router.post('/vtu/data', requireInternalApiKey, async (req, res) => {
 
     log(`VTU Data Purchase Request Received: ${formatPayload(req.body)}`);
 
+    // Task 58/g: checked before touching Supabase/telcos.opik.net at
+    // all — same "clean 400 naming exactly what's missing, instead of
+    // a confusing provider-side failure" motivation as /pay's own
+    // getMissingFields() call (Task 57/b), just checked earlier here
+    // since there's no provider-resolution step to wait on first.
+    const missingFields = getMissingFields('data', req.body);
+    if (missingFields.length > 0) {
+      const err = new Error(
+        `Missing required field(s) for VTU data purchase: ${missingFields.map((f) => f.label).join(', ')}`
+      );
+      err.statusCode = 400;
+      throw err;
+    }
+
     const client = await getVtuClientForBusiness(businessId, req);
     const result = await client.purchaseData({ planId, phoneNumber, network });
 
@@ -1144,6 +1152,17 @@ router.post('/vtu/airtime', requireInternalApiKey, async (req, res) => {
     const { network, phoneNumber, amount } = req.body;
 
     log(`VTU Airtime Purchase Request Received: ${formatPayload(req.body)}`);
+
+    // Task 58/g — see POST /vtu/data's own comment above for why this
+    // check runs before getVtuClientForBusiness(), not after.
+    const missingFields = getMissingFields('airtime', req.body);
+    if (missingFields.length > 0) {
+      const err = new Error(
+        `Missing required field(s) for VTU airtime purchase: ${missingFields.map((f) => f.label).join(', ')}`
+      );
+      err.statusCode = 400;
+      throw err;
+    }
 
     const client = await getVtuClientForBusiness(businessId, req);
     const result = await client.purchaseAirtime({ network, phoneNumber, amount });

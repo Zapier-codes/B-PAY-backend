@@ -4,59 +4,54 @@
 > task's own section. Nothing else in this file is required reading to
 > start work.**
 >
-> **Task 58 step 5, part (b) is done (2026-09-09):** the five
-> `/api/vtu/*` routes are wired into `routes.js`, all behind
-> `requireInternalApiKey`, each calling
-> `provisionTelcosOpikAccount(businessId, req.body?.registration)`
-> (c-1's activation trigger, applied uniformly to all five routes, not
-> just the two purchase ones) then `resolveTelcosOpikApiKey(businessId)`
-> for a `new TelcosOpik(apiKey)` per (e). Response envelope is this
-> repo's own `{ status: 'success'|'error', data }` shape, matching
-> `/banks`/`/payout/verify`, not `telcos.opik.net`'s raw shape.
+> **Task 58 step 6 is done (2026-09-09):** `utils/fieldRequirements.js`
+> got two new entries, keyed by action (`data`/`airtime`) rather than
+> a provider name — the only two entries in that file that aren't,
+> since these two routes call `new TelcosOpik()` directly instead of
+> going through `getProvider()`/`ROUTING_RULES` (Task 58/e).
+> `getMissingFields()` itself needed no change — it just looks up
+> whatever key it's given. Wired into `POST /api/vtu/data` and
+> `POST /api/vtu/airtime` in `routes.js`, checked *before*
+> `getVtuClientForBusiness()` runs (before touching Supabase at all),
+> same "clean 400 naming exactly what's missing" motivation as `/pay`'s
+> own Task 57/b check, just placed earlier here since there's no
+> provider-resolution step to wait on first.
 >
-> **New decision this session, flagged plainly, not a pre-existing
-> convention: how `businessId` enters a request.** No mechanism
-> anywhere in this codebase resolves a business identity from a
-> request — `requireInternalApiKey` is one shared secret for one
-> trusted internal caller, and the `businesses` table has no
-> dashboard-login column or request-auth wiring yet. Resolved as a
-> plain required caller-supplied field: `req.body.businessId` for the
-> two POST routes, `req.query.businessId` for the three GET routes —
-> see `getVtuBusinessId()`'s own comment in `routes.js`. **This should
-> be revisited once Task 45/c's dashboard-login question is resolved**
-> — a real per-caller auth scheme may supersede a bare request field.
+> **Still not done — steps 7 and 8, plus every open item flagged in
+> step 5's own notes (unchanged, not newly introduced here):**
+> - Step 7: `recordTransaction()` wiring for both purchase routes,
+>   non-blocking/fire-and-forget, same posture Task 56/d-3 established
+>   for `/pay`.
+> - Step 8: `POST /api/webhooks/telcosopik` — still blocked on the
+>   signing-scheme open item (Task 58/i, step 2).
+> - No `public`-schema Vault RPC wrappers migrated yet, so
+>   `vaultCreateSecret()`/`vaultReadSecret()` — and therefore every VTU
+>   route — are unverified end-to-end against a live Supabase project.
+>   Migrations `0010`–`0013` also still not applied to the live
+>   project.
+> - The `businessId`-entry-point decision from step 5/b (plain
+>   required body/query field — see `getVtuBusinessId()`'s own comment
+>   in `routes.js`) should be revisited once Task 45/c's
+>   dashboard-login question resolves.
 >
-> **Deliberately NOT done this part — separate, later
-> order-of-execution steps:** step 6 (`utils/fieldRequirements.js`
-> registry entries for `data`/`airtime` — request bodies are forwarded
-> to `providers/telcosOpik.js` as-is for now, same gap every other
-> unregistered provider already has); step 7 (`recordTransaction()`
-> wiring); step 8 (`POST /api/webhooks/telcosopik`, still blocked on
-> the signing-scheme open item, Task 58/i).
+> `node --check` clean on both touched files; a throwaway smoke script
+> (pure `getMissingFields('data'|'airtime', ...)` checks, plus the real
+> `POST /vtu/data`/`POST /vtu/airtime` routes returning 400-naming-the-
+> field for an incomplete body and clearing that check — failing later
+> on Supabase instead — for a complete one) run and deleted, per
+> convention.
 >
-> **Still-open items, unchanged from before this part, neither
-> blocking step 6/7:** (1) no `public`-schema Vault RPC wrappers
-> (`create_vault_secret`, `read_vault_secret`) are migrated yet, so
-> `vaultCreateSecret()`/`vaultReadSecret()` — and therefore every VTU
-> route above — are unverified end-to-end against a live Supabase
-> project; (2) webhook signing scheme (step 2/step 8) still
-> unconfirmed. Migrations `0010`–`0013` still not applied to the live
-> Supabase project. `node --check` clean on `routes.js`; a throwaway
-> HTTP-level smoke script (missing-internal-key 401, missing-businessId
-> 400 on all five routes, and a Supabase-unconfigured request
-> confirming the routes actually reach
-> `provisionTelcosOpikAccount()`/`resolveTelcosOpikApiKey()` rather
-> than silently succeeding) run and deleted, per convention — not
-> verified against the real `telcos.opik.net` API, same open
-> credentials-availability blocker every prior leaf of this task has
-> flagged.
->
-> **Next: step 6 — add the two field-requirements entries (g)** to
-> `utils/fieldRequirements.js`: `data` requires `planId`,
-> `phoneNumber`, `network`; `airtime` requires `network`,
-> `phoneNumber`, `amount`. Then step 7 (`recordTransaction()` wiring
-> for both purchase routes, non-blocking/fire-and-forget same as
-> `/pay`'s own d-3-b posture).
+> **Next: step 7 — wire `recordTransaction()` into `POST /api/vtu/data`
+> and `POST /api/vtu/airtime`**, same non-blocking/fire-and-forget
+> pattern `/pay` already uses (Task 56/d-3-b): call it after a
+> successful `purchaseData()`/`purchaseAirtime()`, don't `await` it,
+> `status: 'pending'` (real completion isn't confirmed synchronously —
+> same reasoning `/pay`'s own comment gives), `type` distinguishing the
+> two actions (e.g. `'vtu_data'`/`'vtu_airtime'`, not a bare
+> `'payment'` — this repo has no existing convention for a VTU
+> transaction's `type` value, worth flagging as a decision rather than
+> guessing silently). `provider: 'telcosopik'`. After that: step 8
+> (webhook handler, once step 2's signing scheme is confirmed).
 >
 > **Updating this box:** when you finish your leaf, replace the two
 > paragraphs above with the new next task — don't append a new dated
@@ -78,6 +73,14 @@ already carry. Not required reading — this is a changelog, not
 context. Don't write paragraphs here; that's what turned the old
 box into 2,300 lines (see archive below).
 
+- 2026-09-09 — Task 58 step 6: added `data`/`airtime` entries to
+  `utils/fieldRequirements.js` (keyed by action, not provider name —
+  the only two entries in that file that aren't) and wired
+  `getMissingFields('data'|'airtime', req.body)` into
+  `POST /api/vtu/data`/`POST /api/vtu/airtime`, checked before
+  `getVtuClientForBusiness()` runs. `node --check` clean; throwaway
+  smoke script (pure registry checks + the real routes' 400 path) run
+  and deleted. Next: step 7, `recordTransaction()` wiring.
 - 2026-09-09 — Task 58 step 5/part (b): wired the five `/api/vtu/*`
   routes into `routes.js` (`requireInternalApiKey` + this repo's own
   `{status, data}` envelope), each calling
@@ -12536,19 +12539,30 @@ sequencing doesn't need re-deriving either):
      Still unverified end-to-end against the real `telcos.opik.net`
      API or a live Supabase project — same open blockers steps 3/4/
      part-(a) already flagged, not newly introduced here.
-6. Add the two field-requirements entries (g).
+6. Add the two field-requirements entries (g) — **done (2026-09-09).**
+   `utils/fieldRequirements.js` gets `data`/`airtime` entries keyed by
+   action (not provider name — the only two entries in that file that
+   aren't, since these routes call `new TelcosOpik()` directly per (e)
+   instead of going through `getProvider()`). Wired into
+   `POST /api/vtu/data`/`POST /api/vtu/airtime` (routes.js), checked
+   before `getVtuClientForBusiness()` runs so an incomplete request
+   never touches Supabase at all. `node --check` clean; throwaway
+   smoke script (pure registry checks + the real routes' 400-naming-
+   the-field path, and confirming a complete body clears the check)
+   run and deleted.
 7. Wire `recordTransaction()` calls (h).
 8. Webhook handler (i), only after step 2 is confirmed — not before.
 9. Patch Handoff, per the standing convention — one patch covering
    this leaf's worth of change, same discipline as every prior task.
 
-**Status note (superseded by step 5/part (b), 2026-09-09 — kept for
-record of what earlier sessions deliberately left undone):** the
-original plan-only session touched no `.js` file — only documentation.
-Step 4 built `providers/telcosOpik.js` and the supporting
-`utils/supabase.js` functions. Step 5 (both parts) has since wired the
-five `/api/vtu/*` routes into `routes.js`. **Still not done, as of
-step 5:** no field-requirements entry (step 6), no `recordTransaction()`
+**Status note (superseded by step 6, 2026-09-09 — kept for record of
+what earlier sessions deliberately left undone):** the original
+plan-only session touched no `.js` file — only documentation. Step 4
+built `providers/telcosOpik.js` and the supporting `utils/supabase.js`
+functions. Step 5 (both parts) wired the five `/api/vtu/*` routes into
+`routes.js`. Step 6 has since added the `data`/`airtime`
+field-requirements entries and wired them into the two purchase
+routes. **Still not done, as of step 6:** no `recordTransaction()`
 wiring (step 7), no webhook handler (step 8), no Vault RPC wrapper
 migration (open item, see step 4's own note and the pointer box at the
 top of this file). Migrations `0010`–`0013` (the `businesses`/

@@ -515,3 +515,41 @@ export async function vaultCreateSecret(rawSecret, name, description) {
 
   return data; // expected: the new vault.secrets.id (uuid)
 }
+
+// Read counterpart to vaultCreateSecret() above — Task 58/c-2's own
+// "the real value back requires an explicit `select decrypted_secret
+// from vault.decrypted_secrets where id = <vault_secret_id>`" note
+// (db/SCHEMA.md). Same unverified-wrapper caveat as the create side:
+// `vault.decrypted_secrets` is a `vault`-schema view, not exposed via
+// the REST API this file's client talks to, so this assumes a
+// second `public`-schema `SECURITY DEFINER` wrapper (e.g. `create or
+// replace function public.read_vault_secret(secret_id uuid) returns
+// text ... security definer` selecting `decrypted_secret` from
+// `vault.decrypted_secrets`) — also not yet migrated. This is the
+// function Task 58/e's own future provider call sites (the actual
+// `/api/vtu/*` route handlers) will call to turn a business's stored
+// `vault_secret_id` back into the real `X-API-Key` value at request
+// time; it is NEVER used to display a key anywhere (`key_prefix` is
+// the only display-safe value — see migration 0012's own comment) and
+// its return value must never be logged.
+export async function vaultReadSecret(vaultSecretId) {
+  const client = getSupabaseClient();
+
+  const { data, error } = await client.rpc('read_vault_secret', {
+    secret_id: vaultSecretId,
+  });
+
+  if (error) {
+    throw new Error(
+      `vaultReadSecret failed — this likely means the 'public.read_vault_secret' ` +
+      `SECURITY DEFINER wrapper (see this function's own comment) hasn't been migrated ` +
+      `yet, not that the vault_secret_id was invalid: ${error.message}`
+    );
+  }
+
+  if (!data) {
+    throw new Error(`vaultReadSecret: no secret returned for vault_secret_id '${vaultSecretId}'`);
+  }
+
+  return data; // the decrypted raw secret string — never log this
+}

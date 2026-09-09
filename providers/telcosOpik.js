@@ -1,6 +1,6 @@
 import fetch from 'node-fetch';
 import { log, handleApiCall, getProviderBaseUrl, formatPayload, providerError } from '../utils/helpers.js';
-import { getApiKeyRow, insertApiKeyRow, vaultCreateSecret } from '../utils/supabase.js';
+import { getApiKeyRow, insertApiKeyRow, vaultCreateSecret, vaultReadSecret } from '../utils/supabase.js';
 
 // ==================================================
 // 📶 TELCOS OPIK — VTU (airtime/data) client (Task 58/b)
@@ -320,4 +320,53 @@ export async function provisionTelcosOpikAccount(businessId, registrationDetails
     apiKey: rawApiKey,
     keyPrefix: row.key_prefix || null,
   };
+}
+
+// ==================================================
+// 🔎 PER-BUSINESS KEY RESOLUTION (Task 58, order-of-execution step
+// 5's own "revised getProviderKey('telcosopik', businessId)" piece —
+// built here as step 5's own part (a), split out per the standing
+// mandatory task-splitting rule; the route wiring that calls this
+// (step 5's remaining part) is NOT built yet.)
+// ==================================================
+// Deliberately NOT added as a new branch inside
+// utils/helpers.js's getProviderKey() — Task 58/c's own plan
+// explicitly flags that a per-business lookup is "a genuinely
+// different signature from every other provider's getProviderKey
+// call today, worth flagging rather than silently forcing it into
+// the existing single-key or keyMap shapes." Concretely: every
+// existing getProviderKey() call is synchronous (reads a
+// process-wide env var); this one is inherently async (a Supabase
+// row read + a Vault decrypt) and business-scoped, not
+// provider-wide — folding it into getProviderKey()'s existing
+// signature would mean either making every OTHER provider's call
+// site awkwardly async-compatible for no reason, or silently
+// special-casing telcosopik inside a function every other call site
+// assumes is synchronous. A separate, purpose-built function avoids
+// both.
+//
+// Resolves a business's already-provisioned telcos.opik.net key.
+// Does NOT provision — a miss here means
+// provisionTelcosOpikAccount() (above) was never called for this
+// business, which is a distinct, callable-out-loud error condition
+// (route wiring, once built, decides whether that should trigger
+// provisioning inline or return a "activate VTU first" response —
+// not this function's call to make).
+export async function resolveTelcosOpikApiKey(businessId) {
+  if (!businessId) {
+    throw new Error('resolveTelcosOpikApiKey requires a businessId');
+  }
+
+  const row = await getApiKeyRow(businessId, 'telcosopik');
+  if (!row) {
+    const err = new Error(
+      `No telcosopik credential on file for business '${businessId}' — ` +
+      'call provisionTelcosOpikAccount() first (Task 58/c-1: this ' +
+      'should happen at explicit VTU-product activation, not lazily here).'
+    );
+    err.isConfigError = true; // Task 13: server misconfiguration/precondition, not for the client verbatim
+    throw err;
+  }
+
+  return vaultReadSecret(row.vault_secret_id); // never logged — see vaultReadSecret()'s own comment
 }

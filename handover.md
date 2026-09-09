@@ -4,44 +4,35 @@
 > task's own section. Nothing else in this file is required reading to
 > start work.**
 >
-> **Task 58, order-of-execution step 4 is done (2026-09-09):**
-> `providers/telcosOpik.js` built — `TelcosOpik` class (b: getPlans/
-> getWallet/purchaseData/purchaseAirtime/getTransactions, raw
-> `X-API-Key` header, `{success,data}` envelope) plus
-> `registerTelcosOpikAccount()`/`provisionTelcosOpikAccount()`
-> implementing c-1's explicit-activation trigger and c-3's
-> check-then-create-against-`api_keys` guard (race handled via
-> migration 0012's unique constraint, caught in the new
-> `insertApiKeyRow()`). `node --check` clean on every touched file; a
-> throwaway smoke script exercised the pure constructor/header logic
-> (no live credentials) and was deleted before this commit, per
-> convention.
+> **Task 58 step 5, part (a) is done (2026-09-09):** per-business key
+> resolution built — `resolveTelcosOpikApiKey(businessId)` in
+> `providers/telcosOpik.js` + `vaultReadSecret()` in
+> `utils/supabase.js`, deliberately a standalone async function, NOT a
+> new branch inside `utils/helpers.js`'s (synchronous, env-var-based)
+> `getProviderKey()` — see this function's own comment for why. Steps
+> 1–4 (auth, credentials design, `businesses`/`api_keys` migrations,
+> `TelcosOpik` class + provisioning) are all done and confirmed landed
+> on `origin/main` (currently **PR #3**, not PR #2 — PR #2
+> merged/closed 2026-08-31; both "Unified hand-off command format" and
+> "Pull request workflow" sections corrected to say so).
 >
-> **New open item surfaced this step, blocking end-to-end
-> verification (not blocking the next step below):**
-> `vaultCreateSecret()` (`utils/supabase.js`) calls
-> `client.rpc('create_vault_secret', ...)`, but no `public`-schema
-> `SECURITY DEFINER` wrapper around `vault.create_secret` has been
-> migrated yet — Supabase's REST API doesn't expose the `vault` schema
-> directly. A future leaf needs to add that wrapper migration (and its
-> `vault.decrypted_secrets`-reading counterpart for the future call
-> site that actually uses a business's stored key) before
-> `provisionTelcosOpikAccount()` can run for real. Flagged in
-> `vaultCreateSecret()`'s own comment too — not silently assumed to
-> work.
+> **Two open items, neither blocking further code:** (1) no
+> `public`-schema Vault RPC wrappers (`create_vault_secret`,
+> `read_vault_secret`) are migrated yet, so `vaultCreateSecret()`/
+> `vaultReadSecret()` are unverified end-to-end — flagged in both
+> functions' own comments; (2) webhook signing scheme (step 2) still
+> unconfirmed. Migrations `0010`–`0013` also still not applied to the
+> live Supabase project.
 >
-> **Next: step 5 — add the five `/api/vtu/*` routes to `routes.js`**
-> (Task 58/a), wired to `new TelcosOpik(apiKey)` per (e), with the
-> route handler doing the "resolve this business's key" lookup this
-> session deliberately left as step 5's job (revised
-> `getProviderKey('telcosopik', businessId)` signature from (c) — not
-> built yet). The route handling the first `/api/vtu/*` call for a
-> business is also c-1's chosen activation trigger, so step 5 should
-> call `provisionTelcosOpikAccount()` from this session's new file at
-> that point too. After that: step 6 (field-requirements entries),
-> step 7 (`recordTransaction()` wiring). Step 2 (webhook signing
-> scheme) and the Vault-wrapper item above are still separately open
-> and unrelated to step 5 itself.
+> **Next: step 5's remaining part — add the five `/api/vtu/*` routes
+> to `routes.js`** (Task 58/a), wired to `new
+> TelcosOpik(await resolveTelcosOpikApiKey(businessId))` per (e). The
+> route handling a business's first `/api/vtu/*` call is c-1's chosen
+> activation trigger, so this part should call
+> `provisionTelcosOpikAccount()` (already built) at that point, then
+> `resolveTelcosOpikApiKey()` (also already built) for the actual
+> call. After that: step 6 (field-requirements entries), step 7
+> (`recordTransaction()` wiring).
 >
 > **Updating this box:** when you finish your leaf, replace the two
 > paragraphs above with the new next task — don't append a new dated
@@ -63,6 +54,14 @@ already carry. Not required reading — this is a changelog, not
 context. Don't write paragraphs here; that's what turned the old
 box into 2,300 lines (see archive below).
 
+- 2026-09-09 — Task 58 step 5/part (a): built
+  `resolveTelcosOpikApiKey()` + `vaultReadSecret()` — per-business key
+  resolution, deliberately standalone rather than folded into
+  `getProviderKey()`. Also confirmed step 4's commit landed on
+  `origin/main` and found/fixed stale "PR #2" references in the
+  Unified hand-off command format / Pull request workflow sections —
+  the real current PR is **PR #3** (PR #2 merged 2026-08-31). Next:
+  step 5/part (b), the five `/api/vtu/*` route handlers.
 - 2026-09-09 — Task 58 step 4: built `providers/telcosOpik.js`
   (`TelcosOpik` class + `registerTelcosOpikAccount()`/
   `provisionTelcosOpikAccount()`), plus `getApiKeyRow()`/
@@ -2690,9 +2689,14 @@ segment — still exactly this shape, not a shorter/different one.
    at the end.
 4. **All three repos currently push the same way** — `git push origin
    main`, confirmed for all three as of this note (B-Pay-backend's
-   push still auto-joins its existing open PR #2 against upstream, see
-   "Pull request workflow" below — that happens automatically on
-   push, no extra command). If any repo's push mechanics ever change
+   push still auto-joins its existing open PR — **PR #3** as of
+   2026-09-09, not PR #2 (PR #2 merged/closed 2026-08-31; PR #3 opened
+   the same day to cover what PR #2's close left open, and has been
+   accumulating every commit since, this session's Task 58 step 4
+   commit included — confirmed this session via `git ls-remote`
+   against `refs/pull/3/head`) — see "Pull request workflow" below —
+   that happens automatically on push, no extra command). If any
+   repo's push mechanics ever change
    (e.g. a repo moves off a direct-to-main flow), update this section
    and that repo's own "Sibling repos" entry in the same commit — don't
    let them drift apart.
@@ -2881,14 +2885,19 @@ persistence on every call.
    git log --oneline upstream/main -3
    ```
    - If `origin/main`'s latest commit isn't `upstream/main`'s latest
-     (or an ancestor of it) — PR #2 is **still open, unmerged**. That's
-     the expected, intentional steady state (see "Pull request
-     workflow" below — we're deliberately accumulating every session's
-     commits into this one PR until Phoenix-Boss merges it all at
-     once), so it doesn't block starting a new task. Just confirm PR
-     #2 itself is still open and still the one and only PR (don't
-     create a second one — see below), and note the current state
-     plainly to the human when you hand off this session's patch.
+     (or an ancestor of it) — the current open PR (**PR #3** as of
+     2026-09-09; check "Outstanding PRs status" near the end of "Pull
+     request workflow" below for whichever PR number is current by
+     the time you read this — PR numbers here have already rolled
+     over once, from #2 to #3, when #2 merged) is **still open,
+     unmerged**. That's the expected, intentional steady state (see
+     "Pull request workflow" below — we're deliberately accumulating
+     every session's commits into this one PR until Phoenix-Boss
+     merges it all at once), so it doesn't block starting a new task.
+     Just confirm the current PR itself is still open and still the
+     one and only open PR (don't create a second one — see below),
+     and note the current state plainly to the human when you hand
+     off this session's patch.
    - If a human-provided update says a PR *was* merged, still verify
      it here against `upstream/main` yourself rather than taking the
      claim at face value — merges can be delayed, rejected, or land on
@@ -2944,25 +2953,28 @@ persistence on every call.
    hand-off command format" section near the top of this file —
    verbatim, every time.** That section is now the single source of
    truth for this (**no `gh pr create` line ever** — see "Pull request
-   workflow" below; PR #2 is already open and reused automatically on
-   every push). Do not write a one-off command block that skips that
-   section's format, even for a single-repo session.
+   workflow" below; the current open PR, **PR #3** as of 2026-09-09,
+   is already open and reused automatically on every push — check
+   "Outstanding PRs status" there for whichever PR number is current
+   by the time you read this). Do not write a one-off command block
+   that skips that section's format, even for a single-repo session.
 11. **Check the box** for the task you just did in this file as soon
     as the commit is confirmed **pushed** to `origin/main` (which
-    auto-joins PR #2 — see below) — do NOT wait for the owner
-    (Phoenix-Boss) to actually merge anything. Pushing the commit is
-    this project's definition of "done" for a task; merge timing is
-    the real owner's call, on their own schedule, and isn't something
-    a session should block on or keep re-checking. Add a short "what
-    was found / what changed" note under the task (same style as Task
-    3/Task 4 in the Mavins-web project's handover.md — that project is
-    the reference example for how this whole process should read),
-    and if you know PR #2 is still unmerged as of this session, say
-    so plainly in that note (e.g. "pushed, part of PR #2, not yet
-    merged by Phoenix-Boss") rather than implying it landed upstream —
-    that's what step 2's "Outstanding PRs" check-in is for on the
-    *next* session, not a reason to leave this task's box unchecked
-    now. Commit that edit to `handover.md` **as part of the same
+    auto-joins the current open PR — see below) — do NOT wait for the
+    owner (Phoenix-Boss) to actually merge anything. Pushing the
+    commit is this project's definition of "done" for a task; merge
+    timing is the real owner's call, on their own schedule, and isn't
+    something a session should block on or keep re-checking. Add a
+    short "what was found / what changed" note under the task (same
+    style as Task 3/Task 4 in the Mavins-web project's handover.md —
+    that project is the reference example for how this whole process
+    should read), and if you know the current PR is still unmerged as
+    of this session, say so plainly in that note (e.g. "pushed, part
+    of PR #3, not yet merged by Phoenix-Boss") rather than implying it
+    landed upstream — that's what step 2's "Outstanding PRs" check-in
+    is for on the *next* session, not a reason to leave this task's
+    box unchecked now. Commit that edit to `handover.md` **as part of
+    the same
     commit** as the code change (one commit, one patch, per session —
     don't split the code change and the checkbox update into two).
     split the code change and the checkbox update into two).
@@ -2980,67 +2992,82 @@ codebase in two hops: (1) push to our own fork's `main`, (2) that
 code sits in a pull request until Phoenix-Boss merges it.
 
 **⚠️ There is already ONE open PR that covers this whole project —
-PR #2 (`https://github.com/Phoenix-Boss/B-PAY-backend/pull/2`),
+currently PR #3 as of 2026-09-09
+(`https://github.com/Phoenix-Boss/B-PAY-backend/pull/3`),
 `Zapier-codes:main` → `Phoenix-Boss:main`. No session should ever run
-`gh pr create` (or the browser compare-URL) again for this repo.**
-GitHub only allows one open PR per branch pair, and — confirmed
-directly by trying it — a second `gh pr create` attempt just fails
-with `a pull request for branch "Zapier-codes:main" into branch
-"main" already exists`, pointing back at PR #2. This isn't a fallback
-behavior to guard against, it's the whole point: **every future
-session's commit, once pushed to `origin/main`, joins PR #2
-automatically** — GitHub appends new commits on a branch to whatever
-open PR already exists for that branch, with zero extra command
-needed. So step 10 above is now just `git am` + `git push origin
-main`, full stop.
+`gh pr create` (or the browser compare-URL) again for this repo unless
+this section's own "Outstanding PRs status" note below says the
+current PR has since merged/closed.** GitHub only allows one open PR
+per branch pair, and — confirmed directly by trying it, back when PR
+#2 was the live one — a second `gh pr create` attempt just fails with
+`a pull request for branch "Zapier-codes:main" into branch "main"
+already exists`, pointing back at whichever PR is currently open. This
+isn't a fallback behavior to guard against, it's the whole point:
+**every future session's commit, once pushed to `origin/main`, joins
+the current open PR automatically** — GitHub appends new commits on a
+branch to whatever open PR already exists for that branch, with zero
+extra command needed. So step 10 above is now just `git am` + `git
+push origin main`, full stop — **as long as a PR is actually still
+open**; PR numbers here have already rolled over once (#2 → #3, see
+below), and will again whenever the current one merges.
 
 **Why we're doing it this way (explicit project decision, not a
-guess):** the plan is to leave PR #2 open and keep accumulating every
-session's commits into it — task after task — **until all the fixes
-in this project's task queue are actually done**, rather than opening
-and closing a separate small PR per task. Phoenix-Boss then reviews
-and merges the whole batch **once, in one shot**, at whatever time is
-convenient for him. This is intentional, not a workaround — don't
-"helpfully" split things into smaller PRs, don't close PR #2 early,
-and don't ask the human to merge anything on the fork side to try to
-"clean up" — the fork's `main` accumulating commits *is* the plan.
+guess):** the plan is to leave the current PR open and keep
+accumulating every session's commits into it — task after task —
+**until all the fixes in this project's task queue are actually
+done**, rather than opening and closing a separate small PR per task.
+Phoenix-Boss then reviews and merges the whole batch **once, in one
+shot**, at whatever time is convenient for him — after which, per the
+PR #2→#3 precedent below, a session finds the queue-until-done plan
+has "reached its endpoint," opens the next PR to keep going, and the
+cycle repeats. This is intentional, not a workaround — don't
+"helpfully" split things into smaller PRs, don't close the current PR
+early, and don't ask the human to merge anything on the fork side to
+try to "clean up" — the fork's `main` accumulating commits *is* the
+plan.
 
 **What this means for step 11 (marking a task done):** unchanged in
 spirit from before — check the task's box as soon as its commit is
 pushed to `origin/main`, don't wait for Phoenix-Boss to merge. The
-only difference is there's no PR-open confirmation step anymore since
-there's nothing new to open — pushing is now the entire finish line.
+only difference is there's no PR-open confirmation step anymore *as
+long as a PR is already open* — pushing is the entire finish line
+until the next merge rolls the PR number over again.
 
 **What a session should still verify at the top of every session
-(step 2 above):** that PR #2 is still open (hasn't been merged or
-closed out from under this plan) and still targeting the right branch
-pair. If a session's step-2 check ever finds PR #2 has been merged —
-i.e. `upstream/main`'s latest commit is no longer `900db65` — that's
-a real state change worth flagging clearly to the human (see the
-status line below), since it may mean the queue-until-done plan needs
-revisiting or a fresh PR will eventually be needed for whatever's
-still unmerged. Until that happens, "PR #2 open, accumulating
+(step 2 above):** that the current PR is still open (hasn't been
+merged or closed out from under this plan) and still targeting the
+right branch pair. If a session's step-2 check ever finds it's been
+merged — i.e. `upstream/main`'s latest commit is a new merge commit
+not previously seen — that's a real state change worth flagging
+clearly to the human (see the status line below): open the next PR
+(`gh pr create --repo Phoenix-Boss/B-PAY-backend --base main --head
+Zapier-codes:main`, the same command that opened PR #3) before
+assuming a plain push is still the whole story, then record the new
+PR number here. Until a merge is found, "current PR open, accumulating
 commits, unmerged" is the fully expected steady state — not something
 to chase, escalate, or try to fix.
 
 **Outstanding PRs status (updated by whichever session last checked —
-see step 2 above):** **PR #2 has been merged by Phoenix-Boss**,
-confirmed this session by adding the real `upstream` remote
-(`https://github.com/Phoenix-Boss/B-PAY-backend.git`) and fetching it
-directly (not assumed, not inferred from the fork alone) —
-`upstream/main`'s latest commit is now `63f72e2`, "Merge pull request
-#2 from Zapier-codes/main", which brings in everything through
-`01df9c7` (this fork's own latest at the time of checking). This is
-the real state change the note above this one anticipated — **the
-queue-until-done plan has now reached its natural endpoint for
-everything committed so far.** Nothing in this fork's `main` is
-ahead of what's now live upstream. Per that same note: whenever the
-next task's work is ready to ship, a **fresh PR** will need to be
-opened (PR #2 is closed/merged, it won't silently keep absorbing new
-commits the way it did while open) — don't assume `git push
-origin main` alone is still sufficient the way it was during PR #2's
-window; check whether a new PR needs creating before assuming a plain
-push is the whole story next time.
+see step 2 above):** **PR #2 merged by Phoenix-Boss 2026-08-31**
+(`upstream/main` advanced to `63f72e2`, "Merge pull request #2 from
+Zapier-codes/main," bringing in everything through `01df9c7`); the
+same session opened **PR #3** to cover the gap that left open (see the
+Session Pointer Archive's own 2026-08-31 entry for that PR's opening
+details). **Re-confirmed this session (2026-09-09):** `git ls-remote`
+against `Phoenix-Boss/B-PAY-backend` shows `refs/pull/3/head` at
+`d997785...` — this session's own Task 58 step 4 commit
+(`feat(providers): telcosOpik client + account-provisioning logic`),
+landed on `origin/main` and auto-joined PR #3, exactly as expected.
+`refs/pull/2/head` is still frozen at `01df9c7` (unchanged since the
+merge — expected, since a merged/closed PR's head ref doesn't move).
+**PR #3 is open, unmerged, and is the correct target for every push
+right now** — no new PR needed. A follow-up `api.github.com` call to
+confirm PR #3's `state`/`merged` fields directly hit this session's
+own rate limit (`403`, `API rate limit exceeded`, unauthenticated) —
+the `git ls-remote` evidence above (a still-live, still-moving
+`refs/pull/3/head`) is treated as sufficient without it, same as the
+2026-08-31 session's own `gh pr create` success output was treated as
+authoritative over a rate-limited API double-check.
 
 ---
 
@@ -12442,6 +12469,28 @@ sequencing doesn't need re-deriving either):
 5. Add the five routes (a) to `routes.js`, wired directly to `new
    TelcosOpik()` per (e), reading the per-business key via the revised
    `getProviderKey('telcosopik', businessId)` signature from (c).
+   **Split into two parts this session, per the standing
+   mandatory-task-splitting rule:**
+   - **Part (a) — the "revised `getProviderKey`" key-resolution piece
+     — done (2026-09-09).** Built as a standalone
+     `resolveTelcosOpikApiKey(businessId)` (`providers/telcosOpik.js`)
+     + `vaultReadSecret()` (`utils/supabase.js`), deliberately NOT a
+     new branch inside `utils/helpers.js`'s `getProviderKey()` — see
+     `resolveTelcosOpikApiKey()`'s own comment: that function is
+     synchronous/env-var-based everywhere else, and a per-business,
+     inherently-async Supabase+Vault lookup doesn't fit that shape
+     without either awkwardly touching every other provider's call
+     site or silently special-casing one branch inside a function
+     every other caller assumes is sync. `node --check` clean;
+     throwaway smoke script (missing-businessId + Supabase-unconfigured
+     error paths) run and deleted, per convention. Still unverified
+     end-to-end — depends on the same Vault-wrapper migration part (a)
+     of step 4 already flagged.
+   - **Part (b) — the five route handlers themselves — not started.**
+     Wire `routes.js` to call `provisionTelcosOpikAccount()` (built in
+     step 4) at the activation trigger and `resolveTelcosOpikApiKey()`
+     (part (a) above) for the per-request key, then `new
+     TelcosOpik(apiKey)` per (e). This is the actual next leaf.
 6. Add the two field-requirements entries (g).
 7. Wire `recordTransaction()` calls (h).
 8. Webhook handler (i), only after step 2 is confirmed — not before.

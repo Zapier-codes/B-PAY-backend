@@ -69,38 +69,42 @@
 > that's a documentation/convention call for the product owner, not
 > this correction's place to make.
 >
-> **Real next actionable item is now Task 53/a** (Korapay Card Issuing
-> discovery pass) — Task 53's own text flags this as required before
-> `providers/korapay.js` can gain any card-issuance methods, per Task
-> 0's Discovery Convention (no assuming a new provider surface behaves
-> like an already-integrated one). Confirmed directly against
-> developers.korapay.com this session (2026-09-09): card issuance is
-> **virtual-card-only today** (no physical cards yet), USD-only, and
-> requires Live Mode + requesting "Issuing" access on the dashboard
-> (PCI-DSS attestation required) — none of that is credential-gated for
-> discovery purposes, just documentation. Confirmed endpoints: `POST
-> {{baseurl}}/api/v1/cardholders` (create a card holder — required
-> before any card can be issued; needs KYC-shaped fields: identity
-> document, selfie reference, BVN/national_id per country), `POST
-> {{baseurl}}/api/v1/cards` (create the card itself — `currency` (USD
-> only), `amount`, `card_holder_reference`, `reference`, `type` (only
-> `virtual` accepted despite the field existing), `brand` (mastercard/
-> visa, defaults to mastercard)), `GET {{baseurl}}/api/v1/cards/:reference`
-> (card details incl. PAN/CVV), `GET {{baseurl}}/api/v1/cards` (list,
-> filterable by status/type/date range). Webhook event
-> `issuing.card_creation.success` fires on creation. **Not yet done:**
-> funding/withdrawal/suspend-terminate endpoint details (separate docs
-> pages — Issuing Balance, Virtual Card Funding, Virtual Card
-> Withdrawals, Activate/Suspend/Terminate — not fetched this session);
-> no `providers/korapay.js` code written yet, per Task 53's own
-> "decision-record only" discipline until the full discovery pass (not
-> just card-holder + card-creation) is done. **Task 14** (end-to-end
-> manual test pass) is separately still blocked — this sandbox's
-> network egress doesn't reach any payment-provider domain regardless
-> of key availability (confirmed: `api.paystack.co` → `403
-> host_not_allowed`) — real keys living in Render's env doesn't change
-> that; unblocking it needs either a network-settings change here or
-> the product owner running/relaying test results directly.
+> **Task 53/a (Korapay Card Issuing discovery pass) is now DONE
+> (2026-09-09)** — every endpoint needed for a full create → fund →
+> withdraw → manage lifecycle is confirmed directly against
+> developers.korapay.com: cardholder creation, card creation,
+> retrieval/list, funding, withdrawal, activate/suspend, events log,
+> and the full `issuing.*` webhook-event vocabulary. Full detail is in
+> Task 53/a's own section — not repeated here. **Two real
+> documentation inconsistencies were found and deliberately left
+> unresolved, not guessed at:** (1) the activate/suspend endpoint's
+> `action` field description says `activate`/`deactivate`, but the
+> page's own worked example sends `action: "suspend"` instead of
+> `deactivate`; (2) the status-update and events endpoints are given as
+> `/api/i/cards/...` in their own opening sentence, but the events
+> page's very next paragraph uses `/api/v1/cards/...` in a worked
+> example — the same page disagrees with itself. Per this file's
+> standing "don't guess a payload/path shape, confirm or test it" rule,
+> both need a sandbox call or direct Korapay confirmation before
+> `providers/korapay.js` implements those two specific methods —
+> cardholder creation, card creation, retrieval, funding, and
+> withdrawal have no such ambiguity and can be built without further
+> research.
+>
+> **Real next actionable item is now writing `providers/korapay.js`'s
+> card-issuance methods** for the five unambiguous operations above
+> (cardholder creation, card creation, retrieval/list, funding,
+> withdrawal) — this is now implementation work, not further discovery,
+> per Task 53/a's own findings. Leave `suspend`/`status` and the events
+> log as explicitly-unbuilt/TODO-flagged methods until the two flagged
+> ambiguities are resolved, rather than guessing and risking a silent
+> production failure. **Task 14** (end-to-end manual test pass) is
+> separately still blocked — this sandbox's network egress doesn't
+> reach any payment-provider domain regardless of key availability
+> (confirmed: `api.paystack.co` → `403 host_not_allowed`) — real keys
+> living in Render's env doesn't change that; unblocking it needs
+> either a network-settings change here or the product owner
+> running/relaying test results directly.
 >
 > **Updating this box:** when you finish your leaf, replace the two
 > paragraphs above with the new next task — don't append a new dated
@@ -116,13 +120,23 @@
 
 ## 📝 Session Log (newest first — one line per session, optional)
 
+- 2026-09-09 — Completed Task 53/a's Korapay Card Issuing discovery
+  pass (funding, withdrawal, activate/suspend, events log, full
+  webhook-event vocabulary). Flagged two real doc self-contradictions
+  (action value `suspend` vs `deactivate`; path `/api/i/` vs
+  `/api/v1/`) rather than guessing which is correct. Updated the NEXT
+  TASK box to point at writing `providers/korapay.js`'s five
+  unambiguous card-issuance methods next. No provider code written.
 - 2026-09-09 — Corrected a stale NEXT TASK claim: Task 51/b's
   domain-based routing is actually already live in `routes.js` (Task
   52 did wire it; the pointer box just wasn't updated). Started Task
   53/a (Korapay Card Issuing discovery): confirmed cardholder/card
   creation endpoints and payloads directly against
   developers.korapay.com — funding/withdrawal/suspend-terminate
-  endpoints still unfetched, no provider code written yet.
+  endpoints still unfetched, no provider code written yet. Also added
+  the missing "Patches issued so far" log and confirmed this repo's
+  real local folder casing (`B-PAY-backend`) after a hand-off command
+  failed on it.
 
 Add at most one line here when you finish a leaf, if you want a
 record beyond what the pointer box above and the task's own section
@@ -3293,7 +3307,16 @@ rather than guessing.
   top of `origin/main`'s `40865e6` locally, no `git am` run against
   the real repo yet.
 
-**Next free number for whoever picks this up next: `0017`.**
+- `0017` — task53a-korapay-card-issuing-discovery-complete (this
+  session, 2026-09-09): completes Task 53/a's Korapay Card Issuing
+  discovery pass (funding/withdrawal/lifecycle/events endpoints +
+  full webhook-event vocabulary), flags two real doc
+  inconsistencies (action value `suspend` vs `deactivate`; path
+  `/api/i/` vs `/api/v1/`) as unresolved rather than guessed, and
+  updates the NEXT TASK pointer box accordingly. No provider code
+  written yet.
+
+**Next free number for whoever picks this up next: `0018`.**
 
 **Paystack — FULL API discovery pass, audited 2026-09-06 (supersedes
 all prior Paystack entries below; nothing from the prior audit was
@@ -11201,6 +11224,137 @@ dedicated discovery pass** before `providers/korapay.js` gains any
 card-issuance methods. Do not assume it shares auth/payload shape with
 Korapay's existing collection/payout endpoints just because it's the
 same provider.
+
+**Task 53/a discovery pass — completed 2026-09-09, confirmed directly
+against developers.korapay.com.** Scope, product surface, and every
+endpoint needed for a full create → fund → withdraw → manage lifecycle
+are now confirmed:
+
+- **Product scope:** virtual cards only (no physical yet), **USD
+  only**, MasterCard or Visa (defaults to MasterCard if `brand` is
+  omitted). Requires Live Mode + requesting "Issuing" access via the
+  dashboard's own "Issuing" page, with PCI-DSS attestation as part of
+  that request. Per support.korapay.com's own Card Issuing article,
+  Korapay actually has **two card products**: Reserved Virtual Cards
+  (dashboard-only, for the merchant's own internal expenses — not
+  relevant here) and **Issued/Customer Cards** (the API-driven one,
+  extended to the merchant's own customers) — this platform's use case
+  is squarely the latter; don't conflate the two if a future session
+  sees "RVC" language in Korapay's docs.
+- **Funding the platform's own Issuing Balance** (the pooled wallet
+  card creation/funding draws from) is **dashboard-only** — "Issuing"
+  tab → "Add Funds", pulled from the USD Available Balance. No API
+  endpoint for this step; confirmed there's an opt-in
+  merchant-support-enabled "auto-funding" feature that tops it up
+  automatically from USD Available Balance, but that's a
+  support-ticket toggle, not something this codebase can drive.
+  `{{baseurl}}/merchant/api/v1/balances` (the existing general Balance
+  API, already relevant to other tasks) returns an `issuing_balance`
+  field nested under the `USD` object for merchants with card issuing
+  enabled — that's the read path for this platform to check headroom
+  before attempting a card creation/funding call, not a Card-Issuing-
+  specific endpoint.
+- **Card holder creation:** `POST {{baseurl}}/api/v1/cardholders` —
+  KYC-shaped payload (identity document + selfie reference + address +
+  a `country_identity` block using `bvn` for Nigerian cardholders or
+  `national_id` otherwise). This is a real, separate KYC surface from
+  the PaymentPoint-based KYC/KYB Task 53/d already assigned as this
+  platform's verification source of truth — flagging plainly so a
+  future session doesn't assume Task 53/d's PaymentPoint verification
+  satisfies this endpoint's own required fields, or try to skip
+  straight to card creation without first creating a holder here.
+- **Card creation:** `POST {{baseurl}}/api/v1/cards` — `currency`
+  (`USD` only), `amount`, `card_holder_reference`, `reference`, `type`
+  (field exists but **only `virtual` is actually accepted** — the docs
+  themselves say "only virtual cards can be issued for now" even
+  though `physical` is listed as an option), `brand`
+  (`mastercard`/`visa`). Fires `issuing.card_creation.success` webhook
+  on completion; initial creation response returns `status: "pending"`
+  the same "accepted, not yet confirmed" pattern already established
+  for Korapay's `processPayout` (see that method's own comment in
+  `providers/korapay.js`) — final truth lives in the webhook or a
+  follow-up `GET`, not the creation response itself.
+- **Card retrieval:** `GET {{baseurl}}/api/v1/cards/:reference` (single
+  card, includes PAN/CVV — sensitive, handle accordingly if this is
+  ever logged) and `GET {{baseurl}}/api/v1/cards` (list, filterable by
+  `status`/`type`/`start_date`/`end_date`).
+- **Card funding:** `POST {{baseurl}}/api/v1/cards/:reference/fund` —
+  `reference` (the funding transaction's own idempotency reference,
+  distinct from the card's `:reference` path param), `amount`,
+  `description`. Fires `issuing.card_funding.success`/`.failed`.
+  Response includes a `fee` field (sample shows `0.005` on a `100`
+  funding amount) — the fee schedule/percentage itself isn't
+  documented on this page, flagging as still-open if this platform
+  ever needs to surface fees to the end customer.
+- **Card withdrawal:** `POST {{baseurl}}/api/v1/cards/:reference/withdraw`
+  — same shape as funding (`reference`, `amount`, `description`).
+  Fires `issuing.card_withdrawal.success`/`.failed`. Sample response
+  shows a flat `fee: 1` on an `amount: 10` withdrawal, returning
+  `amount: 9` — i.e. **the returned `amount` is net of fee, not the
+  requested amount** — a real integration detail if this platform ever
+  needs to reconcile against what it asked for vs. what was actually
+  moved.
+- **Card lifecycle (activate/suspend) via API:** `PATCH
+  {{baseurl}}/api/i/cards/:card_reference/status` — body: `action`
+  (`activate` or `deactivate` per the field's own description) +
+  `reason`. **Flagging a real, unresolved documentation
+  inconsistency, not silently resolved here:** the worked "suspend"
+  example on this same page sends `"action": "suspend"`, not
+  `"deactivate"` as the field description says is the only other valid
+  value — Korapay's own docs disagree with themselves about which
+  literal string this field expects. Per this file's own standing rule
+  (Task 45a/45c's own precedent: don't guess a payload shape, confirm
+  or test it), this needs either a sandbox call or direct
+  confirmation from Korapay before `providers/korapay.js` hard-codes
+  one string over the other — guessing wrong here would silently fail
+  every suspend call in production.
+- **Card lifecycle events log:** `GET
+  {{baseurl}}/api/i/cards/:card_reference/events` (paginated,
+  filterable by `start_date`/`end_date`/`page`/`limit`) — returns a
+  human-readable audit trail (`Creation`, `Funding`, `deactivation`,
+  `activation`, `termination`, each with a free-text `reason` and
+  `creator`).
+- **Second, separate, real path inconsistency — also not silently
+  resolved here:** both the status-update endpoint above AND this
+  events endpoint are documented with an `/api/i/cards/...` path
+  (lowercase `i`, not `v1`) in their own opening sentence, but the
+  events page's very next paragraph gives a worked query-string example
+  against `/api/v1/cards/:card_reference/events?...` — i.e. **the same
+  single doc page contradicts itself** on which literal path segment
+  is correct. Every other confirmed Card Issuing endpoint on every
+  other page uses `/api/v1/...` consistently, which makes `/api/i/...`
+  look like a doc typo — but per this file's own "don't guess, verify"
+  discipline (same posture as the `action: suspend` finding above),
+  this is recorded as unconfirmed, not corrected by assumption. A
+  future session should either hit both path variants against the
+  sandbox once test keys exist, or check Korapay's OpenAPI reference
+  (`docs.korapay.com`) directly for the authoritative path, before
+  `providers/korapay.js` commits to one.
+- **Full event vocabulary confirmed** (Card Events and Webhook page):
+  `issuing.card_authorization.settled`, `issuing.chargeback.success`,
+  `issuing.transaction_refund.success`,
+  `issuing.transaction_reversal.success`,
+  `issuing.card_creation.success`/`.failed`,
+  `issuing.card_funding.success`/`.failed`,
+  `issuing.card_withdrawal.success`/`.failed`, `issuing.card.expired`,
+  `issuing.card_suspension.success`/`.failed`,
+  `issuing.card_activation.success`/`.failed`,
+  `issuing.card_termination.success`/`.failed` — a useful complete list
+  for whichever session eventually extends `webhookHandlers` in
+  `routes.js` to cover Korapay card events, not done this session.
+
+**Still open after this discovery pass (by design — decision/discovery-
+record only, per this task's own scope note):** no
+`providers/korapay.js` code written, no webhook signature/handling
+confirmed specifically for `issuing.*` events (Task 4's existing
+Korapay webhook work covers payment/payout events, not card-issuing
+ones — needs its own check, not assumed to already cover this), and
+the two flagged path/payload ambiguities above (`/api/i/` vs
+`/api/v1/`, and `suspend` vs `deactivate`) are blocking items for
+actually writing the suspend/status and events methods specifically —
+everything else (cardholder creation, card creation, retrieval,
+funding, withdrawal) has no such ambiguity and could reasonably be
+built next without further research.
 
 ### b. White-label branding — must be dynamic, not hardcoded
 

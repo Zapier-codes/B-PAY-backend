@@ -4,25 +4,23 @@
 > task's own section. Nothing else in this file is required reading to
 > start work.**
 >
-> **Task 58 is now fully unblocked on design — build directly, no
-> product-owner questions needed to start.** Auth header confirmed
-> (`X-API-Key`, `sk_live_...`). Credentials design fully resolved
-> (Task 58/c-1, c-2, c-3), Stripe-mirrored: provision a real
-> `telcos.opik.net` account per business on explicit VTU-activation
-> (not signup, not lazily mid-purchase); store the key via Supabase
-> Vault, ciphertext only; guard duplicate registration with a
-> check-then-create read plus a `(business_id, provider)` DB unique
-> constraint, falling back to `POST /auth/login` on a duplicate-email
-> response.
+> **Task 58, order-of-execution step 3 is done (2026-09-09):** the
+> `businesses`/`api_keys` Supabase tables (migrations `0010`–`0013`)
+> are written, per c-1/c-2/c-3's Stripe-mirrored design — Vault
+> reference column, `(business_id, provider)` unique constraint,
+> service-role-only RLS. **Not yet applied to the live project** — see
+> the DB-Ops command block this session hands over; check
+> `db/SCHEMA.md`'s top confirmed-migrations note before assuming
+> `0010`–`0013` are live.
 >
-> **Start at Task 58's own "Order of execution" list, step 3** (steps
-> 1–2's blockers are resolved; step 2, webhook signing, is separately
-> still open but doesn't block starting): create the `businesses`/
-> `api_keys` Supabase tables (Task 45/b, pulled forward as this task's
-> step 0), then build `providers/telcosOpik.js` and the
-> account-provisioning logic per c-1–c-3. No code was written this
-> session — this box hands off a fully-specified plan, not partial
-> code.
+> **Next: step 4 — build `providers/telcosOpik.js` plus the
+> account-provisioning logic** (Task 58/b, wired to c-1's
+> explicit-activation trigger and c-3's check-then-create-against-
+> `api_keys` guard). No open design questions remain for this step —
+> proceed directly. After that: step 5 (the five `/api/vtu/*` routes),
+> step 6 (field-requirements entries), step 7 (`recordTransaction()`
+> wiring). Step 2 (webhook signing scheme) is still separately open
+> and unrelated to any of the above.
 >
 > **Updating this box:** when you finish your leaf, replace the two
 > paragraphs above with the new next task — don't append a new dated
@@ -44,6 +42,11 @@ already carry. Not required reading — this is a changelog, not
 context. Don't write paragraphs here; that's what turned the old
 box into 2,300 lines (see archive below).
 
+- 2026-09-09 — Task 58 step 3: built `businesses`/`api_keys`
+  migrations (0010–0013) per c-1/c-2/c-3's design — Vault reference
+  column, per-provider unique constraint, service-role-only RLS. Not
+  yet applied live. db/SCHEMA.md updated. Next: step 4,
+  providers/telcosOpik.js.
 - 2026-09-09 — Task 58/c-1/c-2/c-3: resolved all three remaining
   credentials-design open items using Stripe's own patterns
   (capability-activation trigger, envelope encryption via Supabase
@@ -12389,10 +12392,13 @@ sequencing doesn't need re-deriving either):
    the first pass (can be deferred to its own follow-up task if not —
    (a)–(h) don't depend on it). **Still open** — separate from the
    credentials blocker resolved above; not addressed this session.
-3. Create the `businesses`/`api_keys` Supabase tables (Task 45/b),
+3. ~~Create the `businesses`/`api_keys` Supabase tables (Task 45/b),
    pulled forward as this task's own step 0 per c's note that it's now
-   a hard dependency — including the Supabase Vault wiring from c-2
-   and the `(business_id, provider)` unique constraint from c-3.
+   a hard dependency~~ — **done (2026-09-09).** Migrations `0010`
+   (`businesses`), `0011` (RLS), `0012` (`api_keys`, Vault reference +
+   `(business_id, provider)` unique constraint), `0013` (RLS). Not yet
+   applied to the live project — see `db/SCHEMA.md`'s confirmed-live
+   note and the DB-Ops command block.
 4. Build `providers/telcosOpik.js` (b) plus the account-provisioning
    logic from c-1 (explicit-activation trigger, check-then-create
    against (3)'s table before calling `POST /auth/register`), verified

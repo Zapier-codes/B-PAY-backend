@@ -196,7 +196,44 @@ work), so there's nothing to usefully gate on those paths today.
 Task 53/54 adds (`/kyc`, a card-issuance endpoint, etc.) to call
 before doing anything else.
 
-## Functions
+### `businesses` (migration `0010`) — Task 58/c's per-business account, pulled forward from Task 45/b
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `uuid` | primary key |
+| `email` | `text` | `not null unique` — B-Pay account identity, distinct from any `telcos.opik.net` credential (see `api_keys` below) |
+| `company_name` | `text` | nullable |
+| `status` | `text` | `'active'` \| `'suspended'`, default `'active'` — no CHECK constraint yet, see migration `0010`'s own note |
+| `created_at` | `timestamptz` | default `now()` |
+| `updated_at` | `timestamptz` | default `now()`, auto-updated via `set_updated_at()` |
+
+**No foreign keys into this table yet from `transactions`/`customers`** — flagged as separate follow-up scope in migration `0010`, not done here (mirrors migration `0001`'s own original "no `business_id` FK until a `businesses` table exists" deferral, now resolved by this table existing but not yet wired to those two).
+
+**Row Level Security:** enabled (migration `0011`). One explicit policy, `businesses_service_role_all`, scoped to `service_role` only — same pattern as every other table in this schema. No policy for `anon`/`authenticated` — no dashboard read path exists yet (Task 46), and Task 45/c's dashboard-login-vs-API-key question is still open.
+
+**Not yet built:** no dashboard-login credential column (deliberately — see migration `0010`), no admin/role column, no `business_id` FK on `transactions`/`customers`.
+
+### `api_keys` (migration `0012`) — Task 58/c-2/c-3's per-business, per-provider credential store
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `uuid` | primary key |
+| `business_id` | `uuid` | `not null references businesses(id) on delete cascade` |
+| `provider` | `text` | e.g. `'telcosopik'` — generic column, not scoped to one provider |
+| `vault_secret_id` | `uuid` | reference into Supabase Vault (`vault.secrets.id`) — **the raw key is never stored in this table**, see migration `0012`'s own note |
+| `key_prefix` | `text` | nullable, non-secret display fragment (e.g. `sk_live_...a1b2`) |
+| `created_at` | `timestamptz` | default `now()` |
+| `updated_at` | `timestamptz` | default `now()`, auto-updated via `set_updated_at()` |
+
+**Constraint:** `unique (business_id, provider)` — the DB-level half of Task 58/c-3's duplicate-registration guard (check-then-create at the application layer, this constraint as the actual enforcement point against a lost race). Indexed on `business_id`.
+
+**Encryption at rest (Task 58/c-2):** Supabase Vault, mirroring Stripe's own envelope-encryption pattern for stored secrets. Insert via `select vault.create_secret(<raw key>, <name>, <description>)`, store the returned id here. Read the real value back only via an explicit `select decrypted_secret from vault.decrypted_secrets where id = <vault_secret_id>` — never logged, never returned in a list/display response (only `key_prefix` is safe to show).
+
+**Row Level Security:** enabled (migration `0013`). One explicit policy, `api_keys_service_role_all`, scoped to `service_role` only. No policy for `anon`/`authenticated` — see migration `0013`'s own note on why even a future dashboard read path should go through a server-side endpoint rather than a direct RLS-scoped client read.
+
+**Not yet built:** the actual account-provisioning call site (`providers/telcosOpik.js`'s constructor / `getProviderKey('telcosopik', businessId)`, Task 58/c, order-of-execution step 4) — this migration only creates the storage, same division of labor migration `0003` used for `customers`.
+
+
 
 - **`set_updated_at()`** — trigger function (migration `0001`). Keeps
   a row's `updated_at` current on any `UPDATE`. Shared by every table
@@ -209,9 +246,10 @@ before doing anything else.
 Task 56/d (a through e) is fully built. Task 57 (a through e,
 `customers` table + Customer Vault) is fully built. Task 52/e-2d
 (`routing_config`, migrations `0005`/`0006`), Task 52/e-2e
-(`capabilities`, migrations `0007`/`0008`), and Task 45d
-(`transactions.provider_reference`, migration `0009`) are all built
-and wired in as of this update — see each table's own entry above.
+(`capabilities`, migrations `0007`/`0008`), Task 45d
+(`transactions.provider_reference`, migration `0009`), and Task 58/c
+(`businesses`/`api_keys`, migrations `0010`–`0013`) are all built and
+wired in as of this update — see each table's own entry above.
 **Not yet built for `routing_config`:** a second, per-account/per-
 domain override tier beyond the single platform-level default row per
 domain — flagged as a future extension of that table, not guessed at
@@ -221,10 +259,16 @@ ready, with nothing to call it yet (Tasks 53/54 are still decision-
 record only). **Not yet built for `provider_reference`:** the same
 column populated for Flutterwave's own analogous `verifyPayout` gap —
 flagged as a future reuse of this column, not built here (Task 45d
-scoped to JuicyWay's collection-verify gap specifically). Migrations
-`0005` through `0009` are **not yet confirmed live** — same "check
-before assuming" caveat this file's own top note already states for
-every migration not explicitly listed as confirmed there. Beyond that,
-nothing currently queued needs a further migration; the next schema
-change is whatever a future task actually requires (e.g. Task 46's
-dashboard, once it needs a `businesses` table or per-business RLS).
+scoped to JuicyWay's collection-verify gap specifically). **Not yet
+built for `businesses`/`api_keys`:** the actual `telcosOpik.js`
+provisioning code that reads/writes these tables (Task 58's own
+order-of-execution step 4, not this migration); a `business_id` FK on
+`transactions`/`customers`; any dashboard-login credential (Task
+45/c's still-open question); the actual Vault `create_secret`/
+`decrypted_secrets` call sites. Migrations `0005` through `0013` are
+**not yet confirmed live** — same "check before assuming" caveat this
+file's own top note already states for every migration not explicitly
+listed as confirmed there. Beyond that, nothing currently queued needs
+a further migration; the next schema change is whatever a future task
+actually requires (e.g. Task 46's dashboard, once its own auth design
+is decided).

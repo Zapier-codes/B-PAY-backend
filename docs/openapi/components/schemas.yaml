@@ -2,17 +2,18 @@ securitySchemes:
   apiKeyAuth:
     type: apiKey
     in: header
-    name: Authorization
+    name: X-API-Key
     description: >
-      INFERRED, NOT CONFIRMED. The Swagger UI capture this spec is built
-      from shows an "Authorize" lock icon and a security scheme named
-      api_key, but the modal itself (which states the exact header name)
-      was not open when the page was saved. Confirm the real header
-      (commonly `Authorization: Bearer <api_key>` or a raw `x-api-key`
-      header) against the live server or its source before shipping
-      client code against this. Update this file the moment it's
-      confirmed — this is exactly the kind of thing this modular spec
-      exists to make a one-file fix.
+      CONFIRMED (2026-09-09) directly against the live Swagger UI's
+      "Available authorizations" modal at
+      https://telcos.opik.net/api/v1/docs. Raw header, no scheme
+      prefix — send the key value as-is: `X-API-Key: <api_key>`, e.g.
+      `X-API-Key: sk_live_xxxxxxxxxxxxxxxx`. Not `Authorization:
+      Bearer <api_key>` — that was this doc's prior best guess and is
+      now confirmed wrong. Note the example value uses an `sk_live_`
+      prefix, which was not previously documented (see
+      `docs/guides/02-authentication.md`'s "Today" section, now
+      updated to match).
 
 schemas:
   RegisterRequest:

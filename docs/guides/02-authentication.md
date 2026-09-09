@@ -9,19 +9,21 @@
 { "success": true, "data": { "id": "...", "email": "...", "api_key": "..." } }
 ```
 
-**Unconfirmed — flagged, not guessed away:** the live Swagger UI shows
-a lock icon and an "Authorize" control (security scheme name `api_key`),
-but the modal that states the exact header/format wasn't open in the
-capture this doc is built from. Before writing client code against
-this, confirm whether it's:
-- `Authorization: Bearer <api_key>`, or
-- a raw `x-api-key: <api_key>` header, or
-- something else entirely.
+**Confirmed (2026-09-09)**, directly against the live Swagger UI's
+"Available authorizations" modal: the header is a raw `X-API-Key`,
+no `Bearer` prefix —
 
-`components/schemas.yaml#/securitySchemes/apiKeyAuth` currently assumes
-the `Authorization` header as the most common industry pattern — treat
-that as a best guess, not a confirmed fact, until checked against the
-live server or its source.
+```
+X-API-Key: <api_key>
+```
+
+e.g. `X-API-Key: sk_live_xxxxxxxxxxxxxxxx`. The example value in the
+modal itself uses an `sk_live_` prefix, which was not previously
+documented here — worth noting since the "Today" section above
+describes `api_key` as a single opaque string; in practice the value
+already looks like a secret key in the Stripe/Paystack sense, not a
+prefix-less token. `components/schemas.yaml#/securitySchemes/apiKeyAuth`
+is updated to match.
 
 ## Planned (see `handover.md`, "Business dashboard & Supabase
 integration")

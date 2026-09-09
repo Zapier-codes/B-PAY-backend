@@ -4,21 +4,25 @@
 > task's own section. Nothing else in this file is required reading to
 > start work.**
 >
-> **Task 58 — Step 1: confirm `telcos.opik.net`'s auth header format
-> against the live server** (`Authorization: Bearer <api_key>` vs raw
-> `x-api-key: <api_key>` vs other — see Task 58/c). **This is currently
-> blocked** — needs a live account/credentials on `telcos.opik.net`
-> (register or log in, make one authenticated call, read the actual
-> request the working example uses). Per the No-skip-ahead rule: if
-> you don't have that access either, **don't silently substitute a
-> different task** — say so plainly and ask the product owner, the
-> same way this box has flagged every prior genuine blocker.
+> **Task 58 is now fully unblocked on design — build directly, no
+> product-owner questions needed to start.** Auth header confirmed
+> (`X-API-Key`, `sk_live_...`). Credentials design fully resolved
+> (Task 58/c-1, c-2, c-3), Stripe-mirrored: provision a real
+> `telcos.opik.net` account per business on explicit VTU-activation
+> (not signup, not lazily mid-purchase); store the key via Supabase
+> Vault, ciphertext only; guard duplicate registration with a
+> check-then-create read plus a `(business_id, provider)` DB unique
+> constraint, falling back to `POST /auth/login` on a duplicate-email
+> response.
 >
-> **If Task 58 truly can't be progressed this session** (blocked, not
-> just inconvenient), the next unblocked leaf in reading order is
-> **Task 45e** (JuicyWay's three-way currency-list conflict) — check
-> its own entry before assuming it's still open, since this pointer
-> can go stale between sessions the same way the old box did.
+> **Start at Task 58's own "Order of execution" list, step 3** (steps
+> 1–2's blockers are resolved; step 2, webhook signing, is separately
+> still open but doesn't block starting): create the `businesses`/
+> `api_keys` Supabase tables (Task 45/b, pulled forward as this task's
+> step 0), then build `providers/telcosOpik.js` and the
+> account-provisioning logic per c-1–c-3. No code was written this
+> session — this box hands off a fully-specified plan, not partial
+> code.
 >
 > **Updating this box:** when you finish your leaf, replace the two
 > paragraphs above with the new next task — don't append a new dated
@@ -40,6 +44,15 @@ already carry. Not required reading — this is a changelog, not
 context. Don't write paragraphs here; that's what turned the old
 box into 2,300 lines (see archive below).
 
+- 2026-09-09 — Task 58/c-1/c-2/c-3: resolved all three remaining
+  credentials-design open items using Stripe's own patterns
+  (capability-activation trigger, envelope encryption via Supabase
+  Vault, check-then-create + unique constraint for duplicate-reg
+  guard). Task 58 now fully unblocked on design; no code written.
+- 2026-09-09 — Task 58/c: product owner confirmed `telcos.opik.net`
+  auth header (`X-API-Key`, `sk_live_...`) and revised the
+  credentials plan to per-business account provisioning instead of
+  one shared env-var key; docs updated, three open items flagged.
 - 2026-09-09 — Restructured the START HERE box into this lean
   pointer + archive + this log, per direct product-owner
   instruction. Documented Task 58 (VTU via `telcos.opik.net`,
@@ -12171,25 +12184,123 @@ Every method built on `handleApiCall()` + `providerError()` from
 `utils/helpers.js`, same as every existing provider file — no new
 error-handling mechanism.
 
-**c. Credentials — single-key pattern, not the public/secret
-`keyMap` branch.** `telcos.opik.net`'s own `POST /auth/register`/
-`POST /auth/login` returns one `api_key` per business
-(`docs/guides/02-authentication.md`), not a pair — so
-`getProviderKey('telcosopik', ...)` should follow **Juicyway's own
-single-key branch** in `utils/helpers.js` (checks one env var,
-throws `isConfigError: true` if absent, same as every provider), not
-the multi-provider `keyMap` object every public/secret provider uses.
-Proposed env var: `TELCOS_OPIK_API_KEY`.
+**c. Credentials — revised this session (2026-09-09), supersedes the
+single-shared-key plan below.** Product owner clarified `telcos.opik.net`
+is their own service (not a third-party provider B-Pay merely calls) —
+the intent is for B-Pay to **programmatically provision a real,
+individual `telcos.opik.net` account per B-Pay business**, not share
+one static env-var key across every B-Pay customer. Revised flow:
+- On explicit VTU-product activation by a B-Pay business (trigger
+  point decided in c-1 below), B-Pay backend calls `POST /auth/register`
+  on `telcos.opik.net` on that business's behalf (`email`/`password`/
+  `firstName`/`lastName`/`companyName` body, per the live Swagger
+  capture), and stores the returned `api_key` (`sk_live_...` format,
+  confirmed this session) against that business's row — **not** in an
+  env var.
+- This means `businesses`/`api_keys` (Task 45/b's already-proposed
+  Supabase tables) become a **hard dependency of Task 58**, not a
+  parallel, independently-schedulable piece of work — Task 58 cannot
+  store a per-business credential without a place to store it. Task 58
+  and Task 45/b should be treated as one combined leaf going forward,
+  or Task 45/b's table creation should be pulled forward as Task 58's
+  own step 0.
+- `getProviderKey('telcosopik', ...)`'s shape changes accordingly: it
+  now needs a `businessId` (or equivalent) parameter to look up the
+  right row's stored key, rather than reading one process-wide env var
+  — a genuinely different signature from every other provider's
+  `getProviderKey` call today, worth flagging rather than silently
+  forcing it into the existing single-key or `keyMap` shapes.
+**c-1. Provisioning trigger — decided (2026-09-09), Stripe-mirrored.**
+Stripe Connect never creates a connected `Account` object silently at
+platform signup, and never creates one lazily mid-transaction either
+— both are avoided deliberately (signup-time creates accounts nobody
+uses yet; mid-transaction creates a hard external-API dependency on
+the critical path of a purchase, with no recovery path if it fails).
+Stripe's actual pattern: the `Account` is created at the moment the
+business **explicitly activates a specific capability**
+(`capabilities: { card_payments: { requested: true } }`), as its own
+deliberate onboarding step, separate from platform account creation.
+**Applied here:** `telcos.opik.net` account provisioning happens when
+a B-Pay business explicitly enables the VTU product on their B-Pay
+account (e.g. a "Turn on Airtime & Data" action in the dashboard, or
+the first call to any `/api/vtu/*` route acting as that explicit
+activation signal) — **not** at raw B-Pay signup, and **not** silently
+inside a purchase request. The provisioning call itself
+(`POST /auth/register`) happens synchronously in response to that one
+explicit action and its result (success or failure) is returned to the
+business immediately — mirroring Stripe's own capability-activation
+response, not deferred to a webhook or background job.
 
-**⚠️ Blocked — this is the hardest, first blocker on the whole
-task.** The exact header format is unconfirmed (Task 45/a's own
-open-item #1): `Authorization: Bearer <api_key>`, raw
-`x-api-key: <api_key>`, or something else. `handleApiCall()`'s
-request-building code cannot be written correctly against a guess —
-confirm directly against the live server (or its docs/source) before
-writing (b). Do not default to `Authorization: Bearer` just because
-it's the most common pattern; `docs/guides/02-authentication.md`
-already flags that exact assumption as unconfirmed once before.
+**c-2. Encryption at rest — decided (2026-09-09), Stripe-mirrored.**
+Stripe's own standard for stored secrets (API keys, bank tokens) is
+envelope encryption: the secret is encrypted at the application layer
+before it ever reaches storage, using a key managed by a dedicated KMS
+— the database only ever holds ciphertext, and only the specific
+service role that makes the outbound provider call can decrypt.
+**Applied here:** since this repo already commits to Supabase for
+Task 45/b's `businesses`/`api_keys` tables, the direct equivalent is
+**Supabase Vault** (`pgsodium`-backed, purpose-built for exactly this:
+encrypt-at-rest secrets inside Postgres, decrypted only via an
+explicit `vault.decrypted_secrets` read using the service role key) —
+not a bespoke encryption scheme, matching this repo's own "no new
+mechanism where an existing one already fits" convention. The
+`api_keys` table stores a Vault secret reference, not the raw
+`sk_live_...` value; `getProviderKey('telcosopik', businessId)`
+resolves that reference server-side at call time and the decrypted
+value is never logged (same "never log a secret" posture this repo
+already holds for every other provider key).
+
+**c-3. Duplicate-registration handling — decided (2026-09-09),
+Stripe-mirrored.** Stripe's own guidance for account creation is
+two-layered: (1) **check-then-create** — the platform's own database
+is the source of truth for "does this business already have an
+account," checked *before* ever calling the creation endpoint, not
+inferred from the provider's error response; (2) an `Idempotency-Key`
+header on the creation call itself as a second-layer defense against
+network-level retries duplicating a request that already succeeded
+server-side but whose response was lost in transit. **Applied here:**
+before calling `POST /auth/register`, B-Pay checks `api_keys` for an
+existing `telcos.opik.net` row for that `businessId` — if one exists,
+skip registration and use it. The check-then-create step is wrapped in
+a DB-level unique constraint on `(business_id, provider)` in `api_keys`
+plus a row-level lock during the check-and-insert, closing the same
+race window Stripe's idempotency key closes at the network layer. If
+`telcos.opik.net`'s own `POST /auth/register` doesn't natively accept
+an idempotency header (open question for the product owner on that
+service's own side, out of scope for this B-Pay-side plan), B-Pay's
+own DB-level guard is the enforcement point instead — the unique
+constraint is the primary defense regardless. A `409`-equivalent from
+`telcos.opik.net` on duplicate email is treated as "someone else's
+race won" and B-Pay falls back to `POST /auth/login` with the same
+stored credentials to recover the key, rather than surfacing the 409
+to the business as a hard failure.
+
+**Fully unblocked — no open items remain in Task 58/c.** Combined with
+the confirmed auth header below, `providers/telcosOpik.js` and the
+account-provisioning logic can be built directly against this plan
+with no further product-owner input needed on the credentials design.
+
+**Superseded — kept for record only, not the plan going forward:**
+single-key pattern, not the public/secret `keyMap` branch.
+`telcos.opik.net`'s own `POST /auth/register`/`POST /auth/login`
+returns one `api_key` per business (`docs/guides/02-authentication.md`),
+not a pair — so `getProviderKey('telcosopik', ...)` should follow
+**Juicyway's own single-key branch** in `utils/helpers.js` (checks one
+env var, throws `isConfigError: true` if absent, same as every
+provider), not the multi-provider `keyMap` object every public/secret
+provider uses. Proposed env var: `TELCOS_OPIK_API_KEY`. **This assumed
+a single B-Pay-wide account, which the product owner's 2026-09-09
+clarification above replaces with one account per business.**
+
+**✅ Unblocked (2026-09-09) — confirmed directly by the product owner**
+(who owns/wrote `telcos.opik.net`) from the live Swagger UI's
+"Available authorizations" modal: raw `X-API-Key: <api_key>` header,
+no `Bearer` prefix. Example value shown in the modal uses an
+`sk_live_` prefix (`sk_live_xxxxxxxxxxxxxxxx`) — not previously
+documented; `docs/guides/02-authentication.md` and
+`components/schemas.yaml#/securitySchemes/apiKeyAuth` are both updated
+to match. `handleApiCall()`'s request-building code in (b) can now be
+written directly against this — no guess involved.
 
 **d. Base URL — `https://telco.opik.net/api/v1`.** Per Task 45/a's
 confirmed capture (note: `telco.` not `telcos.` — the API's own base
@@ -12269,24 +12380,37 @@ plainly," not silently assumed to work.
 
 **Order of execution for whichever session builds this** (so
 sequencing doesn't need re-deriving either):
-1. Confirm (c)'s auth header format against the live server — blocks
-   everything else.
+1. ~~Confirm (c)'s auth header format against the live server~~ —
+   **done (2026-09-09).** `X-API-Key: <api_key>`, confirmed by product
+   owner. Credentials design (c-1/c-2/c-3) also fully resolved this
+   session, Stripe-mirrored — no remaining open question blocks
+   starting (3) below.
 2. Confirm (i)'s webhook signing scheme, if webhooks are in scope for
    the first pass (can be deferred to its own follow-up task if not —
-   (a)–(h) don't depend on it).
-3. Build `providers/telcosOpik.js` (b), verified with `node --check` +
-   a throwaway script.
-4. Add the five routes (a) to `routes.js`, wired directly to `new
-   TelcosOpik()` per (e).
-5. Add the two field-requirements entries (g).
-6. Wire `recordTransaction()` calls (h).
-7. Webhook handler (i), only after step 2 is confirmed — not before.
-8. Patch Handoff, per the standing convention — one patch covering
+   (a)–(h) don't depend on it). **Still open** — separate from the
+   credentials blocker resolved above; not addressed this session.
+3. Create the `businesses`/`api_keys` Supabase tables (Task 45/b),
+   pulled forward as this task's own step 0 per c's note that it's now
+   a hard dependency — including the Supabase Vault wiring from c-2
+   and the `(business_id, provider)` unique constraint from c-3.
+4. Build `providers/telcosOpik.js` (b) plus the account-provisioning
+   logic from c-1 (explicit-activation trigger, check-then-create
+   against (3)'s table before calling `POST /auth/register`), verified
+   with `node --check` + a throwaway script.
+5. Add the five routes (a) to `routes.js`, wired directly to `new
+   TelcosOpik()` per (e), reading the per-business key via the revised
+   `getProviderKey('telcosopik', businessId)` signature from (c).
+6. Add the two field-requirements entries (g).
+7. Wire `recordTransaction()` calls (h).
+8. Webhook handler (i), only after step 2 is confirmed — not before.
+9. Patch Handoff, per the standing convention — one patch covering
    this leaf's worth of change, same discipline as every prior task.
 
 **Not done this session, deliberately — plan only.** No
 `providers/telcosOpik.js`, no route, no migration, no field-
-requirements entry, no webhook handler. `node --check` not
-applicable — no `.js` file touched this session.
+requirements entry, no webhook handler, no Supabase table created.
+`node --check` not applicable — no `.js` file touched this session;
+only documentation (`handover.md`, `docs/guides/02-authentication.md`,
+`docs/openapi/components/schemas.yaml`) was changed.
 
 ---

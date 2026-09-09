@@ -2,6 +2,7 @@ import express from 'express';
 import { Paystack } from './providers/paystack.js';
 import { Juicyway } from './providers/juicyway.js';
 import { Korapay } from './providers/korapay.js';
+import { TelcosOpik, provisionTelcosOpikAccount, resolveTelcosOpikApiKey } from './providers/telcosOpik.js';
 import { log, formatPayload, generateReference, getSupportedCurrencies, isValidCurrencyCode, isValidEmail, providerRequiresEmail, requireInternalApiKey, classifyDomain } from './utils/helpers.js';
 import { recordTransaction, getTransactionByReference, getRoutingDefaultProvider, getCapabilityStatus } from './utils/supabase.js';
 import { getMissingFields } from './utils/fieldRequirements.js';
@@ -1000,6 +1001,181 @@ router.get('/verify', async (req, res) => {
     return res.status(error.statusCode || 500).json({
       status: false,
       message: clientSafeMessage(error, 'Verification failed'),
+    });
+  }
+});
+
+// ==================================================
+// 📶 VTU (AIRTIME/DATA) — telcos.opik.net, Task 58/a, order-of-
+// execution step 5, part (b)
+// ==================================================
+// Five routes, all behind requireInternalApiKey — a wallet-funded
+// purchase is not lower-stakes than a payout just because the
+// amounts are typically smaller (Task 58/a's own note). Response
+// envelope is this repo's own `{ status: 'success'|'error', data }`
+// shape (matching /banks, /payout/verify) — NOT telcos.opik.net's raw
+// `{ success, data }` shape, same "normalize into our own envelope"
+// convention every other provider response already gets below.
+//
+// Deliberately NOT wired in this part (separate, later
+// order-of-execution steps — not an oversight):
+//   - step 6: utils/fieldRequirements.js registry entries for
+//     `data`/`airtime` — request bodies are forwarded to
+//     providers/telcosOpik.js as-is for now, same "no registry entry
+//     yet = not independently enforced here" gap every other
+//     unregistered provider already has (see getMissingFields's own
+//     doc comment).
+//   - step 7: recordTransaction() wiring.
+//   - step 8: POST /api/webhooks/telcosopik — blocked separately on
+//     the signing-scheme open item (Task 58/i).
+//
+// businessId — decided this session (2026-09-09): no existing
+// mechanism in this codebase resolves a business identity from a
+// request. requireInternalApiKey (utils/helpers.js) is a single
+// shared secret for one trusted internal caller, not a per-caller/
+// per-business credential, and the `businesses` table itself
+// (migration 0010) has no dashboard-login column and isn't wired to
+// any request-auth path yet (db/SCHEMA.md's own "Not yet built"
+// note). So, same as every other caller-supplied identifier this
+// repo already uses (`bank_code`/`account_number` on /payout),
+// `businessId` is a plain, required, caller-supplied field — body for
+// the two POST routes, query for the three GET routes, since GET
+// requests conventionally carry no body. Flagged plainly as a
+// decision, not a discovered pre-existing convention — a real
+// per-caller auth scheme (Task 45/c's still-open dashboard-login
+// question) may supersede this later.
+function getVtuBusinessId(req) {
+  const businessId = req.method === 'GET' ? req.query.businessId : req.body.businessId;
+  if (!businessId || typeof businessId !== 'string') {
+    const err = new Error(`'businessId' is required and must be a non-empty string (received: ${JSON.stringify(businessId)})`);
+    err.statusCode = 400;
+    throw err;
+  }
+  return businessId;
+}
+
+// c-1's "first call to any /api/vtu/* route" activation trigger,
+// applied uniformly to all five routes below — not just the two
+// purchase routes — since every one of them needs an authenticated
+// telcos.opik.net client either way, and provisionTelcosOpikAccount()
+// is a fast, no-op DB check on every call after the first (its own
+// check-then-create). `req.body?.registration` (`{ email, password,
+// firstName, lastName, companyName }`) is only actually read by
+// provisionTelcosOpikAccount() the first time a given business hits
+// any of these routes; every later call ignores it entirely.
+// Deliberately sourced from req.body even for the three GET routes
+// below — registration includes a password, which has no business
+// being logged or cached in a URL/query string. A first-ever call
+// that omits `registration` surfaces telcos.opik.net's own
+// POST /auth/register validation error back to the caller (via
+// providerError(), already client-safe per Task 13) rather than this
+// repo re-implementing that validation — the same "no registry entry
+// yet" gap flagged in this section's own top comment.
+async function getVtuClientForBusiness(businessId, req) {
+  await provisionTelcosOpikAccount(businessId, req.body?.registration);
+  const apiKey = await resolveTelcosOpikApiKey(businessId);
+  return new TelcosOpik(apiKey);
+}
+
+// GET /api/vtu/plans?businessId=...&network=MTN&category=data
+router.get('/vtu/plans', requireInternalApiKey, async (req, res) => {
+  try {
+    const businessId = getVtuBusinessId(req);
+    const { network, category } = req.query;
+
+    const client = await getVtuClientForBusiness(businessId, req);
+    const result = await client.getPlans({ network, category });
+
+    res.json({ status: 'success', data: result });
+  } catch (error) {
+    log(`VTU plans error: ${error.message}`, 'error');
+    res.status(error.statusCode || 500).json({
+      status: 'error',
+      message: clientSafeMessage(error, 'Failed to fetch VTU plans'),
+    });
+  }
+});
+
+// GET /api/vtu/wallet?businessId=...
+router.get('/vtu/wallet', requireInternalApiKey, async (req, res) => {
+  try {
+    const businessId = getVtuBusinessId(req);
+
+    const client = await getVtuClientForBusiness(businessId, req);
+    const result = await client.getWallet();
+
+    res.json({ status: 'success', data: result });
+  } catch (error) {
+    log(`VTU wallet error: ${error.message}`, 'error');
+    res.status(error.statusCode || 500).json({
+      status: 'error',
+      message: clientSafeMessage(error, 'Failed to fetch VTU wallet'),
+    });
+  }
+});
+
+// POST /api/vtu/data
+// Body: { businessId, planId, phoneNumber, network, registration? }
+router.post('/vtu/data', requireInternalApiKey, async (req, res) => {
+  try {
+    const businessId = getVtuBusinessId(req);
+    const { planId, phoneNumber, network } = req.body;
+
+    log(`VTU Data Purchase Request Received: ${formatPayload(req.body)}`);
+
+    const client = await getVtuClientForBusiness(businessId, req);
+    const result = await client.purchaseData({ planId, phoneNumber, network });
+
+    res.json({ status: 'success', data: result });
+  } catch (error) {
+    log(`VTU data purchase error: ${error.message}`, 'error');
+    res.status(error.statusCode || 500).json({
+      status: 'error',
+      message: clientSafeMessage(error, 'VTU data purchase failed'),
+    });
+  }
+});
+
+// POST /api/vtu/airtime
+// Body: { businessId, network, phoneNumber, amount, registration? }
+router.post('/vtu/airtime', requireInternalApiKey, async (req, res) => {
+  try {
+    const businessId = getVtuBusinessId(req);
+    const { network, phoneNumber, amount } = req.body;
+
+    log(`VTU Airtime Purchase Request Received: ${formatPayload(req.body)}`);
+
+    const client = await getVtuClientForBusiness(businessId, req);
+    const result = await client.purchaseAirtime({ network, phoneNumber, amount });
+
+    res.json({ status: 'success', data: result });
+  } catch (error) {
+    log(`VTU airtime purchase error: ${error.message}`, 'error');
+    res.status(error.statusCode || 500).json({
+      status: 'error',
+      message: clientSafeMessage(error, 'VTU airtime purchase failed'),
+    });
+  }
+});
+
+// GET /api/vtu/transactions?businessId=...&limit=20&offset=0
+router.get('/vtu/transactions', requireInternalApiKey, async (req, res) => {
+  try {
+    const businessId = getVtuBusinessId(req);
+    const { limit, offset } = req.query;
+
+    const client = await getVtuClientForBusiness(businessId, req);
+    const result = await client.getTransactions({
+      limit: limit !== undefined ? Number(limit) : undefined,
+      offset: offset !== undefined ? Number(offset) : undefined,
+    });
+
+    res.json({ status: 'success', data: result });
+  } catch (error) {
+    log(`VTU transactions error: ${error.message}`, 'error');
+    res.status(error.statusCode || 500).json({
+      status: 'error',
+      message: clientSafeMessage(error, 'Failed to fetch VTU transactions'),
     });
   }
 });

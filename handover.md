@@ -4,35 +4,59 @@
 > task's own section. Nothing else in this file is required reading to
 > start work.**
 >
-> **Task 58 step 5, part (a) is done (2026-09-09):** per-business key
-> resolution built — `resolveTelcosOpikApiKey(businessId)` in
-> `providers/telcosOpik.js` + `vaultReadSecret()` in
-> `utils/supabase.js`, deliberately a standalone async function, NOT a
-> new branch inside `utils/helpers.js`'s (synchronous, env-var-based)
-> `getProviderKey()` — see this function's own comment for why. Steps
-> 1–4 (auth, credentials design, `businesses`/`api_keys` migrations,
-> `TelcosOpik` class + provisioning) are all done and confirmed landed
-> on `origin/main` (currently **PR #3**, not PR #2 — PR #2
-> merged/closed 2026-08-31; both "Unified hand-off command format" and
-> "Pull request workflow" sections corrected to say so).
+> **Task 58 step 5, part (b) is done (2026-09-09):** the five
+> `/api/vtu/*` routes are wired into `routes.js`, all behind
+> `requireInternalApiKey`, each calling
+> `provisionTelcosOpikAccount(businessId, req.body?.registration)`
+> (c-1's activation trigger, applied uniformly to all five routes, not
+> just the two purchase ones) then `resolveTelcosOpikApiKey(businessId)`
+> for a `new TelcosOpik(apiKey)` per (e). Response envelope is this
+> repo's own `{ status: 'success'|'error', data }` shape, matching
+> `/banks`/`/payout/verify`, not `telcos.opik.net`'s raw shape.
 >
-> **Two open items, neither blocking further code:** (1) no
-> `public`-schema Vault RPC wrappers (`create_vault_secret`,
-> `read_vault_secret`) are migrated yet, so `vaultCreateSecret()`/
-> `vaultReadSecret()` are unverified end-to-end — flagged in both
-> functions' own comments; (2) webhook signing scheme (step 2) still
-> unconfirmed. Migrations `0010`–`0013` also still not applied to the
-> live Supabase project.
+> **New decision this session, flagged plainly, not a pre-existing
+> convention: how `businessId` enters a request.** No mechanism
+> anywhere in this codebase resolves a business identity from a
+> request — `requireInternalApiKey` is one shared secret for one
+> trusted internal caller, and the `businesses` table has no
+> dashboard-login column or request-auth wiring yet. Resolved as a
+> plain required caller-supplied field: `req.body.businessId` for the
+> two POST routes, `req.query.businessId` for the three GET routes —
+> see `getVtuBusinessId()`'s own comment in `routes.js`. **This should
+> be revisited once Task 45/c's dashboard-login question is resolved**
+> — a real per-caller auth scheme may supersede a bare request field.
 >
-> **Next: step 5's remaining part — add the five `/api/vtu/*` routes
-> to `routes.js`** (Task 58/a), wired to `new
-> TelcosOpik(await resolveTelcosOpikApiKey(businessId))` per (e). The
-> route handling a business's first `/api/vtu/*` call is c-1's chosen
-> activation trigger, so this part should call
-> `provisionTelcosOpikAccount()` (already built) at that point, then
-> `resolveTelcosOpikApiKey()` (also already built) for the actual
-> call. After that: step 6 (field-requirements entries), step 7
-> (`recordTransaction()` wiring).
+> **Deliberately NOT done this part — separate, later
+> order-of-execution steps:** step 6 (`utils/fieldRequirements.js`
+> registry entries for `data`/`airtime` — request bodies are forwarded
+> to `providers/telcosOpik.js` as-is for now, same gap every other
+> unregistered provider already has); step 7 (`recordTransaction()`
+> wiring); step 8 (`POST /api/webhooks/telcosopik`, still blocked on
+> the signing-scheme open item, Task 58/i).
+>
+> **Still-open items, unchanged from before this part, neither
+> blocking step 6/7:** (1) no `public`-schema Vault RPC wrappers
+> (`create_vault_secret`, `read_vault_secret`) are migrated yet, so
+> `vaultCreateSecret()`/`vaultReadSecret()` — and therefore every VTU
+> route above — are unverified end-to-end against a live Supabase
+> project; (2) webhook signing scheme (step 2/step 8) still
+> unconfirmed. Migrations `0010`–`0013` still not applied to the live
+> Supabase project. `node --check` clean on `routes.js`; a throwaway
+> HTTP-level smoke script (missing-internal-key 401, missing-businessId
+> 400 on all five routes, and a Supabase-unconfigured request
+> confirming the routes actually reach
+> `provisionTelcosOpikAccount()`/`resolveTelcosOpikApiKey()` rather
+> than silently succeeding) run and deleted, per convention — not
+> verified against the real `telcos.opik.net` API, same open
+> credentials-availability blocker every prior leaf of this task has
+> flagged.
+>
+> **Next: step 6 — add the two field-requirements entries (g)** to
+> `utils/fieldRequirements.js`: `data` requires `planId`,
+> `phoneNumber`, `network`; `airtime` requires `network`,
+> `phoneNumber`, `amount`. Then step 7 (`recordTransaction()` wiring
+> for both purchase routes, non-blocking/fire-and-forget same as
+> `/pay`'s own d-3-b posture).
 >
 > **Updating this box:** when you finish your leaf, replace the two
 > paragraphs above with the new next task — don't append a new dated
@@ -54,6 +78,15 @@ already carry. Not required reading — this is a changelog, not
 context. Don't write paragraphs here; that's what turned the old
 box into 2,300 lines (see archive below).
 
+- 2026-09-09 — Task 58 step 5/part (b): wired the five `/api/vtu/*`
+  routes into `routes.js` (`requireInternalApiKey` + this repo's own
+  `{status, data}` envelope), each calling
+  `provisionTelcosOpikAccount()` then `resolveTelcosOpikApiKey()`
+  before building a `TelcosOpik` client. Decided and flagged how
+  `businessId` enters a request (no existing mechanism for this —
+  plain required body/query field, see `getVtuBusinessId()`'s own
+  comment). `node --check` clean; throwaway HTTP smoke script run and
+  deleted. Next: step 6, field-requirements entries.
 - 2026-09-09 — Task 58 step 5/part (a): built
   `resolveTelcosOpikApiKey()` + `vaultReadSecret()` — per-business key
   resolution, deliberately standalone rather than folded into
@@ -12486,27 +12519,40 @@ sequencing doesn't need re-deriving either):
      error paths) run and deleted, per convention. Still unverified
      end-to-end — depends on the same Vault-wrapper migration part (a)
      of step 4 already flagged.
-   - **Part (b) — the five route handlers themselves — not started.**
-     Wire `routes.js` to call `provisionTelcosOpikAccount()` (built in
-     step 4) at the activation trigger and `resolveTelcosOpikApiKey()`
-     (part (a) above) for the per-request key, then `new
-     TelcosOpik(apiKey)` per (e). This is the actual next leaf.
+   - **Part (b) — the five route handlers themselves — done
+     (2026-09-09).** `routes.js` now has `GET /api/vtu/plans`,
+     `GET /api/vtu/wallet`, `POST /api/vtu/data`,
+     `POST /api/vtu/airtime`, `GET /api/vtu/transactions`, all behind
+     `requireInternalApiKey`, each via a shared
+     `getVtuClientForBusiness()` helper that calls
+     `provisionTelcosOpikAccount()` then `resolveTelcosOpikApiKey()`
+     before constructing `new TelcosOpik(apiKey)` per (e). Also
+     decided and documented (routes.js's own comment, and the pointer
+     box at the top of this file) how `businessId` enters a request —
+     genuinely new ground, no existing per-caller identity mechanism
+     in this codebase to follow. `node --check` clean; throwaway HTTP
+     smoke script (missing-internal-key 401, missing-businessId 400 on
+     all five routes, Supabase-unconfigured non-2xx) run and deleted.
+     Still unverified end-to-end against the real `telcos.opik.net`
+     API or a live Supabase project — same open blockers steps 3/4/
+     part-(a) already flagged, not newly introduced here.
 6. Add the two field-requirements entries (g).
 7. Wire `recordTransaction()` calls (h).
 8. Webhook handler (i), only after step 2 is confirmed — not before.
 9. Patch Handoff, per the standing convention — one patch covering
    this leaf's worth of change, same discipline as every prior task.
 
-**Status note (superseded by step 4, 2026-09-09 — kept for record of
-what the original planning session deliberately left undone):** the
+**Status note (superseded by step 5/part (b), 2026-09-09 — kept for
+record of what earlier sessions deliberately left undone):** the
 original plan-only session touched no `.js` file — only documentation.
-Step 4 above has since built `providers/telcosOpik.js` and the
-supporting `utils/supabase.js` functions. **Still not done, as of
-step 4:** no route (step 5), no field-requirements entry (step 6), no
-`recordTransaction()` wiring (step 7), no webhook handler (step 8), no
-Vault RPC wrapper migration (new open item, see step 4's own note and
-the pointer box at the top of this file). Migrations `0010`–`0013`
-(the `businesses`/`api_keys` tables themselves) are written per step 3
-but still not applied to the live project.
+Step 4 built `providers/telcosOpik.js` and the supporting
+`utils/supabase.js` functions. Step 5 (both parts) has since wired the
+five `/api/vtu/*` routes into `routes.js`. **Still not done, as of
+step 5:** no field-requirements entry (step 6), no `recordTransaction()`
+wiring (step 7), no webhook handler (step 8), no Vault RPC wrapper
+migration (open item, see step 4's own note and the pointer box at the
+top of this file). Migrations `0010`–`0013` (the `businesses`/
+`api_keys` tables themselves) are written per step 3 but still not
+applied to the live project.
 
 ---

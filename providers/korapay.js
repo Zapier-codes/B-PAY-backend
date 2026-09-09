@@ -366,6 +366,280 @@ export class Korapay {
   }
 
   // ==================================================
+  // 💳 CARD ISSUING — cardholder, card, retrieval/list, fund, withdraw
+  // ==================================================
+  // Task 53/b — the five unambiguous methods flagged as buildable in
+  // Task 53/a's discovery pass (handover.md). Deliberately NOT
+  // included here: suspend/status (`PATCH .../cards/:ref/status`) and
+  // the events log (`GET .../cards/:ref/events`) — Task 53/a found two
+  // real, unresolved self-contradictions in Korapay's own docs for
+  // those two endpoints (`action: suspend` vs `deactivate`; `/api/i/`
+  // vs `/api/v1/` path segment) and this file's standing rule is to
+  // confirm/test an ambiguous payload or path rather than guess one.
+  // Those two stay TODO-flagged, separate methods, until a sandbox
+  // call or direct Korapay confirmation resolves them.
+  //
+  // Scope, confirmed Task 53/a: virtual cards only, USD only,
+  // MasterCard/Visa (defaults to MasterCard if `brand` omitted).
+  // Requires Live Mode + Korapay's own "Issuing" access grant — not
+  // something this code can provision itself.
+
+  // POST /api/v1/cardholders — KYC-shaped payload. This is a separate
+  // KYC surface from Task 53/d's PaymentPoint verification (this
+  // platform's own verification-of-record) — creating a Korapay
+  // cardholder does not substitute for, or get substituted by, that
+  // record. `country_identity` uses `bvn` for Nigerian cardholders,
+  // `national_id` otherwise, per Korapay's own docs.
+  async createCardholder(data) {
+    const payload = {
+      first_name: data.first_name,
+      last_name: data.last_name,
+      email: data.email,
+      phone: data.phone,
+      address: data.address,
+      identity: data.identity,
+      selfie: data.selfie,
+      country_identity: data.country_identity,
+    };
+
+    log(`Korapay Create Cardholder Request: ${formatPayload(payload)}`);
+
+    const result = await handleApiCall(async () => {
+      const response = await fetch(`${this.baseUrl}/api/v1/cardholders`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${this.secretKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+      });
+
+      const responseData = await response.json();
+
+      if (!response.ok || !responseData.status) {
+        throw providerError(responseData.message || 'Korapay cardholder creation failed');
+      }
+
+      return responseData;
+    }, 'korapay');
+
+    log(`Korapay Create Cardholder Response: ${formatPayload(result)}`);
+    return result;
+  }
+
+  // POST /api/v1/cards — `currency` is USD-only per Korapay's own
+  // docs; `type` field exists but only `virtual` is actually accepted
+  // right now (docs: "only virtual cards can be issued for now") even
+  // though `physical` is listed as an option — hard-coded here rather
+  // than left to the caller, since sending `physical` would be a
+  // guaranteed-reject per Korapay's own stated current limitation.
+  // Fires `issuing.card_creation.success` on completion; this call's
+  // own response returns `status: 'pending'` — same "accepted, not
+  // yet confirmed" posture as processPayout() above. Callers must not
+  // treat this return value as "card ready" — final truth is the
+  // webhook or a follow-up getCard().
+  async createCard(data) {
+    const ref = data.reference || generateReference('korapay-card');
+
+    const payload = {
+      currency: 'USD',
+      amount: data.amount,
+      card_holder_reference: data.card_holder_reference,
+      reference: ref,
+      type: 'virtual',
+      brand: data.brand || 'mastercard',
+    };
+
+    log(`Korapay Create Card Request: ${formatPayload(payload)}`);
+
+    const result = await handleApiCall(async () => {
+      const response = await fetch(`${this.baseUrl}/api/v1/cards`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${this.secretKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+      });
+
+      const responseData = await response.json();
+
+      if (!response.ok || !responseData.status) {
+        throw providerError(responseData.message || 'Korapay card creation failed');
+      }
+
+      return responseData;
+    }, 'korapay');
+
+    log(`Korapay Create Card Response — status: '${result.data?.status}' (pending/accepted, not final — see this method's own comment): ${formatPayload(result)}`);
+    return result;
+  }
+
+  // GET /api/v1/cards/:reference — single card. Response includes
+  // PAN/CVV per Korapay's own docs — sensitive; this method returns
+  // Korapay's response as-is, so any caller that logs it must not log
+  // it verbatim the way this file's other formatPayload() log lines
+  // do elsewhere. Deliberately NOT logging the raw response body here
+  // for that reason (unlike every other method in this file).
+  async getCard(reference) {
+    log(`Korapay Get Card Request for: ${reference}`);
+
+    const result = await handleApiCall(async () => {
+      const response = await fetch(
+        `${this.baseUrl}/api/v1/cards/${encodeURIComponent(reference)}`,
+        {
+          method: 'GET',
+          headers: {
+            'Authorization': `Bearer ${this.secretKey}`,
+            'Content-Type': 'application/json',
+          },
+        }
+      );
+
+      const responseData = await response.json();
+
+      if (!response.ok || !responseData.status) {
+        throw providerError(responseData.message || 'Korapay card retrieval failed');
+      }
+
+      return responseData;
+    }, 'korapay');
+
+    log(`Korapay Get Card Response received for: ${reference} (body not logged — contains PAN/CVV, see this method's own comment)`);
+    return result;
+  }
+
+  // GET /api/v1/cards — list, filterable by status/type/start_date/
+  // end_date per Korapay's own docs. Same PAN/CVV sensitivity as
+  // getCard() above applies to each list entry — not logged verbatim.
+  async listCards(filters = {}) {
+    const params = new URLSearchParams();
+    if (filters.status) params.set('status', filters.status);
+    if (filters.type) params.set('type', filters.type);
+    if (filters.start_date) params.set('start_date', filters.start_date);
+    if (filters.end_date) params.set('end_date', filters.end_date);
+    const qs = params.toString();
+
+    log(`Korapay List Cards Request: ${qs || '(no filters)'}`);
+
+    const result = await handleApiCall(async () => {
+      const response = await fetch(
+        `${this.baseUrl}/api/v1/cards${qs ? `?${qs}` : ''}`,
+        {
+          method: 'GET',
+          headers: {
+            'Authorization': `Bearer ${this.secretKey}`,
+            'Content-Type': 'application/json',
+          },
+        }
+      );
+
+      const responseData = await response.json();
+
+      if (!response.ok || !responseData.status) {
+        throw providerError(responseData.message || 'Korapay card list failed');
+      }
+
+      return responseData;
+    }, 'korapay');
+
+    log(`Korapay List Cards Response received (${result.data?.length ?? 'unknown'} cards; body not logged — see getCard()'s own PAN/CVV note)`);
+    return result;
+  }
+
+  // POST /api/v1/cards/:reference/fund — `reference` here is the
+  // FUNDING transaction's own idempotency reference, distinct from
+  // the card's own `:reference` path param — confirmed Task 53/a,
+  // flagging inline since the naming collision is a real footgun.
+  // Fires `issuing.card_funding.success`/`.failed`. Response includes
+  // a `fee` field; the fee schedule itself isn't documented anywhere
+  // Task 53/a could find — not computed or validated client-side here.
+  async fundCard(cardReference, data) {
+    const fundingRef = data.reference || generateReference('korapay-card-fund');
+
+    const payload = {
+      reference: fundingRef,
+      amount: data.amount,
+      description: data.description,
+    };
+
+    log(`Korapay Fund Card Request for ${cardReference}: ${formatPayload(payload)}`);
+
+    const result = await handleApiCall(async () => {
+      const response = await fetch(
+        `${this.baseUrl}/api/v1/cards/${encodeURIComponent(cardReference)}/fund`,
+        {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${this.secretKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(payload),
+        }
+      );
+
+      const responseData = await response.json();
+
+      if (!response.ok || !responseData.status) {
+        throw providerError(responseData.message || 'Korapay card funding failed');
+      }
+
+      return responseData;
+    }, 'korapay');
+
+    log(`Korapay Fund Card Response for ${cardReference}: ${formatPayload(result)}`);
+    return result;
+  }
+
+  // POST /api/v1/cards/:reference/withdraw — same request shape as
+  // fundCard() (`reference`, `amount`, `description`); `reference`
+  // here is likewise the withdrawal transaction's own idempotency
+  // reference, not the card's. Fires
+  // `issuing.card_withdrawal.success`/`.failed`. CRITICAL, confirmed
+  // Task 53/a from Korapay's own sample response: the returned
+  // `amount` is NET OF FEE, not the requested amount (sample:
+  // `amount: 10` requested, `fee: 1`, `amount: 9` returned) — this
+  // method does not attempt to reconcile that itself; any caller that
+  // needs the originally-requested amount must keep it from its own
+  // input, not read it back off this response.
+  async withdrawCard(cardReference, data) {
+    const withdrawalRef = data.reference || generateReference('korapay-card-withdraw');
+
+    const payload = {
+      reference: withdrawalRef,
+      amount: data.amount,
+      description: data.description,
+    };
+
+    log(`Korapay Withdraw Card Request for ${cardReference}: ${formatPayload(payload)}`);
+
+    const result = await handleApiCall(async () => {
+      const response = await fetch(
+        `${this.baseUrl}/api/v1/cards/${encodeURIComponent(cardReference)}/withdraw`,
+        {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${this.secretKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(payload),
+        }
+      );
+
+      const responseData = await response.json();
+
+      if (!response.ok || !responseData.status) {
+        throw providerError(responseData.message || 'Korapay card withdrawal failed');
+      }
+
+      return responseData;
+    }, 'korapay');
+
+    log(`Korapay Withdraw Card Response for ${cardReference} — net amount returned: ${result.data?.amount} (requested: ${data.amount}, see this method's own comment on fee deduction): ${formatPayload(result)}`);
+    return result;
+  }
+
+  // ==================================================
   // 🔔 WEBHOOK SIGNATURE VERIFICATION
   // ==================================================
   // Confirmed directly against developers.korapay.com/docs/webhooks

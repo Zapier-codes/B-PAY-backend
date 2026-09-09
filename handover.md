@@ -91,20 +91,46 @@
 > withdrawal have no such ambiguity and can be built without further
 > research.
 >
-> **Real next actionable item is now writing `providers/korapay.js`'s
-> card-issuance methods** for the five unambiguous operations above
-> (cardholder creation, card creation, retrieval/list, funding,
-> withdrawal) — this is now implementation work, not further discovery,
-> per Task 53/a's own findings. Leave `suspend`/`status` and the events
-> log as explicitly-unbuilt/TODO-flagged methods until the two flagged
-> ambiguities are resolved, rather than guessing and risking a silent
-> production failure. **Task 14** (end-to-end manual test pass) is
-> separately still blocked — this sandbox's network egress doesn't
-> reach any payment-provider domain regardless of key availability
-> (confirmed: `api.paystack.co` → `403 host_not_allowed`) — real keys
-> living in Render's env doesn't change that; unblocking it needs
-> either a network-settings change here or the product owner
-> running/relaying test results directly.
+> **Task 53/a's five unambiguous card-issuance methods are now DONE
+> (2026-09-09):** `createCardholder()`, `createCard()`, `getCard()`,
+> `listCards()`, `fundCard()`, `withdrawCard()` all written in
+> `providers/korapay.js`. `node --check` clean; a throwaway local-stub
+> smoke script confirmed request method/URL/payload shape for all six
+> call sites, then was deleted per convention. Full detail in Task
+> 53/a's own section (search "Implementation of the five unambiguous
+> methods") and the Session Log entry below — not repeated here.
+>
+> **Still blocked, unchanged by this session:** Korapay card
+> suspend/status and the events-log method — same two doc
+> self-contradictions Task 53/a's discovery pass already flagged
+> (`action: suspend` vs `deactivate`; `/api/i/` vs `/api/v1/` path) —
+> need a sandbox call or direct Korapay confirmation before either is
+> written. **Task 45e** is also still blocked (JuicyWay sandbox keys
+> unavailable). **Task 14** (end-to-end manual test pass) is separately
+> still blocked — this sandbox's network egress doesn't reach any
+> payment-provider domain regardless of key availability (confirmed:
+> `api.paystack.co` → `403 host_not_allowed`) — real keys living in
+> Render's env doesn't change that; unblocking it needs either a
+> network-settings change here or the product owner running/relaying
+> test results directly.
+>
+> **Found, not silently resolved: Task 53/e's and Task 54's own claim
+> that "Task 52's `X` marker (Juicyway `processPayout`, Task 52/a-1)
+> remains the current single atomic unit of work" is stale.** Checked
+> directly against `providers/juicyway.js` this session (same
+> check-the-code-not-the-prose discipline as the Task 51/b correction
+> above): `async processPayout(data)` is already written there, and
+> Task 52's own header already says "fully closed — every part, (a)
+> through (e)." Task 53/e and Task 54 were evidently written before
+> that closure landed and never updated. **Not re-deriving a new "real
+> next actionable item" from this in this box** — three genuinely
+> open, non-stale items already stand (Korapay's two card-issuance doc
+> ambiguities above, Task 45e's JuicyWay sandbox-key block, Task 14's
+> network-egress block) and picking a fourth without auditing the rest
+> of the board the way this correction just audited one claim would
+> risk adding another stale pointer on top of the one just found.
+> Whoever resumes next should sanity-check the board's other "current
+> atomic unit" claims against actual code before trusting any of them.
 >
 > **Updating this box:** when you finish your leaf, replace the two
 > paragraphs above with the new next task — don't append a new dated
@@ -120,6 +146,16 @@
 
 ## 📝 Session Log (newest first — one line per session, optional)
 
+- 2026-09-09 — Built Task 53/a's five unambiguous Korapay card-issuance
+  methods (`createCardholder`, `createCard`, `getCard`, `listCards`,
+  `fundCard`, `withdrawCard`) in `providers/korapay.js`. `node --check`
+  clean; throwaway local-stub smoke script covering all six call sites
+  run and deleted. Suspend/status and events-log methods left
+  explicitly unbuilt (same two doc ambiguities as before). Also found
+  and flagged (not silently fixed) that Task 53/e's and Task 54's
+  "Task 52/a-1 is the current atomic unit of work" claim is stale —
+  `providers/juicyway.js` already has `processPayout` built, matching
+  Task 52's own "fully closed" status.
 - 2026-09-09 — Completed Task 53/a's Korapay Card Issuing discovery
   pass (funding, withdrawal, activate/suspend, events log, full
   webhook-event vocabulary). Flagged two real doc self-contradictions
@@ -11355,6 +11391,55 @@ actually writing the suspend/status and events methods specifically —
 everything else (cardholder creation, card creation, retrieval,
 funding, withdrawal) has no such ambiguity and could reasonably be
 built next without further research.
+
+**Implementation of the five unambiguous methods — done (2026-09-09),
+this session, in `providers/korapay.js`:** `createCardholder()` (`POST
+/api/v1/cardholders`), `createCard()` (`POST /api/v1/cards` — `type`
+hard-coded to `'virtual'` since Korapay's own docs say only virtual is
+actually accepted right now regardless of the field's listed options;
+`brand` defaults to `'mastercard'` per Korapay's own stated default;
+`currency` hard-coded `'USD'`, the only currency this surface
+supports), `getCard()` (`GET /api/v1/cards/:reference`, single),
+`listCards()` (`GET /api/v1/cards`, `status`/`type`/`start_date`/
+`end_date` filters folded into a querystring only when supplied), and
+`fundCard()`/`withdrawCard()` (`POST /api/v1/cards/:reference/fund`
+and `.../withdraw`, each generating their own funding/withdrawal
+idempotency reference distinct from the card's own `:reference` path
+param, per this task's own flagged naming-collision risk above).
+`getCard()`/`listCards()` deliberately do NOT `formatPayload()`-log
+their raw response bodies, unlike every other method in this file —
+Korapay's own docs confirm single-card retrieval includes PAN/CVV, and
+logging that verbatim the way this file's other methods log their
+Korapay responses would be a real data-handling mistake, not a style
+inconsistency. `withdrawCard()`'s own log line surfaces both the
+requested and Korapay-returned (net-of-fee) amounts side by side,
+directly per this task's own flagged fee-deduction finding, rather
+than silently returning the raw response and leaving that gotcha for
+a caller to rediscover.
+
+**Still explicitly NOT built, same two blockers as before — untouched
+by this implementation pass:** the suspend/status method (`PATCH
+.../cards/:card_reference/status`) and the events-log method (`GET
+.../cards/:card_reference/events`). Both remain TODO per this task's
+own "don't guess a payload/path shape, confirm or test it" rule —
+nothing about writing the five unambiguous methods above resolved
+either the `action: suspend` vs `deactivate` value question or the
+`/api/i/` vs `/api/v1/` path question; both still need a real sandbox
+call or direct Korapay confirmation before either method is written.
+
+**Verification this session:** `node --check providers/korapay.js`
+clean. A throwaway smoke script exercised all six call sites
+(cardholder creation; card creation with default and explicit brand/
+reference; single-card retrieval; list with and without filters;
+fund; withdraw) against a local in-process HTTP stub standing in for
+`api.korapay.com`, confirming request method, URL/path (including the
+querystring-only-when-filters-given behavior), and payload shape for
+each — real payment-provider domains remain unreachable from this
+sandbox (Task 14's own existing note), so this is request-construction
+verification only, not a live-Korapay round trip; script run and
+deleted per convention, no artifact left in the repo. Real end-to-end
+verification against Korapay's own sandbox is still open, same
+standing blocker Task 14 already tracks.
 
 ### b. White-label branding — must be dynamic, not hardcoded
 

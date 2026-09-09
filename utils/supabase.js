@@ -83,7 +83,7 @@ export function getSupabaseClient() {
 // reference logic — Task 56/d-4's read path and any future
 // status-update need are separate, not-yet-built concerns, not
 // silently included here.
-export async function recordTransaction({ reference, type, provider, currency, amount, status }) {
+export async function recordTransaction({ reference, type, provider, currency, amount, status, provider_reference } = {}) {
   let client;
   try {
     client = getSupabaseClient();
@@ -97,9 +97,20 @@ export async function recordTransaction({ reference, type, provider, currency, a
   }
 
   try {
+    // Task 45d: `provider_reference` (migration 0009) is optional and
+    // omitted from the insert object entirely when not supplied —
+    // Paystack/Korapay/Flutterwave-v3-collection callers never pass
+    // it, and there's no reason for those rows to carry an explicit
+    // `null` over simply not having the key, since the column itself
+    // already defaults to `null` with no `NOT NULL` constraint.
+    const row = { reference, type, provider, currency, amount, status };
+    if (provider_reference) {
+      row.provider_reference = provider_reference;
+    }
+
     const { error } = await client
       .from('transactions')
-      .insert({ reference, type, provider, currency, amount, status });
+      .insert(row);
 
     if (error) {
       // A Postgres/PostgREST-level failure (e.g. the CHECK constraint
@@ -148,7 +159,13 @@ export async function getTransactionByReference(reference) {
   try {
     const { data, error } = await client
       .from('transactions')
-      .select('currency, provider, type, status')
+      // Task 45d: `provider_reference` added to this select so GET
+      // /verify can resolve JuicyWay's own id from the merchant
+      // `reference` — every other existing caller of this function
+      // (GET /payout/verify) simply receives one more field in the
+      // returned object it doesn't read, same backward-compatible
+      // shape this file already keeps for shared helpers.
+      .select('currency, provider, type, status, provider_reference')
       .eq('reference', reference)
       .maybeSingle();
 
@@ -320,6 +337,56 @@ export async function getRoutingDefaultProvider(domain) {
     return data?.default_provider || null;
   } catch (err) {
     log(`getRoutingDefaultProvider failed for domain '${domain}': ${err.message}`, 'warn');
+    return null;
+  }
+}
+
+// ==================================================
+// 🧩 CAPABILITY STATUS — READ (Task 52/e-2e)
+// ==================================================
+// The read half of the `capabilities` table (migrations 0007/0008).
+// Resolves e-2e's "not buildable yet, no concrete route exists" gap
+// via the Stripe-precedent the product owner directed this task to
+// mirror: Stripe's own Capabilities API tracks each capability
+// (card_payments, transfers, treasury, ...) as its own independent
+// entity with its own status, long before every requirement behind
+// it is satisfied — a platform doesn't need a capability's full
+// implementation finished to reason about whether it's usable yet.
+//
+// Same "never throws, best-effort" posture as every other Supabase
+// helper in this file. A miss (not configured, table not migrated on
+// this environment, or a capability with no seeded row) resolves to
+// `null` — the caller (assertCapabilityActive(), routes.js) is what
+// decides what a `null`/unknown status means for a request, same
+// division of concerns this file already keeps for
+// getTransactionByReference()/getCustomerById()/getRoutingDefaultProvider().
+export async function getCapabilityStatus(capability) {
+  let client;
+  try {
+    client = getSupabaseClient();
+  } catch (err) {
+    log(`getCapabilityStatus skipped — Supabase not available: ${err.message}`, 'warn');
+    return null;
+  }
+
+  try {
+    const { data, error } = await client
+      .from('capabilities')
+      .select('status')
+      .eq('capability', capability)
+      .maybeSingle();
+
+    if (error) {
+      log(`getCapabilityStatus lookup failed for capability '${capability}': ${error.message}`, 'warn');
+      return null;
+    }
+
+    // maybeSingle() resolves data: null (no error) for a genuine miss
+    // — an unrecognized capability name, or one this table hasn't
+    // been seeded for yet — not itself a warning-worthy condition.
+    return data?.status || null;
+  } catch (err) {
+    log(`getCapabilityStatus failed for capability '${capability}': ${err.message}`, 'warn');
     return null;
   }
 }

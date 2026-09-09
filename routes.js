@@ -3,7 +3,7 @@ import { Paystack } from './providers/paystack.js';
 import { Juicyway } from './providers/juicyway.js';
 import { Korapay } from './providers/korapay.js';
 import { log, formatPayload, generateReference, getSupportedCurrencies, isValidCurrencyCode, isValidEmail, providerRequiresEmail, requireInternalApiKey, classifyDomain } from './utils/helpers.js';
-import { recordTransaction, getTransactionByReference, getRoutingDefaultProvider } from './utils/supabase.js';
+import { recordTransaction, getTransactionByReference, getRoutingDefaultProvider, getCapabilityStatus } from './utils/supabase.js';
 import { getMissingFields } from './utils/fieldRequirements.js';
 import { resolveCustomer } from './utils/customerVault.js';
 import { handleGatewayEvent } from './webhookGateway.js';
@@ -454,6 +454,39 @@ function assertCurrencySupported(providerName, currency) {
   }
 }
 
+// Task 52/e-2e — the Stripe-precedent capability-status check. Not
+// called from any route in this file yet: `collection`/`payout`/
+// `banks` (the only capabilities `POST /pay`/`POST /payout`/`GET
+// /banks` themselves represent) are already unconditionally `active`
+// in practice — these routes exist and work — so there is nothing for
+// this function to usefully gate on those paths today. It exists here,
+// verified and ready, for whichever future route Task 53/54 adds
+// (`/kyc`, a card-issuance endpoint, etc.) to call before doing
+// anything else — same "build the piece ahead of the route that needs
+// it" posture this repo already used for Task 57/d (resolveCustomer())
+// existing a full part before Task 57/e wired it into `/pay`.
+//
+// A missing/unknown capability status (getCapabilityStatus() returns
+// `null` — not configured, table not migrated on this environment, or
+// an unrecognized capability name) is treated as NOT active, never as
+// a silent pass — same "don't guess, fail closed" posture
+// assertCurrencySupported() above takes for an unconfirmed currency
+// list, just inverted: here, not knowing means "can't confirm this is
+// safe to call," so it blocks rather than lets a request through
+// hoping for the best on money-moving infrastructure that regressed
+// while the routing-config table was migrating or on
+// misconfiguration.
+async function assertCapabilityActive(capability) {
+  const status = await getCapabilityStatus(capability);
+  if (status !== 'active') {
+    const err = new Error(
+      `Capability '${capability}' is not currently active (status: ${status || 'unknown'}).`
+    );
+    err.statusCode = 501;
+    throw err;
+  }
+}
+
 // Task 13 (error-handling review half): shared by every catch block
 // below. Two kinds of errors reach these catch blocks:
 // - Validation errors from the assert* functions above and ApiErrors
@@ -851,6 +884,16 @@ router.post('/pay', requireInternalApiKey, async (req, res) => {
       currency: resolvedCurrency,
       amount,
       status: 'pending',
+      // Task 45d: JuicyWay's own verify call needs its own UUID
+      // (`GET /payments/{id}`), not the merchant reference every other
+      // provider's verify accepts — persisted here, off the raw
+      // response `processPayment()` already returns un-reshaped, so
+      // `GET /verify` can resolve it back out by `reference` later.
+      // `undefined` for every other provider — recordTransaction()
+      // itself already treats a falsy `provider_reference` as "don't
+      // set this column" (see its own comment), so no other call site
+      // changes behavior.
+      provider_reference: providerName === 'juicyway' ? result?.data?.payment?.id : undefined,
     });
 
     // Task 57/e: `customer_id` only appears when this call actually
@@ -905,7 +948,36 @@ router.get('/verify', async (req, res) => {
     }
 
     const providerInstance = getProvider(provider);
-    const result = await providerInstance.verifyTransaction(reference);
+
+    // Task 45d: JuicyWay's `verifyTransaction(reference)` can't
+    // actually look up by the merchant reference — its own `GET
+    // /payments/{id}` (Fetch Payment) takes JuicyWay's own UUID, and
+    // List Payments' documented filters don't include lookup-by-
+    // merchant-reference (see this leaf's own handover.md entry).
+    // Same resolution shape `GET /payout/verify` already uses for its
+    // own currency gap (Task 56/d-4): look the external `reference` up
+    // in `transactions`, and if this route recorded JuicyWay's own id
+    // for it (`POST /pay`, above), pass THAT to verifyTransaction()
+    // instead. A miss here (no row, Supabase unreachable, or a
+    // reference that predates migration 0009) fails with a clear 404
+    // rather than forwarding the merchant reference to JuicyWay's API
+    // anyway and letting it 404 there with a confusing provider-side
+    // message — this backend can already tell the request is
+    // unresolvable without making that call.
+    let lookupReference = reference;
+    if (provider === 'juicyway') {
+      const transaction = await getTransactionByReference(reference);
+      if (!transaction || !transaction.provider_reference) {
+        const err = new Error(
+          `No JuicyWay payment id found for reference '${reference}' — cannot verify.`
+        );
+        err.statusCode = 404;
+        throw err;
+      }
+      lookupReference = transaction.provider_reference;
+    }
+
+    const result = await providerInstance.verifyTransaction(lookupReference);
 
     log(`Verification Success: ${provider} - ${reference}`);
 

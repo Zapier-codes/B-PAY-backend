@@ -6291,8 +6291,10 @@ every prior JuicyWay task in this file has noted; this fix is
 confirmed correct against JuicyWay's documented error shape, not
 against a live failing call.
 
-### Task 45d — Design and implement JuicyWay's reference-vs-ID verify flow [ ]
-**Added by Task 8b's full audit pass (2026-09-06), doc-research only.**
+### Task 45d — Design and implement JuicyWay's reference-vs-ID verify flow [x]
+**Added by Task 8b's full audit pass (2026-09-06), doc-research only.
+Resolved and built (2026-09-08).**
+
 Real architectural gap, not a one-line fix: JuicyWay's `GET
 /payments/{id}` (Fetch Payment) takes JuicyWay's own UUID
 (`data.payment.id` from the initialize response), and List Payments'
@@ -6300,14 +6302,100 @@ documented filters don't include lookup-by-merchant-reference. This
 repo's `verifyTransaction(reference)` signature assumes
 reference-based lookup works, matching how Paystack/Korapay's own
 verify calls work — that assumption is confirmed false for JuicyWay
-specifically. Whoever implements this needs to decide how the
-JuicyWay-issued `id` gets from the `processPayment` response through
-to whatever later calls `verifyTransaction` — e.g. `processPayment`
-returning `id` alongside its existing response so the caller can pass
-it back in, versus some other propagation path — before Task 45a's
-verify-endpoint fix can be meaningfully exercised end-to-end. Depends
-on this design decision landing before (or together with) Task 45a's
-verify-path change.
+specifically.
+
+**The design decision this leaf asked for:** how does the JuicyWay-
+issued `id` get from `processPayment`'s response through to whatever
+later calls `verifyTransaction`? Resolved using infrastructure this
+repo already has, rather than inventing a new propagation path — the
+exact same shape `GET /payout/verify` already uses to resolve a
+payout's `currency`/`provider` from `reference` alone (Task 56/d-4):
+persist the id at `POST /pay` time, in the same `transactions` table,
+and have `GET /verify` resolve `reference` → JuicyWay's own id via one
+lookup before calling `verifyTransaction()`. Not a Stripe-precedent
+question — Flutterwave's own `verifyPayout` entry (Task 52/d-2a)
+already independently hit and named the identical class of gap
+("callers must pass `data.id` from `processPayout()`'s own response,
+not an arbitrary merchant reference"), so this repo already had its
+own precedent to follow, not just an external one.
+
+**Built:**
+
+1. **Migration `0009`** — adds `transactions.provider_reference`
+   (nullable `text`, no default, no RLS change needed — same table,
+   already covered by migration 0002's policy). Deliberately generic,
+   not `juicyway_payment_id` — so Flutterwave's own analogous gap can
+   reuse this same column later without another migration.
+
+2. **`utils/supabase.js`** — `recordTransaction()` takes an optional
+   `provider_reference` param, omitted from the insert entirely when
+   falsy (every non-JuicyWay caller's behavior is completely
+   unchanged). `getTransactionByReference()`'s own `select()` now
+   includes `provider_reference` — every existing caller (`GET
+   /payout/verify`) just receives one more unused field, same
+   backward-compatible shape this file already keeps for shared
+   helpers.
+
+3. **`routes.js`'s `POST /pay`** — passes
+   `providerName === 'juicyway' ? result?.data?.payment?.id : undefined`
+   as `provider_reference` into the existing `recordTransaction()`
+   call. No change to `providers/juicyway.js` itself — `processPayment()`
+   already returns JuicyWay's raw response un-reshaped (same pattern
+   every provider file already uses), and that raw response already
+   carries `data.payment.id`, per Task 8b's own audit citation — so
+   there was nothing to add to the provider file, only to what
+   `routes.js` reads off its already-returned value.
+
+4. **`routes.js`'s `GET /verify`** — for `provider === 'juicyway'`
+   only, looks the external `reference` up via
+   `getTransactionByReference()` first; if a `provider_reference` is
+   found, that's what gets passed to `verifyTransaction()` instead of
+   the raw reference. A miss (no row, Supabase unreachable, or a
+   reference that predates migration 0009) throws a clean 404 with an
+   explicit message, rather than forwarding an unresolvable reference
+   to JuicyWay's own API and getting back a confusing provider-side
+   404 — this backend can already tell the request can't be verified
+   without making that call. Every other provider's `GET /verify` call
+   is completely untouched — the reference is passed straight through
+   exactly as before, no lookup performed.
+
+**Deliberately NOT done here:** no change to
+`providers/juicyway.js`'s `verifyTransaction()` itself — it still
+just takes whatever id string it's given and calls `GET
+/payments/{id}` with it, same as before this leaf; all of the new
+resolution logic lives in `routes.js`, where the `transactions` table
+lookup already lives for the analogous payout case. No sandbox call
+made to confirm `data.payment.id`'s exact path against a live
+JuicyWay initialize response — this session trusted Task 8b's own
+already-written, already-cited audit finding, per Task 0's own
+"written audit becomes the source of truth for later implementation
+sessions" convention, rather than re-doing that research.
+
+**Verified:** `node --check` on `routes.js` and `utils/supabase.js`.
+Migration `0009` parsed via `pglast` (`parse_sql`) — 1 statement, no
+error. Three throwaway scripts (deleted, not committed): one exercised
+the `GET /verify` resolution logic against 4 mocked cases (a JuicyWay
+hit resolving to the stored id, a JuicyWay miss throwing 404, a
+JuicyWay row with a `null` `provider_reference` throwing 404, and a
+non-JuicyWay provider passing straight through with no lookup call at
+all) — 4/4 passed; a second confirmed `recordTransaction()`'s
+row-building correctly omits the `provider_reference` key when
+absent/`undefined` and includes it correctly when present — all
+cases correct. A live, in-process Express server (this repo's own
+already-declared dependencies, no `package.json`/`package-lock.json`
+change) exercised the real `GET /verify?provider=juicyway` route
+end-to-end with a dummy API key (so provider instantiation itself
+didn't block the test) and Supabase unconfigured: got back a clean
+404 with the expected message, with an unrelated `provider=paystack`
+control call confirming its own pre-existing (unrelated) config-error
+behavior was completely unaffected by this change.
+
+**Not verified end-to-end against a real JuicyWay sandbox call** — no
+live keys in this environment, same pre-existing blocker every prior
+JuicyWay task in this file has noted; this fix is confirmed correct
+against Task 8b's own documented response shape, not against a live
+initialize-then-verify round trip. Migration `0009` is not yet applied
+to the live project — that remains the product owner's own step.
 
 ### Task 45e — Resolve JuicyWay's three-way currency-list conflict before adding it to `CONFIRMED_PROVIDER_CURRENCIES` [ ]
 **Added by Task 8b's full audit pass (2026-09-06), doc-research only.**
@@ -9665,7 +9753,7 @@ match afterward, not the other way around.
 
 ---
 
-## Task 52 — Implement every gap Task 51's capability matrix flagged: build out Juicyway/Korapay/Paystack/Flutterwave fully so the domain-based routing model is real, not aspirational [ ] (e-1, e-2a, e-2b-i, e-2b-ii, e-2c, e-2d all done; e-2e remains — not blocked on a decision, just not yet actionable, see its own entry; see this repo's own No-skip-ahead rule before substituting a different top-level task)
+## Task 52 — Implement every gap Task 51's capability matrix flagged: build out Juicyway/Korapay/Paystack/Flutterwave fully so the domain-based routing model is real, not aspirational [x] (e-1, e-2a, e-2b-i, e-2b-ii, e-2c, e-2d, e-2e all done — every leaf under e-2 is built)
 
 **Scope note, read first:** this task exists because Task 51 recorded
 a *decision* (Juicyway defaults for every international-rails
@@ -9680,24 +9768,22 @@ assignable leaves using this file's own Task Numbering & Workflow
 Convention, not to close the gap itself (no code was written this
 session — decision/scoping record only, same as Task 51).
 
-**Exactly one leaf below carries the `X` marker at any time, per the
-Workflow Convention.** This session (2026-09-08) closed all of (a),
-JuicyWay, and (b), Korapay — the latter resolved as a decision
-correction (Korapay's payout API is architecturally capped at six
-African currencies, confirmed via Kora's own support docs; Task
-51/b-1 and the capability matrix corrected accordingly), not code —
-and (c), Paystack, with real code (see (c)'s own entry below). `X`
-then moved to **(d) Flutterwave**, specifically **d-1**, the
-v3-vs-v4 decision — which Task 55 has now resolved (build both,
-dynamically switchable; see Task 55 below, and (d)'s own updated
-entry). `X` moved to **d-2**, which this session (2026-09-08) split
-into its own lettered parts per the mandatory task-splitting rule —
-**d-2a (v3 method set) is now done**, see (d)'s own updated entry
-below for the full write-up. `X` now moves to **d-2b (v4 method set)**.
-Whichever session picks this up next works ONLY on d-2b until it's
-solved, then moves `X` to d-2c (the runtime-switch design), then e —
-unless the product owner explicitly reprioritizes, in which case
-update this line to say so and move `X` accordingly.
+**Task 52 is now fully closed — every part, (a) through (e), is
+`[x]`.** This session (2026-09-08) closed all of (a), JuicyWay, and
+(b), Korapay — the latter resolved as a decision correction (Korapay's
+payout API is architecturally capped at six African currencies,
+confirmed via Kora's own support docs; Task 51/b-1 and the capability
+matrix corrected accordingly), not code — and (c), Paystack, with real
+code. (d), Flutterwave, closed across d-1/d-2a/d-2b/d-2c (a full
+from-zero provider build, both v3 and v4, with a runtime switch). (e),
+the routing-layer rewrite, closed across e-1 and all five of e-2's own
+leaves (a, b-i, b-ii, c, d, e) — the last two, e-2d (a Supabase-backed
+promote-to-default mechanism) and e-2e (a Supabase-backed capability-
+status table), both resolved via the Stripe-as-Reference-Model
+Convention, per direct product-owner instruction. Per this file's own
+Workflow Convention, the next session picks up whichever task is
+first-unchecked in queue order below this one — see this repo's own
+No-skip-ahead rule before substituting a different top-level task.
 
 ### a. Juicyway — build the missing international-rails methods [x]
 
@@ -10040,12 +10126,19 @@ fallback), same caveat Task 52/b already established for Korapay:
 (`getSupportedCurrencies('paystack')`), not a path to JuicyWay's full
 international scope.
 
-### d. Flutterwave — full provider build, from zero [ ]
+### d. Flutterwave — full provider build, from zero [x]
 
 No `providers/flutterwave.js` exists. This file's own prior research
 (search "Flutterwave — FULL API discovery pass" above) already did the
 doc-audit; this branch is about turning that research into working
 code, which is a different kind of work and should stay its own leaf.
+
+**Status line corrected here, not re-built:** d-1 and all of d-2
+(a/b/c) were already `[x]` at their own leaf level — d-2c's own entry
+explicitly states "Task 52/d ... is now fully done" — but this
+top-level line and d-2's own header line hadn't been updated to match
+when d-2c closed. No new code in this correction, just making this
+line agree with what the leaves below it already say.
 
 #### d-1. Resolve the v3-vs-v4 version decision [x]
 
@@ -10059,7 +10152,7 @@ needs only a static secret key; v4 needs a `client_id`/`client_secret`
 pair plus the in-memory token-refresh manager the original discovery
 pass already flagged as a new category of moving part for this repo).
 
-#### d-2. Implement `providers/flutterwave.js` against BOTH v3 and v4, with a runtime switch [ ] (split into a/b/c this session — a done, b is X, c not started)
+#### d-2. Implement `providers/flutterwave.js` against BOTH v3 and v4, with a runtime switch [x] (split into a/b/c this session — a, b, c all done; see d-2c's own entry)
 
 **Re-scoped from the original d-2 ("against whichever version d-1
 picks") to reflect Task 55/a's "build both" decision, then split
@@ -10189,11 +10282,13 @@ Handoff Convention, a patch file covering this session's
 generated and handed to the product owner directly — not applied or
 pushed by this session.**
 
-### e. Routing-layer rewrite — make `routes.js` actually use the Task 51 model [ ]
+### e. Routing-layer rewrite — make `routes.js` actually use the Task 51 model [x]
 
 Only makes sense to pick up once enough of (a)-(d) exist that there's
 something real to route to — attempting this first would just be
 rewiring `ROUTING_RULES` to point at methods that still throw/501.
+Both e-1 and e-2 (all five of e-2's own leaves) are now done — see
+each leaf's own entry below for the full build history.
 
 #### e-1. Domain-detection logic — decide international vs. African per request [x]
 
@@ -10214,7 +10309,7 @@ below, now unblocked but not started this session. Patch handed to the
 product owner per the Patch Handoff Convention, not applied/pushed by
 this session.
 
-#### e-2. Rewrite `ROUTING_RULES`/`getProvider()` to route by domain, with explicit fallback/promote-to-default support [ ] (split into a/b/c/d/e — a, b-i, c done; b-ii/d/e each blocked on their own real, undecided question, not started)
+#### e-2. Rewrite `ROUTING_RULES`/`getProvider()` to route by domain, with explicit fallback/promote-to-default support [x] (split into a/b/c/d/e — all five now done; see each leaf's own entry)
 
 Once e-1 exists: replace the current flat `action -> provider` map
 with domain-aware routing that picks the Task 51 default, and exposes
@@ -10450,23 +10545,104 @@ remains the product owner's own step.
 **This closes Task 52/e-2d.** e-2e remains the only open leaf under
 Task 52/e-2 — see its own entry immediately below, unaffected by this.
 
-##### e-2e. Capability-mix flow support (Task 55/b cross-reference) [ ]
+##### e-2e. Capability-mix flow support (Task 55/b cross-reference) [x]
 
-**Not started — but re-checked this session, and this is NOT a
-blocked-on-a-decision item the way b-ii/d are.** Task 55/b already
-resolved the principle (capability-mix, each step routes independently
-by its own domain's default+fallback table). The reason nothing's
-built here isn't an open question — it's that **there's no concrete
-route to apply it to yet**: KYC/KYB (Task 53/54) is still
-decision-record only, no actual `/kyc`-style route exists in this
-codebase to route independently from a payout call. Separately worth
-noting: e-2a/e-2b-i/e-2c's own design (each route classifies its own
-domain independently, with no shared/cached provider choice across
-calls) already happens to satisfy the capability-mix principle for
-every route that exists today — `/pay`, `/payout`, and `/banks` were
-never coupled to share one provider identity across a flow to begin
-with. Revisit this leaf once a real multi-step flow (e.g. KYC → payout)
-actually exists in code, not before.
+**Resolved and built (2026-09-08), per direct product-owner
+instruction, applying the Stripe-as-Reference-Model Convention.**
+
+**Re-checked this session prior to being built, same finding as
+before:** this was never blocked on a decision the way b-ii/d were —
+Task 55/b already resolved the principle (capability-mix, each step
+routes independently by its own domain's default+fallback table).
+The reason nothing was built here wasn't an open question, it was
+that this leaf read as **premature** — no concrete route to apply it
+to yet, since KYC/KYB (Task 53/54) is still decision-record only.
+
+**Stripe's actual answer to that framing, and why it changes things:**
+Stripe's own [Capabilities API](https://docs.stripe.com/api/capabilities)
+tracks each capability on an Account (card_payments, transfers,
+treasury, ...) as its own independent entity with its own `status` and
+`requirements` — an account can have some capabilities active and
+others inactive at the same time, and each is inactive until its own
+specific requirements are collected and verified, regardless of
+whether every OTHER capability is finished. Capabilities operate
+independently of each other, but Stripe is explicit that some are
+deliberately coupled — if a flow needs both payments and transfers and
+either one's status is inactive, both are disabled together. The part
+that unblocks this leaf specifically: Stripe never waits for a
+capability's full implementation to exist before letting a platform
+track and query its status — the capability object (an id + a status)
+is a real, checkable thing well before every requirement behind it is
+satisfied. Applied here: this leaf was reading "no KYC route exists
+yet" as "nothing can be built yet," but the actual capability-status
+abstraction doesn't depend on the route existing — only future ROUTING
+into it does.
+
+**Built, in full, this session (same "not split into the usual a–e
+parts" deviation as Task 52/e-2d immediately above, per the same
+explicit instruction, recorded here for the same reason):**
+
+1. **Migrations `0007`/`0008`** — `capabilities` table (`capability`
+   primary key, `status` — `'active'` \| `'pending'` \|
+   `'not_implemented'`, timestamps + the shared `set_updated_at()`
+   trigger), plus RLS (service-role-only, same as every other table in
+   this schema). Seeded with today's REAL status per capability, not
+   aspirational: `collection`/`payout`/`banks` → `active` (these
+   routes exist and work today — Task 52/e-2a/b-i/c); `kyc`/
+   `card_issuance`/`gift_cards`/`vtu` → `not_implemented` (Tasks
+   53/54/48/44 are each still decision-record only).
+
+2. **`utils/supabase.js`'s `getCapabilityStatus(capability)`** — same
+   "never throws, best-effort" posture as every other helper in that
+   file. A miss (not configured, table not migrated, unrecognized
+   capability) resolves to `null`.
+
+3. **`routes.js`'s `assertCapabilityActive(capability)`** — throws a
+   501 for any status other than `'active'`, **including an unknown/
+   `null` status** — deliberately fails closed rather than silently
+   passing a request through when this backend can't confirm a
+   capability is safe to call (mirrors `assertCurrencySupported()`'s
+   own "don't guess" posture immediately above it, inverted: there,
+   not knowing means skip the check; here, not knowing means block,
+   since this is a capability-existence gate on money-moving
+   infrastructure, not a currency-format nicety).
+
+**Not wired into any route — deliberately, not an oversight.**
+`collection`/`payout`/`banks` are already unconditionally active in
+practice (their routes exist and work); there is nothing for
+`assertCapabilityActive()` to usefully gate on `/pay`, `/payout`, or
+`/banks` today. This part is built ready for whichever future route
+Task 53/54 adds — the same "build the piece a full step ahead of the
+route that needs it" posture Task 57/d (`resolveCustomer()`) already
+used before Task 57/e wired it into `/pay`. When that route lands, it
+calls `assertCapabilityActive('kyc')` (or whichever capability applies)
+before doing anything else, and flipping that capability's `status`
+row to `'active'` is the entire "go live" switch — no code change
+needed at that point, same "live, no-redeploy" property Task 52/e-2d
+established for provider defaults, now extended to capability
+existence itself.
+
+**Verified:** `node --check` on `routes.js` and `utils/supabase.js`.
+Both migrations parsed via `pglast` (`parse_sql`) — 4 statements in
+`0007`, 2 in `0008`, no errors. A throwaway script (deleted, not
+committed) exercised `assertCapabilityActive()`'s logic against 4
+mocked cases — an active capability passing through with no throw, a
+`not_implemented` capability throwing 501, a `pending` capability
+throwing 501, and an unknown/`null` status throwing 501 — 4/4 passed.
+A live check (this repo's own already-declared dependencies, no
+`package.json`/`package-lock.json` change) called the real
+`getCapabilityStatus()` with Supabase unconfigured in this sandbox: it
+logged its expected "not available" warning and resolved to `null`
+cleanly, no throw.
+
+**Not verified end-to-end against a real Supabase project** — no live
+credentials in this environment, same pre-existing blocker every prior
+Supabase-touching task in this file has noted. Migrations `0007`/`0008`
+are not yet applied to the live project — that remains the product
+owner's own step.
+
+**This closes Task 52/e-2e — every leaf under Task 52/e-2 is now
+built.** Task 52's own top-level entry is updated below.
 
 ---
 

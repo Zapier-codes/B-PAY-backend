@@ -30,7 +30,7 @@ directory has been applied just because some of it has. Migration
 
 ## Tables
 
-### `transactions` (migration `0001`)
+### `transactions` (migration `0001`, `provider_reference` added by `0009`)
 
 | Column | Type | Notes |
 |---|---|---|
@@ -41,6 +41,7 @@ directory has been applied just because some of it has. Migration
 | `currency` | `text` | |
 | `amount` | `numeric` | |
 | `status` | `text` | `'pending'` \| `'success'` \| `'failed'`, default `'pending'` |
+| `provider_reference` | `text` | added by migration `0009` (Task 45d) — nullable, no default. Holds a provider-issued id when that provider's own verify call needs it instead of the merchant `reference` (JuicyWay's `GET /payments/{id}` today). Deliberately generic, not `juicyway_payment_id` — Flutterwave's own analogous `verifyPayout` gap (see Task 52/d-2a's own note: "callers must pass `data.id` from `processPayout()`'s own response") can reuse this same column later without another migration. `null`/absent for every provider whose own verify call already accepts the merchant reference directly (Paystack, Korapay, Flutterwave-v3-collection) — this is the exception path, not the common one. |
 | `created_at` | `timestamptz` | default `now()` |
 | `updated_at` | `timestamptz` | default `now()`, auto-updated via `set_updated_at()` trigger |
 
@@ -149,6 +150,52 @@ this environment, or a domain with no row) — same never-fail-the-
 request posture every other Supabase-backed lookup in this file
 already uses.
 
+### `capabilities` (migration `0007`) — Task 52/e-2e's Stripe-precedent capability-status table
+
+| Column | Type | Notes |
+|---|---|---|
+| `capability` | `text` | primary key — one row per named capability (`collection`, `payout`, `banks`, `kyc`, `card_issuance`, `gift_cards`, `vtu`) |
+| `status` | `text` | `'active'` \| `'pending'` \| `'not_implemented'`, default `'not_implemented'` |
+| `created_at` | `timestamptz` | default `now()` |
+| `updated_at` | `timestamptz` | default `now()`, auto-updated via `set_updated_at()` trigger — flipping a capability to `active` (the moment its real route lands) leaves an auditable timestamp |
+
+**Seeded** (same migration) with today's REAL status per capability,
+not aspirational: `collection`/`payout`/`banks` → `active` (`POST
+/pay`/`POST /payout`/`GET /banks` are live, working routes today);
+`kyc`/`card_issuance`/`gift_cards`/`vtu` → `not_implemented` (Tasks
+53/54/48/44 are each still decision-record only — no actual route for
+any of them exists in this codebase yet).
+
+**Purpose:** resolves Task 52/e-2e's "not buildable yet, no concrete
+route exists" gap by mirroring Stripe's Capabilities API — each
+capability (card_payments, transfers, treasury, ...) on a Stripe
+Account is tracked as its own independent entity with its own status,
+long before every requirement behind it is satisfied. A capability-mix
+flow (Task 55/b) can check a capability's status and degrade cleanly
+(a 501) instead of assuming it exists — see handover.md's Task 52/e-2e
+entry for the full precedent writeup and decision record.
+
+**No foreign keys.** Nothing else in this repo references
+`capabilities` rows.
+
+**Row Level Security:** enabled (migration `0008`). One explicit
+policy, `capabilities_service_role_all`, scoped to `service_role`
+only — same pattern as every other table in this schema. No policy
+for `anon`/`authenticated`.
+
+**Read path wired; no write-triggering caller yet.**
+`utils/supabase.js`'s `getCapabilityStatus(capability)` (never
+throws, same posture as every other helper in that file) and
+`routes.js`'s `assertCapabilityActive(capability)` (throws a 501 for
+anything other than `'active'`, including an unknown/missing status —
+fails closed, doesn't guess) both exist and are verified, but neither
+is called from any route yet — `collection`/`payout`/`banks` are
+already unconditionally active in practice (their routes exist and
+work), so there's nothing to usefully gate on those paths today.
+`assertCapabilityActive()` is built ready for whichever future route
+Task 53/54 adds (`/kyc`, a card-issuance endpoint, etc.) to call
+before doing anything else.
+
 ## Functions
 
 - **`set_updated_at()`** — trigger function (migration `0001`). Keeps
@@ -160,19 +207,24 @@ already uses.
 ## Not yet in this schema
 
 Task 56/d (a through e) is fully built. Task 57 (a through e,
-`customers` table + Customer Vault) is fully built as of this file's
-own prior update. Task 52/e-2d (`routing_config` table, migrations
-`0005`/`0006`) is built and wired in as of this update — see that
-table's own entry above. **Not yet built for `routing_config`:** a
-second, per-account/per-domain override tier beyond the single
-platform-level default row per domain (Stripe's own Configurations
-model supports this via a specific config ID referenced per Checkout
-Session; this table doesn't yet have an equivalent scope column) —
-flagged as a future extension of this same table, not guessed at in
-migration `0005`. Migrations `0005`/`0006` themselves are **not yet
-confirmed live** — same "check before assuming" caveat this file's
-own top note already states for every migration not explicitly listed
-as confirmed there. Beyond that, nothing currently queued needs a
-further migration; the next schema change is whatever a future task
-actually requires (e.g. Task 46's dashboard, once it needs a
-`businesses` table or per-business RLS).
+`customers` table + Customer Vault) is fully built. Task 52/e-2d
+(`routing_config`, migrations `0005`/`0006`), Task 52/e-2e
+(`capabilities`, migrations `0007`/`0008`), and Task 45d
+(`transactions.provider_reference`, migration `0009`) are all built
+and wired in as of this update — see each table's own entry above.
+**Not yet built for `routing_config`:** a second, per-account/per-
+domain override tier beyond the single platform-level default row per
+domain — flagged as a future extension of that table, not guessed at
+in migration `0005`. **Not yet built for `capabilities`:** any route
+actually calling `assertCapabilityActive()` — it exists, verified,
+ready, with nothing to call it yet (Tasks 53/54 are still decision-
+record only). **Not yet built for `provider_reference`:** the same
+column populated for Flutterwave's own analogous `verifyPayout` gap —
+flagged as a future reuse of this column, not built here (Task 45d
+scoped to JuicyWay's collection-verify gap specifically). Migrations
+`0005` through `0009` are **not yet confirmed live** — same "check
+before assuming" caveat this file's own top note already states for
+every migration not explicitly listed as confirmed there. Beyond that,
+nothing currently queued needs a further migration; the next schema
+change is whatever a future task actually requires (e.g. Task 46's
+dashboard, once it needs a `businesses` table or per-business RLS).

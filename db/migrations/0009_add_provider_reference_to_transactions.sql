@@ -1,0 +1,43 @@
+-- Migration 0009: add `transactions.provider_reference`.
+--
+-- Task 45d — resolves this leaf's own open design question (how does
+-- the provider-issued id get from `processPayment`'s response through
+-- to whatever later calls `verifyTransaction`) for JuicyWay
+-- specifically, using infrastructure this repo already has rather
+-- than inventing a new propagation path: JuicyWay's `GET
+-- /payments/{id}` (Fetch Payment) takes JuicyWay's own UUID
+-- (`data.payment.id` from the initialize response), not the merchant
+-- `reference` every other provider's verify call accepts — this
+-- column is where that id is persisted at `POST /pay` time, so `GET
+-- /verify` can resolve the external `reference` back into JuicyWay's
+-- own id via a single lookup, the same shape `GET /payout/verify`
+-- (Task 56/d-4) already uses to resolve a payout's `currency`/
+-- `provider` from `reference` alone.
+--
+-- Generic column name, not `juicyway_payment_id` — deliberately, so
+-- the same column can hold Flutterwave's own analogous gap later
+-- (`verifyPayout(reference)` has "no confirmed reference-based lookup
+-- on Flutterwave's side... Callers must pass data.id from
+-- processPayout()'s own response", per Task 52/d-2a's own writeup) or
+-- any future provider with the same reference-vs-id mismatch, without
+-- another migration per provider.
+--
+-- Nullable, no default, no CHECK constraint — most rows (Paystack,
+-- Korapay, Flutterwave-v3-collection) never populate this column at
+-- all, since those providers' own verify calls already accept the
+-- merchant reference directly; this is the exception path, not the
+-- common one, and a nullable column with no rows depending on it says
+-- so honestly rather than pretending every provider needs it.
+--
+-- No RLS change needed — this is a new column on an existing table
+-- (`transactions`), already covered by migration 0002's
+-- service-role-only policy; adding a column doesn't require a new
+-- policy.
+--
+-- Per the Patch Handoff Convention: this file is handed over as a
+-- patch. No session applies this migration to a live Supabase project
+-- on its own authority -- see Task 56/b's own table and the DB-Ops
+-- Handoff Process section in handover.md.
+
+alter table transactions
+  add column if not exists provider_reference text;

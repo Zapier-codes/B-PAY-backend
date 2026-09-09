@@ -62,6 +62,24 @@
 > genuinely undocumented, flag that plainly in this box (per the
 > No-skip-ahead rule's own step 2/3) rather than guessing a scheme.
 >
+> **Re-checked, still blocked (2026-09-09):** a live screenshot of
+> `https://telcos.opik.net/api/v1/docs`'s `Webhooks` section (`GET
+> /webhooks`, `POST /webhooks`) was compared against this repo's own
+> capture. It matches exactly — same `{ url, events[], secret }`
+> request/response shape already in `docs/guides/07-webhooks.md` — so
+> `secret` being a plain input field on `POST /webhooks` continues to
+> support (not newly confirm) item #7's "client-supplied" reading.
+> **Item #6 (the actual signing scheme — HMAC? which header carries
+> it?) is still not visible anywhere on this page.** That's expected,
+> not a gap in this check: `GET`/`POST /webhooks` is the CRUD API for
+> *registering* an endpoint, not documentation of what telcos.opik.net
+> sends when it *delivers* an event to that endpoint — the signing
+> scheme would only show up in a delivered payload's headers, a
+> dedicated "webhook security" doc page, or a direct support answer,
+> none of which this Swagger page is. Ruling this specific page out
+> narrows, rather than closes, the search — next session shouldn't
+> re-check this same page expecting a different answer.
+>
 > **Updating this box:** when you finish your leaf, replace the two
 > paragraphs above with the new next task — don't append a new dated
 > note on top of the old one. If you want to leave a record of what
@@ -81,6 +99,13 @@ record beyond what the pointer box above and the task's own section
 already carry. Not required reading — this is a changelog, not
 context. Don't write paragraphs here; that's what turned the old
 box into 2,300 lines (see archive below).
+
+- 2026-09-09 — Task 58/i re-check (no leaf finished): a live
+  screenshot of `telcos.opik.net`'s `/webhooks` Swagger section
+  matched this repo's existing capture exactly (no drift); ruled that
+  page out as the source for item #6's signing scheme (it's the
+  registration CRUD API, not delivery docs) — see pointer box. Step 8
+  still blocked; no code changed this session.
 
 - 2026-09-09 — Task 58 step 7: wired `recordTransaction()` into
   `POST /api/vtu/data`/`POST /api/vtu/airtime` (fire-and-forget,

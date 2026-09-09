@@ -40,12 +40,34 @@
 > resolve JuicyWay's three-way currency-list conflict and a related
 > 1,000x minimum-amount discrepancy — see that task's own section for
 > the exact conflict. No amount of doc research substitutes for the
-> live test this specifically requires. Per the No-skip-ahead rule,
-> this session does not substitute Task 9/10/14/etc. instead. The
-> concrete thing the product owner would be choosing between: (a)
-> provide JuicyWay sandbox keys so Task 45e can actually be resolved,
-> or (b) confirm this stays blocked/paused too, same as Task 58 step 8
-> above, until keys exist.
+> live test this specifically requires.
+>
+> **Product-owner scope call, 2026-09-09: Task 9 checked off** for
+> Korapay+Paystack (confirmed); JuicyWay's amount-unit rule stays open,
+> tracked under Task 51/c's capability matrix, not lost. **Task 10 is
+> NOT checked off** — its own premise (currency-lookup routing) turned
+> out to be superseded by Task 51's domain-based routing model
+> (international vs. African rails); redirected there instead of
+> checked, per that task's own new note. While checking this,
+> **Task 51's routing table was found stale on Flutterwave** (said
+> "not yet implemented"; Task 52/d had already built it) — corrected,
+> with a changelog line per that table's own convention.
+>
+> **Real next actionable item is now Task 51/b** — the domain-based
+> routing model is a confirmed product-owner decision but still not
+> implemented in code (`ROUTING_RULES`/`getProvider` in `routes.js`
+> haven't been rewritten to match the recorded tables). This doesn't
+> need external keys or credentials — it's implementing an
+> already-decided design into existing, already-tested provider code.
+> **Task 14** (end-to-end manual test pass) is separately still blocked
+> — this sandbox's network egress doesn't reach any payment-provider
+> domain regardless of key availability (confirmed:
+> `api.paystack.co` → `403 host_not_allowed`) — real keys living in
+> Render's env doesn't change that; unblocking it needs either a
+> network-settings change here or the product owner running/relaying
+> test results directly. Per No-skip-ahead, this session does not
+> substitute Task 45e/14 for Task 51 — 51 is legitimately next in line
+> on its own merits, not a workaround for the other two being stuck.
 >
 > **Updating this box:** when you finish your leaf, replace the two
 > paragraphs above with the new next task — don't append a new dated
@@ -66,6 +88,18 @@ record beyond what the pointer box above and the task's own section
 already carry. Not required reading — this is a changelog, not
 context. Don't write paragraphs here; that's what turned the old
 box into 2,300 lines (see archive below).
+
+- 2026-09-09 — Task 9/10 scope resolution (product-owner decision, no
+  leaf finished): checked off Task 9 for Korapay+Paystack (JuicyWay's
+  amount-unit rule stays open, tracked under Task 51/c). Did NOT check
+  Task 10 — its currency-lookup routing premise turned out superseded
+  by Task 51's domain-based model; redirected instead, box left
+  unchecked. While checking, found Task 51's own routing table stale
+  on Flutterwave (claimed not-built; Task 52/d had built it) —
+  corrected with a changelog line. Real next actionable item is now
+  Task 51/b (routing decision recorded, not yet in code) — flagged in
+  pointer box, not started this session (would be a real code change,
+  held for explicit go-ahead). No code changed; only `handover.md`.
 
 - 2026-09-09 — Queue housekeeping (no leaf finished): marked the
   stale "Current focus: Korapay only" section resolved (real
@@ -6698,7 +6732,16 @@ figures also disagree by a factor of 1,000 ("Minimum: 100" vs. "Amount
 must be at least 100000") — resolve both together, same sandbox test
 can likely answer both.
 
-### Task 9 — Expand currency/amount-unit handling per real provider capabilities [ ]
+### Task 9 — Expand currency/amount-unit handling per real provider capabilities [x]
+**Scope call made by product owner, 2026-09-09:** closing this box now
+for Korapay+Paystack (both confirmed) rather than waiting on every
+provider. JuicyWay's amount-unit rule remains genuinely unconfirmed
+(see Task 51/c's capability matrix, "Confirmed amount-unit rule" row —
+still open there) — tracked as follow-up under that task, not lost by
+checking this box. **Payscribe no longer applies to this caveat at
+all** — it was fully removed from the codebase by Task 51/a
+(2026-09-07), so the "JuicyWay/Payscribe" framing in this task's
+original write-up below is stale; only JuicyWay remains open.
 Depends on Tasks 3–8 having established real per-provider currency
 lists and amount-unit rules. Rework `toSubUnit()`/`fromSubUnit()` in
 `utils/helpers.js` so the unit conversion is applied **per provider**,
@@ -6811,6 +6854,23 @@ from `helpers.js`), plus ran `getSupportedCurrencies('korapay')` and
 arrays are unchanged and correct.
 
 ### Task 10 — Currency/country/method-aware provider routing [ ]
+**Redirect, 2026-09-09 — do not work this task as written below.**
+This task's own premise (rework `ROUTING_RULES`'s abstract `action`
+string using currency/country data) was superseded by a direct
+product-owner decision recorded under **Task 51**: routing is now
+domain-based (international vs. African rails, one default provider
+per domain, every overlapping provider a full fallback), not the
+currency-lookup model this task describes. Task 51 explicitly names
+this task's gap as the one it replaces. **A session reaching this box
+should skip straight to Task 51's own section** (implementing its
+recorded table into `routes.js`/`ROUTING_RULES`, still not done in
+code as of 2026-09-09) rather than build the currency-aware routing
+this task originally asked for — that design is no longer the target.
+This box stays unchecked (not struck) since the *problem* it names
+isn't solved, only redirected to a different, better-specified task —
+same convention as Task 45b's own redirect note above.
+
+Original entry, kept for its own record, follows below.
 Replace `ROUTING_RULES`'s abstract `action` string with real routing:
 given a currency (and ideally a country code, if the caller has one),
 pick a provider that actually supports it, per the findings above
@@ -10027,8 +10087,8 @@ box) is to preserve what changed and when, not just the current state.
 | **Default** | **Juicyway** — default for every capability in this domain (collection, local-transfer/ACH-equivalent, payout, verify payout, bank-list lookup), not collection-only |
 | Fallback 1 | Korapay (covers NGN/GHS/KES/ZAR/USD/XAF/XOF/EGP/TZS overlap only — not CAD/USDT/USDC. **Corrected 2026-09-08 (Task 52/b): this is NOT a "needs more code" gap.** Kora's own support documentation (`support.korapay.com`, "Payouts via Payouts API") confirms their payout API is architecturally scoped to exactly six currencies — NGN (bank transfer, any Nigerian bank), GHS/KES/XAF/XOF (mobile money only, specific named network providers per currency), ZAR (bank transfer, any South African bank) — with no non-African bank-account/card/wallet destination type documented anywhere, and no indication such a thing exists to extend into. This is a hard product-scope ceiling, not an implementation gap: Korapay can be a fallback ONLY for payout/verify-payout/bank-list within its own six-currency overlap, never for JuicyWay's actual international scope (CAD, GBP, USDT/USDC, non-African USD bank destinations, ACH-equivalent transfer). Extending `Korapay.processPayout` with more code cannot change this — the ceiling is Kora's own product surface, not this codebase's.) |
 | Fallback 2 | Paystack (NGN/GHS/ZAR/KES/USD overlap only; payout/verify-payout/bank-list are still stubs — not a full fallback for those capabilities yet) |
-| Fallback 3 | Flutterwave — **not yet implemented** (`providers/flutterwave.js` does not exist; blocked on the v3-vs-v4 version decision, see this file's own Flutterwave research section above) — must be built before it can actually serve as a fallback, not just be listed as one |
-| Changelog | 2026-09-07 — table created this session, per product-owner direction (this task). 2026-09-07 (later same day) — domain coverage expanded per product-owner direction: Juicyway is now default for local-transfer/ACH-equivalent, payout, verify-payout, and bank-list lookup within this domain too, not collection-only. Rule stated as "anything not African rails defaults to Juicyway." |
+| Fallback 3 | Flutterwave — **corrected 2026-09-09: this row was stale.** Built under Task 52/d (2026-09-07/08, after this table was originally written) — `providers/flutterwave.js` exists with both v3 and v4 method sets plus a runtime version switch (Task 52/d-2a through d-2c, "Task 52/d fully done"). This table simply wasn't updated when that landed. Whether it's wired as an actual fallback in `routes.js`'s routing logic itself is still open — that's Task 51/b's own not-yet-implemented-in-code status generally, not specific to Flutterwave — but the provider file itself is real and complete, not missing. |
+| Changelog | 2026-09-07 — table created this session, per product-owner direction (this task). 2026-09-07 (later same day) — domain coverage expanded per product-owner direction: Juicyway is now default for local-transfer/ACH-equivalent, payout, verify-payout, and bank-list lookup within this domain too, not collection-only. Rule stated as "anything not African rails defaults to Juicyway." 2026-09-09 — Fallback 3 (Flutterwave) row corrected: it was stale, claiming not-yet-built when Task 52/d had already built it (2026-09-07/08). |
 
 #### b-2. African rails
 

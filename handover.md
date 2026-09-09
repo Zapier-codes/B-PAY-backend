@@ -6,127 +6,46 @@
 >
 > **Task 58 step 7 is done (2026-09-09):** `recordTransaction()` wired
 > into both `POST /api/vtu/data` and `POST /api/vtu/airtime` in
-> `routes.js`, same non-blocking/fire-and-forget/`status: 'pending'`
-> posture Task 56/d-3 established for `/pay`/`/payout` — called after
-> a successful `purchaseData()`/`purchaseAirtime()`, not awaited.
-> `type`: `'vtu_data'`/`'vtu_airtime'` (no pre-existing convention for
-> a VTU transaction's `type`, decided here rather than guessed
-> silently, per this box's own prior note). `provider: 'telcosopik'`.
-> `currency`: hardcoded `'NGN'` — telcos.opik.net's data/airtime rails
-> are Nigeria-only and neither route accepts a currency field at all.
-> `reference`: `result.data.reference` for both — telcos.opik.net
-> generates this itself (docs/guides/05-purchasing-data-airtime.md),
-> unlike `/pay`, which computes its own reference up front. `amount`:
-> `result.data.amount` for `/vtu/data` (the request only carries
-> `planId`, not a price — the plan determines it), the raw request
-> `amount` for `/vtu/airtime` (already known up front, same as `/pay`
-> uses its own request `amount`).
->
-> **Still not done — step 8, plus every open item flagged in step 5's
-> own notes (unchanged, not newly introduced here):**
-> - Step 8: `POST /api/webhooks/telcosopik` — still blocked on the
->   signing-scheme open item (Task 58/i, step 2).
-> - No `public`-schema Vault RPC wrappers migrated yet, so
->   `vaultCreateSecret()`/`vaultReadSecret()` — and therefore every VTU
->   route — are unverified end-to-end against a live Supabase project.
->   Migrations `0010`–`0013` also still not applied to the live
->   project.
-> - The `businessId`-entry-point decision from step 5/b (plain
->   required body/query field — see `getVtuBusinessId()`'s own comment
->   in `routes.js`) should be revisited once Task 45/c's
->   dashboard-login question resolves.
->
-> `node --check` clean on `routes.js`; a throwaway smoke script (pure
-> field-mapping checks against representative fake `purchaseData()`/
-> `purchaseAirtime()` responses, confirming each `recordTransaction()`
-> call site's `reference`/`amount`/`type`/`currency`/`status` values
-> match what the code actually computes) run and deleted, per
-> convention. No live Supabase project available in this environment
-> to confirm the insert itself lands — same pre-existing end-to-end
-> gap already flagged above, not newly introduced by this step.
+> `routes.js` (fire-and-forget, `status: 'pending'`, same posture Task
+> 56/d-3 established for `/pay`/`/payout`). Full field-mapping detail
+> in that commit and the Session Log entry below — not repeated here.
 >
 > **⏸️ Task 58 step 8 is PAUSED (2026-09-09), per direct product-owner
-> instruction — not merely blocked, deliberately skipped for now,
-> revisit later.** This supersedes the signing-scheme block noted
-> below; that gap is still real and still unresolved, but a second,
-> more fundamental gap was found underneath it this session, and the
-> product owner chose to pause rather than keep pushing on either:
+> instruction — revisit later, not a live thread right now.** Short
+> version: neither candidate `telcosopik` API host currently checks
+> out. `utils/helpers.js`'s configured `telco.opik.net` (no "s") is
+> `NXDOMAIN`, and its justifying comment cites a task ("58/d") that
+> doesn't exist. `telcos.opik.net` (with "s") resolves and is
+> product-owner-confirmed as the intended host, but a live
+> `POST /auth/register` probe against it returned an undocumented
+> `HTTP 500` (`rndr-id: 40fc0c63-da3d-4ecf` — direct Render log-lookup
+> key for whoever resumes this). Full findings, the exact probe
+> command, and next steps: see commit `docs(handover): pause Task 58
+> step 8 — telcosopik API host unconfirmed` (2026-09-09) — read that
+> instead of re-deriving it here. **Do not re-run the same probe
+> expecting a different answer.**
 >
-> **Finding #1 — the base URL this repo's own code uses for
-> `telcosopik` does not resolve.** `utils/helpers.js`'s `telcosopik`
-> entry hardcodes `https://telco.opik.net/api/v1` (no "s"). Direct
-> `nslookup telco.opik.net` returns `NXDOMAIN` — this host does not
-> exist. The comment above that entry attributes the no-"s" spelling
-> to "Task 58/d" and "Task 45/a's own capture" — **neither citation
-> holds up**: "Task 58/d" does not exist anywhere else in this file,
-> and Task 45/a is documented elsewhere in this same file as a JuicyWay
-> discovery item (wrong endpoint path/auth header, payload shape),
-> unrelated to TelcosOpik. This config value was never actually
-> verified against anything and should not be trusted as-is.
+> **Queue housekeeping (2026-09-09):** the "Current focus: Korapay
+> only" section below the Task queue's `## Task queue` heading was
+> stale — real work had landed on Paystack/JuicyWay/TelcosOpik long
+> after its 2026-08-27 date — and is now marked resolved in place,
+> full queue back in scope. (Checked Task 45b's `[ ]` for the same
+> reason first — that one's intentional, per its own note and an
+> established convention for tasks resolved under a different task's
+> writeup; left as-is.)
 >
-> **Finding #2 — `telcos.opik.net` (with "s") resolves, but to the
-> product owner's own landing page, not confirmed to be the live VTU
-> API.** `nslookup telcos.opik.net` resolves via
-> `edges-landingpage.onrender.com` → Cloudflare. The product owner
-> has confirmed (2026-09-09) they own this deployment and that it's
-> the same app as `edges-landing-page.vercel.app`, and asserts this
-> *is* the correct API host — plausible, since a Next.js app can serve
-> real API routes alongside a landing page, not just static pages. A
-> live probe against it, however, did not confirm a working endpoint:
-> ```
-> curl -i -X POST https://telcos.opik.net/api/v1/auth/register \
->   -H "Content-Type: application/json" \
->   -d '{"email":"...","password":"...","firstName":"...","lastName":"...","companyName":"..."}'
-> ```
-> returned `HTTP/2 500` with body `{"error":"Failed to create user"}` —
-> a shape that matches neither `docs/guides/02-authentication.md`'s
-> documented success envelope (`{success, data: {id, email, api_key}}`)
-> nor its documented `ErrorResponse` schema. Response headers
-> (`rndr-id: 40fc0c63-da3d-4ecf`, `x-render-origin-server: Render`,
-> Next.js-specific `vary: rsc, next-router-state-tree, ...`) confirm
-> which deployment answered, and that `rndr-id` is a direct Render
-> log-lookup key for whoever investigates next. This error was not
-> traceable further from this repo — `B-Pay-backend` only contains the
-> *client* (`providers/telcosOpik.js`) that calls this endpoint, not
-> the server implementing it, so the actual cause (missing env var on
-> that deployment, a DB write failing, a duplicate-email collision from
-> this session's own repeated test registrations, etc.) needs
-> investigation on that project's own side (Render logs via the
-> `rndr-id` above, or the Vercel deployment directly).
->
-> **Net effect: neither candidate host is a confirmed-working API
-> right now** — `telco.opik.net` doesn't exist, and `telcos.opik.net`
-> is confirmed-owned but not confirmed-functional for this endpoint.
-> Product owner's direct instruction (2026-09-09): pause Task 58 step 8
-> entirely rather than keep resolving this live, and revisit later.
-> A session resuming this should not re-run the same probe expecting a
-> different answer — it should start from whichever of these is
-> resolved first: (a) the real cause of the 500 on
-> `telcos.opik.net/api/v1/auth/register` (via Render logs / Vercel
-> deployment inspection), or (b) confirmation from the product owner
-> of the actual intended production API host, so `utils/helpers.js`'s
-> `telcosopik` entry can be corrected from its current unverified
-> `telco.opik.net` value. Only once a live host is confirmed does the
-> original signing-scheme gap (next paragraph) become actionable again.
->
-> **Underlying signing-scheme gap (still unresolved, re-checked
-> 2026-09-09, now secondary to the above):** a live screenshot of
-> `https://telcos.opik.net/api/v1/docs`'s `Webhooks` section (`GET
-> /webhooks`, `POST /webhooks`) was compared against this repo's own
-> capture. It matches exactly — same `{ url, events[], secret }`
-> request/response shape already in `docs/guides/07-webhooks.md` — so
-> `secret` being a plain input field on `POST /webhooks` continues to
-> support (not newly confirm) item #7's "client-supplied" reading.
-> **Item #6 (the actual signing scheme — HMAC? which header carries
-> it?) is still not visible anywhere on this page.** That's expected,
-> not a gap in this check: `GET`/`POST /webhooks` is the CRUD API for
-> *registering* an endpoint, not documentation of what telcos.opik.net
-> sends when it *delivers* an event to that endpoint — the signing
-> scheme would only show up in a delivered payload's headers, a
-> dedicated "webhook security" doc page, or a direct support answer,
-> none of which this Swagger page is. Ruling this specific page out
-> narrows, rather than closes, the search — next session shouldn't
-> re-check this same page expecting a different answer.
+> **Next task per the queue is Task 45e — but it's blocked, per the
+> No-skip-ahead rule: JuicyWay sandbox keys aren't available.** Task
+> 45e needs a real sandbox call (e.g. attempt a session in USDT) to
+> resolve JuicyWay's three-way currency-list conflict and a related
+> 1,000x minimum-amount discrepancy — see that task's own section for
+> the exact conflict. No amount of doc research substitutes for the
+> live test this specifically requires. Per the No-skip-ahead rule,
+> this session does not substitute Task 9/10/14/etc. instead. The
+> concrete thing the product owner would be choosing between: (a)
+> provide JuicyWay sandbox keys so Task 45e can actually be resolved,
+> or (b) confirm this stays blocked/paused too, same as Task 58 step 8
+> above, until keys exist.
 >
 > **Updating this box:** when you finish your leaf, replace the two
 > paragraphs above with the new next task — don't append a new dated
@@ -147,6 +66,18 @@ record beyond what the pointer box above and the task's own section
 already carry. Not required reading — this is a changelog, not
 context. Don't write paragraphs here; that's what turned the old
 box into 2,300 lines (see archive below).
+
+- 2026-09-09 — Queue housekeeping (no leaf finished): marked the
+  stale "Current focus: Korapay only" section resolved (real
+  non-Korapay work had landed on Paystack/JuicyWay/TelcosOpik well
+  after its 2026-08-27 date, never closed out); checked Task 45b's
+  `[ ]` for the same staleness and confirmed it's intentional, left
+  as-is. True next-in-queue is Task 45e, blocked on missing JuicyWay
+  sandbox keys — flagged in pointer box per No-skip-ahead rule, not
+  substituted with an easier task. Also condensed the pointer box
+  itself back down (had grown past its own "ten seconds" rule after
+  last session's findings — full detail preserved in that commit,
+  not lost). No code changed; only `handover.md`.
 
 - 2026-09-09 — Task 58 step 8 (no leaf finished, session paused per
   direct product-owner instruction): found the repo's own
@@ -6033,7 +5964,26 @@ the place to design that UI/wallet code, just to preserve the decision.
 
 ---
 
-## Current focus: Korapay only (as of 2026-08-27)
+## Current focus: Korapay only (as of 2026-08-27) — RESOLVED 2026-09-09
+
+**Resolved, 2026-09-09:** this section was never explicitly closed out
+when the other providers' keys arrived, despite real work landing on
+non-Korapay providers well after 2026-08-27 — Task 8's doc-research
+half and Task 8c/8d (Paystack), Tasks 45a/45c/45d (JuicyWay), and all
+of Task 58 (TelcosOpik: provider client, five `/api/vtu/*` routes,
+field requirements, transaction recording) all shipped after this
+narrowing was written, which only makes sense if it was already
+inactive in practice. Marking it resolved now rather than leaving it
+silently contradicted by the task history above it — per this
+section's own instruction ("once API keys... arrive, remove this
+section (or mark it resolved)"). The full queue below is back in
+scope, in order, with no provider restriction. Left in place (not
+deleted) as a record, same as this file's other resolved-in-place
+sections.
+
+---
+
+**Original section, kept for its own record, follows below.**
 
 **Project owner direction: narrow scope to Korapay for now.** We are
 still waiting on API keys from Paystack, JuicyWay, and Payscribe, so

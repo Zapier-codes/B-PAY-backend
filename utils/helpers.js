@@ -600,6 +600,17 @@ export function getProviderBaseUrl(provider) {
       development: 'https://api.flutterwave.com/v3',
       production: 'https://api.flutterwave.com/v3',
     },
+    // Task 58/d — confirmed base URL for the VTU integration
+    // (`telcos.opik.net`'s own docs-hosting domain vs. its API's real
+    // base domain, per Task 45/a's own capture: `telco.` not
+    // `telcos.`). No sandbox/production split was seen in that
+    // capture (only one server listed), so both environments resolve
+    // to the same host, same pattern as Paystack/Korapay above until
+    // a real split is confirmed.
+    telcosopik: {
+      development: 'https://telco.opik.net/api/v1',
+      production: 'https://telco.opik.net/api/v1',
+    },
     // Task 52/d-2b — v4 DOES have a real sandbox/production host
     // split, unlike v3 above. Per handover.md's own v4 Environments
     // note: sandbox = developersandbox-api..., production =

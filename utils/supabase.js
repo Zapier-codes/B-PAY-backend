@@ -390,3 +390,128 @@ export async function getCapabilityStatus(capability) {
     return null;
   }
 }
+
+// ==================================================
+// 🔑 PER-BUSINESS PROVIDER CREDENTIALS — `api_keys` (Task 58/c, c-3)
+// ==================================================
+// The read half of the `api_keys` table (migrations 0012/0013).
+// Deliberately a DIFFERENT posture from every read helper above:
+// those are all best-effort/never-throws because they sit on a hot
+// payment-routing path where a miss has a safe hardcoded fallback.
+// This lookup sits on Task 58/c-3's check-then-create provisioning
+// path instead — "does this business already have a
+// telcos.opik.net account" is a real precondition for whether
+// providers/telcosOpik.js's provisionTelcosOpikAccount() should call
+// POST /auth/register at all, so a Supabase-unavailable error here
+// must surface to that caller, not silently resolve to "no row found"
+// (which would look identical to a genuine first-time activation and
+// risk registering a duplicate account). Throws on any failure other
+// than a genuine miss.
+export async function getApiKeyRow(businessId, provider) {
+  const client = getSupabaseClient(); // let a config error propagate — see note above
+
+  const { data, error } = await client
+    .from('api_keys')
+    .select('id, business_id, provider, vault_secret_id, key_prefix, created_at')
+    .eq('business_id', businessId)
+    .eq('provider', provider)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`getApiKeyRow lookup failed for business '${businessId}'/provider '${provider}': ${error.message}`);
+  }
+
+  // maybeSingle() resolves data: null (no error) for a genuine miss —
+  // this business has never provisioned this provider — which IS the
+  // "go ahead and provision" signal the c-3 check-then-create flow
+  // needs, not an error condition.
+  return data || null;
+}
+
+// Inserts the new `api_keys` row once provisionTelcosOpikAccount()
+// (providers/telcosOpik.js) has a Vault secret reference to store.
+// Same "surface real errors, don't swallow" posture as
+// getApiKeyRow() above and for the same reason — this is the write
+// half of the same provisioning critical path.
+//
+// Race handling (Task 58/c-3's own second layer, "someone else's
+// race won"): migration 0012's `unique (business_id, provider)`
+// constraint is the enforcement point if two concurrent first-
+// activation requests for the same business both pass the
+// check-then-create read above before either has inserted. Postgres
+// reports that as error code `23505` (unique_violation) — caught
+// here specifically and treated as "provisioning already happened
+// concurrently," not a real failure: re-read and return the row the
+// other request just inserted rather than throwing.
+export async function insertApiKeyRow({ business_id, provider, vault_secret_id, key_prefix } = {}) {
+  const client = getSupabaseClient();
+
+  const { data, error } = await client
+    .from('api_keys')
+    .insert({ business_id, provider, vault_secret_id, key_prefix })
+    .select('id, business_id, provider, vault_secret_id, key_prefix, created_at')
+    .single();
+
+  if (!error) {
+    return data;
+  }
+
+  if (error.code === '23505') {
+    log(`insertApiKeyRow: unique(business_id, provider) already satisfied for business '${business_id}'/provider '${provider}' — another request won the race, reading its row instead`, 'warn');
+    const existing = await getApiKeyRow(business_id, provider);
+    if (existing) {
+      return existing;
+    }
+    // Shouldn't happen (the constraint violation implies a row exists)
+    // but don't silently return null from a function callers expect
+    // a row from — surface it plainly instead of guessing.
+    throw new Error(`insertApiKeyRow: unique_violation reported for business '${business_id}'/provider '${provider}' but no row found on re-read`);
+  }
+
+  throw new Error(`insertApiKeyRow failed for business '${business_id}'/provider '${provider}': ${error.message}`);
+}
+
+// ==================================================
+// 🔐 SUPABASE VAULT — secret storage (Task 58/c-2)
+// ==================================================
+// **Flagged, not silently assumed to work — verify before relying on
+// this in production.** `db/SCHEMA.md`'s own Task 58/c-2 note says
+// the insert path is `select vault.create_secret(<raw>, <name>,
+// <description>)`, which is a direct SQL call against the `vault`
+// schema. Supabase's auto-generated REST API (what this file's
+// service-role `supabase-js` client actually talks to) only exposes
+// schemas explicitly added to the API's schema allowlist — `vault`
+// is NOT exposed there by default, specifically because it holds
+// decryption-capable functions. Calling `client.rpc('create_secret',
+// ...)` the way this function does below only works if a
+// `public`-schema `SECURITY DEFINER` wrapper function (e.g. `create
+// or replace function public.create_vault_secret(secret text, name
+// text, description text) returns uuid ... security definer` calling
+// `vault.create_secret` internally) has ALSO been migrated — no such
+// wrapper migration exists yet in `db/migrations/`. Until one is
+// added and confirmed, treat this function as unverified: the first
+// real call is the actual test, and a failure here should surface as
+// a real, loud error (see below), not be swallowed.
+export async function vaultCreateSecret(rawSecret, name, description) {
+  const client = getSupabaseClient();
+
+  const { data, error } = await client.rpc('create_vault_secret', {
+    secret: rawSecret,
+    name,
+    description,
+  });
+
+  if (error) {
+    throw new Error(
+      `vaultCreateSecret failed — this likely means the 'public.create_vault_secret' ` +
+      `SECURITY DEFINER wrapper (see this function's own comment) hasn't been migrated ` +
+      `yet, not that the raw secret was rejected: ${error.message}`
+    );
+  }
+
+  if (!data) {
+    throw new Error('vaultCreateSecret: no secret id returned from public.create_vault_secret');
+  }
+
+  return data; // expected: the new vault.secrets.id (uuid)
+}

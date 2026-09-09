@@ -4,23 +4,44 @@
 > task's own section. Nothing else in this file is required reading to
 > start work.**
 >
-> **Task 58, order-of-execution step 3 is done (2026-09-09):** the
-> `businesses`/`api_keys` Supabase tables (migrations `0010`–`0013`)
-> are written, per c-1/c-2/c-3's Stripe-mirrored design — Vault
-> reference column, `(business_id, provider)` unique constraint,
-> service-role-only RLS. **Not yet applied to the live project** — see
-> the DB-Ops command block this session hands over; check
-> `db/SCHEMA.md`'s top confirmed-migrations note before assuming
-> `0010`–`0013` are live.
+> **Task 58, order-of-execution step 4 is done (2026-09-09):**
+> `providers/telcosOpik.js` built — `TelcosOpik` class (b: getPlans/
+> getWallet/purchaseData/purchaseAirtime/getTransactions, raw
+> `X-API-Key` header, `{success,data}` envelope) plus
+> `registerTelcosOpikAccount()`/`provisionTelcosOpikAccount()`
+> implementing c-1's explicit-activation trigger and c-3's
+> check-then-create-against-`api_keys` guard (race handled via
+> migration 0012's unique constraint, caught in the new
+> `insertApiKeyRow()`). `node --check` clean on every touched file; a
+> throwaway smoke script exercised the pure constructor/header logic
+> (no live credentials) and was deleted before this commit, per
+> convention.
 >
-> **Next: step 4 — build `providers/telcosOpik.js` plus the
-> account-provisioning logic** (Task 58/b, wired to c-1's
-> explicit-activation trigger and c-3's check-then-create-against-
-> `api_keys` guard). No open design questions remain for this step —
-> proceed directly. After that: step 5 (the five `/api/vtu/*` routes),
-> step 6 (field-requirements entries), step 7 (`recordTransaction()`
-> wiring). Step 2 (webhook signing scheme) is still separately open
-> and unrelated to any of the above.
+> **New open item surfaced this step, blocking end-to-end
+> verification (not blocking the next step below):**
+> `vaultCreateSecret()` (`utils/supabase.js`) calls
+> `client.rpc('create_vault_secret', ...)`, but no `public`-schema
+> `SECURITY DEFINER` wrapper around `vault.create_secret` has been
+> migrated yet — Supabase's REST API doesn't expose the `vault` schema
+> directly. A future leaf needs to add that wrapper migration (and its
+> `vault.decrypted_secrets`-reading counterpart for the future call
+> site that actually uses a business's stored key) before
+> `provisionTelcosOpikAccount()` can run for real. Flagged in
+> `vaultCreateSecret()`'s own comment too — not silently assumed to
+> work.
+>
+> **Next: step 5 — add the five `/api/vtu/*` routes to `routes.js`**
+> (Task 58/a), wired to `new TelcosOpik(apiKey)` per (e), with the
+> route handler doing the "resolve this business's key" lookup this
+> session deliberately left as step 5's job (revised
+> `getProviderKey('telcosopik', businessId)` signature from (c) — not
+> built yet). The route handling the first `/api/vtu/*` call for a
+> business is also c-1's chosen activation trigger, so step 5 should
+> call `provisionTelcosOpikAccount()` from this session's new file at
+> that point too. After that: step 6 (field-requirements entries),
+> step 7 (`recordTransaction()` wiring). Step 2 (webhook signing
+> scheme) and the Vault-wrapper item above are still separately open
+> and unrelated to step 5 itself.
 >
 > **Updating this box:** when you finish your leaf, replace the two
 > paragraphs above with the new next task — don't append a new dated
@@ -42,6 +63,14 @@ already carry. Not required reading — this is a changelog, not
 context. Don't write paragraphs here; that's what turned the old
 box into 2,300 lines (see archive below).
 
+- 2026-09-09 — Task 58 step 4: built `providers/telcosOpik.js`
+  (`TelcosOpik` class + `registerTelcosOpikAccount()`/
+  `provisionTelcosOpikAccount()`), plus `getApiKeyRow()`/
+  `insertApiKeyRow()`/`vaultCreateSecret()` in `utils/supabase.js` and
+  a `telcosopik` entry in `getProviderBaseUrl()`. Flagged a new open
+  item: no Supabase Vault RPC wrapper migration exists yet, so
+  `vaultCreateSecret()` is unverified end-to-end. Next: step 5, the
+  five `/api/vtu/*` routes.
 - 2026-09-09 — Task 58 step 3: built `businesses`/`api_keys`
   migrations (0010–0013) per c-1/c-2/c-3's design — Vault reference
   column, per-provider unique constraint, service-role-only RLS. Not
@@ -12399,10 +12428,17 @@ sequencing doesn't need re-deriving either):
    `(business_id, provider)` unique constraint), `0013` (RLS). Not yet
    applied to the live project — see `db/SCHEMA.md`'s confirmed-live
    note and the DB-Ops command block.
-4. Build `providers/telcosOpik.js` (b) plus the account-provisioning
+4. ~~Build `providers/telcosOpik.js` (b) plus the account-provisioning
    logic from c-1 (explicit-activation trigger, check-then-create
    against (3)'s table before calling `POST /auth/register`), verified
-   with `node --check` + a throwaway script.
+   with `node --check` + a throwaway script.~~ — **done (2026-09-09).**
+   `TelcosOpik` class + `registerTelcosOpikAccount()`/
+   `provisionTelcosOpikAccount()` built; `getApiKeyRow()`/
+   `insertApiKeyRow()` added to `utils/supabase.js` for the
+   check-then-create + race handling; `vaultCreateSecret()` added but
+   flagged unverified (no Vault RPC wrapper migrated yet — new open
+   item, see the pointer box at the top of this file). `node --check`
+   clean; throwaway smoke script run and deleted, per convention.
 5. Add the five routes (a) to `routes.js`, wired directly to `new
    TelcosOpik()` per (e), reading the per-business key via the revised
    `getProviderKey('telcosopik', businessId)` signature from (c).
@@ -12412,11 +12448,16 @@ sequencing doesn't need re-deriving either):
 9. Patch Handoff, per the standing convention — one patch covering
    this leaf's worth of change, same discipline as every prior task.
 
-**Not done this session, deliberately — plan only.** No
-`providers/telcosOpik.js`, no route, no migration, no field-
-requirements entry, no webhook handler, no Supabase table created.
-`node --check` not applicable — no `.js` file touched this session;
-only documentation (`handover.md`, `docs/guides/02-authentication.md`,
-`docs/openapi/components/schemas.yaml`) was changed.
+**Status note (superseded by step 4, 2026-09-09 — kept for record of
+what the original planning session deliberately left undone):** the
+original plan-only session touched no `.js` file — only documentation.
+Step 4 above has since built `providers/telcosOpik.js` and the
+supporting `utils/supabase.js` functions. **Still not done, as of
+step 4:** no route (step 5), no field-requirements entry (step 6), no
+`recordTransaction()` wiring (step 7), no webhook handler (step 8), no
+Vault RPC wrapper migration (new open item, see step 4's own note and
+the pointer box at the top of this file). Migrations `0010`–`0013`
+(the `businesses`/`api_keys` tables themselves) are written per step 3
+but still not applied to the live project.
 
 ---

@@ -34,13 +34,32 @@
 > established convention for tasks resolved under a different task's
 > writeup; left as-is.)
 >
-> **Next task per the queue is Task 45e — but it's blocked, per the
-> No-skip-ahead rule: JuicyWay sandbox keys aren't available.** Task
-> 45e needs a real sandbox call (e.g. attempt a session in USDT) to
-> resolve JuicyWay's three-way currency-list conflict and a related
-> 1,000x minimum-amount discrepancy — see that task's own section for
-> the exact conflict. No amount of doc research substitutes for the
-> live test this specifically requires.
+> **Task 45e is STALE, not blocked — checked off (2026-09-10).** Its
+> premise (three-way JuicyWay currency-list conflict, 1,000x
+> minimum-amount discrepancy, `getAmountFormat` still throwing) was
+> already resolved by Task 49/a and shipped to `origin/main` in commit
+> `03037e9` — `CONFIRMED_PROVIDER_CURRENCIES.juicyway` and
+> `getAmountFormat('juicyway', ...)` (subunit, ×100, NGN/USD/CAD/USDT/
+> USDC) are both live today. Re-confirmed independently this session by
+> fetching `docs.juicyway.com/payments/initialize-payment` directly
+> (not reused from an old citation): its "Universal Parameters" section
+> states `amount` as minor units, **Minimum: 100** (not 100000), across
+> that exact 5-currency list — matches the shipped code byte-for-byte.
+> No provider code changed this session; this is a documentation-only
+> correction, same convention as the Task 45b/Task 51b staleness
+> corrections above. **Real next task: Korapay's card
+> suspend/status + events-log methods are still genuinely blocked** —
+> re-checked `developers.korapay.com/docs/activate-suspend-terminate-card-via-api`
+> live this session: the field-description-vs-worked-example
+> contradiction (`action: deactivate` vs the example's own
+> `action: "suspend"`) still exists today, unchanged. Per this file's
+> own "don't guess a payload shape, confirm or test it" rule, that
+> still needs a sandbox call or direct Korapay confirmation, not an
+> inference from which of the two conflicting parts of their own page
+> looks more authoritative. **Task 14** (end-to-end manual test pass)
+> is separately still blocked — re-confirmed this session, this
+> sandbox's network egress still returns `403 host_not_allowed` for
+> both `api.juicyway.com` and `api.paystack.co`.
 >
 > **Product-owner scope call, 2026-09-09: Task 9 checked off** for
 > Korapay+Paystack (confirmed); JuicyWay's amount-unit rule stays open,
@@ -146,6 +165,19 @@
 
 ## 📝 Session Log (newest first — one line per session, optional)
 
+- 2026-09-10 — Task 45e correction (no leaf finished, doc-only): its
+  blocking premise was stale — Task 49/a already resolved and shipped
+  the JuicyWay currency-list + amount-unit rule (`03037e9`, live on
+  `origin/main`). Re-confirmed independently against a live fetch of
+  docs.juicyway.com/payments/initialize-payment (not reused from the
+  old citation): minor units, Minimum 100, NGN/USD/CAD/USDT/USDC —
+  matches shipped code exactly. Checked off 45e with a resolved-via
+  note (same convention as 45b). Also re-verified Korapay's
+  suspend/status doc contradiction is still real today (fetched
+  developers.korapay.com live) and Task 14's network-egress block is
+  still real (403 on both api.juicyway.com and api.paystack.co from
+  this sandbox) — neither substituted, both left honestly blocked. No
+  provider code changed; only `handover.md`.
 - 2026-09-09 — Built Task 53/a's five unambiguous Korapay card-issuance
   methods (`createCardholder`, `createCard`, `getCard`, `listCards`,
   `fundCard`, `withdrawCard`) in `providers/korapay.js`. `node --check`
@@ -6891,7 +6923,7 @@ against Task 8b's own documented response shape, not against a live
 initialize-then-verify round trip. Migration `0009` is not yet applied
 to the live project — that remains the product owner's own step.
 
-### Task 45e — Resolve JuicyWay's three-way currency-list conflict before adding it to `CONFIRMED_PROVIDER_CURRENCIES` [ ]
+### Task 45e — Resolve JuicyWay's three-way currency-list conflict before adding it to `CONFIRMED_PROVIDER_CURRENCIES` [x] → **resolved via Task 49/a (below) — shipped 2026-09-09, commit `03037e9`; re-confirmed live against docs.juicyway.com 2026-09-10**
 **Added by Task 8b's full audit pass (2026-09-06), doc-research only.**
 JuicyWay's own docs give three different answers for supported
 currencies across three pages (NGN+CAD only; NGN/USD/CAD/USDT/USDC;

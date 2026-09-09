@@ -4,24 +4,26 @@
 > task's own section. Nothing else in this file is required reading to
 > start work.**
 >
-> **Task 58 step 6 is done (2026-09-09):** `utils/fieldRequirements.js`
-> got two new entries, keyed by action (`data`/`airtime`) rather than
-> a provider name — the only two entries in that file that aren't,
-> since these two routes call `new TelcosOpik()` directly instead of
-> going through `getProvider()`/`ROUTING_RULES` (Task 58/e).
-> `getMissingFields()` itself needed no change — it just looks up
-> whatever key it's given. Wired into `POST /api/vtu/data` and
-> `POST /api/vtu/airtime` in `routes.js`, checked *before*
-> `getVtuClientForBusiness()` runs (before touching Supabase at all),
-> same "clean 400 naming exactly what's missing" motivation as `/pay`'s
-> own Task 57/b check, just placed earlier here since there's no
-> provider-resolution step to wait on first.
+> **Task 58 step 7 is done (2026-09-09):** `recordTransaction()` wired
+> into both `POST /api/vtu/data` and `POST /api/vtu/airtime` in
+> `routes.js`, same non-blocking/fire-and-forget/`status: 'pending'`
+> posture Task 56/d-3 established for `/pay`/`/payout` — called after
+> a successful `purchaseData()`/`purchaseAirtime()`, not awaited.
+> `type`: `'vtu_data'`/`'vtu_airtime'` (no pre-existing convention for
+> a VTU transaction's `type`, decided here rather than guessed
+> silently, per this box's own prior note). `provider: 'telcosopik'`.
+> `currency`: hardcoded `'NGN'` — telcos.opik.net's data/airtime rails
+> are Nigeria-only and neither route accepts a currency field at all.
+> `reference`: `result.data.reference` for both — telcos.opik.net
+> generates this itself (docs/guides/05-purchasing-data-airtime.md),
+> unlike `/pay`, which computes its own reference up front. `amount`:
+> `result.data.amount` for `/vtu/data` (the request only carries
+> `planId`, not a price — the plan determines it), the raw request
+> `amount` for `/vtu/airtime` (already known up front, same as `/pay`
+> uses its own request `amount`).
 >
-> **Still not done — steps 7 and 8, plus every open item flagged in
-> step 5's own notes (unchanged, not newly introduced here):**
-> - Step 7: `recordTransaction()` wiring for both purchase routes,
->   non-blocking/fire-and-forget, same posture Task 56/d-3 established
->   for `/pay`.
+> **Still not done — step 8, plus every open item flagged in step 5's
+> own notes (unchanged, not newly introduced here):**
 > - Step 8: `POST /api/webhooks/telcosopik` — still blocked on the
 >   signing-scheme open item (Task 58/i, step 2).
 > - No `public`-schema Vault RPC wrappers migrated yet, so
@@ -34,24 +36,31 @@
 >   in `routes.js`) should be revisited once Task 45/c's
 >   dashboard-login question resolves.
 >
-> `node --check` clean on both touched files; a throwaway smoke script
-> (pure `getMissingFields('data'|'airtime', ...)` checks, plus the real
-> `POST /vtu/data`/`POST /vtu/airtime` routes returning 400-naming-the-
-> field for an incomplete body and clearing that check — failing later
-> on Supabase instead — for a complete one) run and deleted, per
-> convention.
+> `node --check` clean on `routes.js`; a throwaway smoke script (pure
+> field-mapping checks against representative fake `purchaseData()`/
+> `purchaseAirtime()` responses, confirming each `recordTransaction()`
+> call site's `reference`/`amount`/`type`/`currency`/`status` values
+> match what the code actually computes) run and deleted, per
+> convention. No live Supabase project available in this environment
+> to confirm the insert itself lands — same pre-existing end-to-end
+> gap already flagged above, not newly introduced by this step.
 >
-> **Next: step 7 — wire `recordTransaction()` into `POST /api/vtu/data`
-> and `POST /api/vtu/airtime`**, same non-blocking/fire-and-forget
-> pattern `/pay` already uses (Task 56/d-3-b): call it after a
-> successful `purchaseData()`/`purchaseAirtime()`, don't `await` it,
-> `status: 'pending'` (real completion isn't confirmed synchronously —
-> same reasoning `/pay`'s own comment gives), `type` distinguishing the
-> two actions (e.g. `'vtu_data'`/`'vtu_airtime'`, not a bare
-> `'payment'` — this repo has no existing convention for a VTU
-> transaction's `type` value, worth flagging as a decision rather than
-> guessing silently). `provider: 'telcosopik'`. After that: step 8
-> (webhook handler, once step 2's signing scheme is confirmed).
+> **Next task is Task 58 step 8 — but it's blocked, per the No-skip-
+> ahead rule (see that section below): the signing scheme for
+> `POST /api/webhooks/telcosopik` is still unconfirmed (Task 58/i, step
+> 2).** Per that rule, this session does not substitute a different,
+> easier, unblocked item from elsewhere in the queue. The concrete gap:
+> telcos.opik.net's webhook payload needs a confirmed signature/
+> verification scheme (header name + algorithm, mirroring how Tasks
+> 3/4/5 each nailed down Paystack/Korapay/JuicyWay's own schemes)
+> before a handler can be written — the same "find the real scheme"
+> pattern those tasks used applies here, but the actual doc page or
+> support answer confirming telcos.opik.net's scheme hasn't been found
+> yet. A session picking this up next should either (a) locate that
+> confirmation (docs page, support channel, or a real webhook payload
+> to inspect) and then implement step 8, or (b) if it's confirmed
+> genuinely undocumented, flag that plainly in this box (per the
+> No-skip-ahead rule's own step 2/3) rather than guessing a scheme.
 >
 > **Updating this box:** when you finish your leaf, replace the two
 > paragraphs above with the new next task — don't append a new dated
@@ -72,6 +81,15 @@ record beyond what the pointer box above and the task's own section
 already carry. Not required reading — this is a changelog, not
 context. Don't write paragraphs here; that's what turned the old
 box into 2,300 lines (see archive below).
+
+- 2026-09-09 — Task 58 step 7: wired `recordTransaction()` into
+  `POST /api/vtu/data`/`POST /api/vtu/airtime` (fire-and-forget,
+  `status: 'pending'`, `type: 'vtu_data'`/`'vtu_airtime'`,
+  `provider: 'telcosopik'`, `currency: 'NGN'` hardcoded,
+  `reference`/`amount` read off the provider response for `/data`
+  since only `planId` is caller-supplied). `node --check` clean;
+  throwaway field-mapping smoke script run and deleted. Step 8 next,
+  but blocked on Task 58/i's signing-scheme gap — see pointer box.
 
 - 2026-09-09 — Task 58 step 6: added `data`/`airtime` entries to
   `utils/fieldRequirements.js` (keyed by action, not provider name —

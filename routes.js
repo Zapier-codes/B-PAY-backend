@@ -1134,6 +1134,50 @@ router.post('/vtu/data', requireInternalApiKey, async (req, res) => {
     const client = await getVtuClientForBusiness(businessId, req);
     const result = await client.purchaseData({ planId, phoneNumber, network });
 
+    // Task 58 step 7: best-effort transaction record, same fire-and-
+    // forget/`'pending'` pattern Task 56/d-3 established for /pay and
+    // /payout — not awaited, since recordTransaction() (d-3-a) already
+    // never throws, so a slow/unreachable Supabase insert can never
+    // delay this route's response.
+    //
+    // reference: telcos.opik.net generates this itself (docs/guides/
+    // 05-purchasing-data-airtime.md's own response shape) — unlike
+    // /pay, this route never computes or forwards a caller/repo-side
+    // reference up front, so `result.data.reference` is the only
+    // value available to record.
+    //
+    // amount: this route's own request body carries `planId`, not an
+    // amount (the plan determines the price) — `result.data.amount` is
+    // the only amount known at this point, mirroring the reference
+    // situation above.
+    //
+    // currency: hardcoded 'NGN' — telcos.opik.net's data/airtime rails
+    // are Nigeria-only (docs/guides/05-purchasing-data-airtime.md's own
+    // title), and neither /vtu/data nor /vtu/airtime accepts a
+    // currency field at all (see fieldRequirements.js's 'data'/
+    // 'airtime' entries), unlike /pay's multi-currency providers.
+    //
+    // status: 'pending', not 'success' — the purchase docs explicitly
+    // flag that a 200 here isn't confirmed to mean "final" (see that
+    // file's own note to confirm via GET /transactions later), same
+    // "don't assume completion just because the call resolved" posture
+    // /pay's own d-3-b comment gives for Korapay/JuicyWay-style
+    // providers.
+    //
+    // type: 'vtu_data' — this repo has no pre-existing convention for
+    // a VTU transaction's `type` value (flagged, not guessed silently,
+    // per this box's own note above); distinguished from
+    // 'vtu_airtime' below so the two purchase kinds don't collapse
+    // into one bare 'payment' value.
+    recordTransaction({
+      reference: result?.data?.reference,
+      type: 'vtu_data',
+      provider: 'telcosopik',
+      currency: 'NGN',
+      amount: result?.data?.amount,
+      status: 'pending',
+    });
+
     res.json({ status: 'success', data: result });
   } catch (error) {
     log(`VTU data purchase error: ${error.message}`, 'error');
@@ -1166,6 +1210,23 @@ router.post('/vtu/airtime', requireInternalApiKey, async (req, res) => {
 
     const client = await getVtuClientForBusiness(businessId, req);
     const result = await client.purchaseAirtime({ network, phoneNumber, amount });
+
+    // Task 58 step 7: same fire-and-forget/`'pending'` recordTransaction()
+    // wiring as POST /vtu/data above — see that route's own comment for
+    // the full reasoning on each field. The one difference: this
+    // route's request body already carries `amount` directly (no
+    // plan-based lookup involved), so the raw request `amount` is used
+    // here rather than reading it back off `result.data`, matching how
+    // /pay's own d-3-b uses its own request `amount` rather than a
+    // provider-echoed value.
+    recordTransaction({
+      reference: result?.data?.reference,
+      type: 'vtu_airtime',
+      provider: 'telcosopik',
+      currency: 'NGN',
+      amount,
+      status: 'pending',
+    });
 
     res.json({ status: 'success', data: result });
   } catch (error) {

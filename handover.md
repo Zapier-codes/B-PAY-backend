@@ -3,7 +3,32 @@
 > **▶ START HERE — read this box only, then go straight to work. Skip
 > everything else below unless you get stuck.**
 >
-> **Newest note (2026-09-08, latest of all) — correction: e-2d and
+> **Newest note (2026-09-09, latest of all) — Task 44's Lizzysub
+> bullet corrected: superseded by `telcos.opik.net`, not a standalone
+> integration target.** Task 44 originally framed Lizzysub as a
+> provider this repo would integrate directly (`providers/
+> lizzysub.js`, its own auth/endpoint questions). That was stale —
+> Task 45's `telcos.opik.net` discovery and Task 48/b's + Task 54's
+> routing decisions, already on record elsewhere in this file, settled
+> that VTU/airtime-data reselling is presented via `telcos.opik.net`
+> as one consolidated rail, with Lizzysub staying **internal** to it
+> (alongside Zendit/Accragh) — not something this repo calls directly.
+> Direct product-owner confirmation this session: **no standalone
+> Lizzysub integration is needed.** Task 44's entry now points at a
+> `telcos.opik.net`-backed provider (Task 45/a's audited contract:
+> base URL `https://telco.opik.net/api/v1`, `POST /purchase/data`,
+> `POST /purchase/airtime`, etc.) as the real integration surface, and
+> carries forward the still-open questions (route shape, credential
+> storage, `requireInternalApiKey` gating, Task 45/a's own 10-item
+> open-items list) under that target instead of Lizzysub's. **No
+> provider code written this session — documentation-only correction**
+> of Task 44's own entry (full detail there) plus this box. `node
+> --check` not applicable — no `.js` file touched.
+>
+> *(Superseded note, kept for its own record below rather than
+> deleted.)*
+>
+> **Previous newest note (2026-09-08, latest of all) — correction: e-2d and
 > e-2e were NOT still blocked — this box was stale.** A later
 > read-through of Task 52's own section (below, e-2d at line ~10465,
 > e-2e at line ~10574) found both leaves already resolved and built,
@@ -8163,7 +8188,7 @@ direction so that session doesn't have to re-ask it.
 
 ---
 
-## Task 44 — Cross-repo reconciliation: Lizzysub (VTU) + Juicyway integration scope, migrated from mavins-web's Task 71 [ ]
+## Task 44 — Cross-repo reconciliation: telcos.opik.net (VTU, encapsulating Lizzysub) + Juicyway integration scope, migrated from mavins-web's Task 71 [ ] (corrected 2026-09-09 — VTU target is telcos.opik.net, not Lizzysub directly; see below)
 
 **Origin:** mavins-web's `handover.md` Task 71 says the canonical
 write-up for this work belongs here, reserved as "Task 44," but the
@@ -8179,25 +8204,62 @@ current code, rather than assuming the lost write-up's specifics.
 **Goal, per the product owner (relayed via mavins-web, not yet
 independently confirmed with the product owner from this repo's
 side):** this backend becomes the single source of truth for all
-payment/utility services — integrate Lizzysub (VTU / airtime-data
-top-ups) as a new provider, and fix/complete the existing Juicyway
-integration to cover whatever Korapay doesn't already handle.
+payment/utility services — integrate VTU / airtime-data top-ups as a
+new capability, and fix/complete the existing Juicyway integration to
+cover whatever Korapay doesn't already handle. **Corrected 2026-09-09
+(see below): the VTU half of this goal is fulfilled by integrating
+`telcos.opik.net` directly, not Lizzysub** — Lizzysub is one of
+`telcos.opik.net`'s own internal underlying providers (Task 48/b),
+not a separate integration target for this repo.
 
-**Lizzysub — not started.** No `providers/lizzysub.js` or any
-Lizzysub reference exists anywhere in this repo (confirmed by
-search). Open questions, inherited from mavins-web and still
-unanswered here:
-- Lizzysub's real API surface (endpoints, auth scheme, request/
-  response shapes) — no primary source consulted yet.
+**Lizzysub — corrected 2026-09-09, superseded rather than "not
+started."** This bullet originally framed Lizzysub as a provider this
+repo would integrate directly, with its own `providers/lizzysub.js`
+and its own open questions about endpoints/auth/route shape. **That
+framing is stale** — it predates Task 45's discovery of
+`telcos.opik.net` and Task 48/b's and Task 54's decisions, both
+already on record elsewhere in this file, that VTU/airtime-data
+reselling is presented via `telcos.opik.net` as a single consolidated
+rail, with Lizzysub staying **internal** to `telcos.opik.net` as one
+of the underlying providers it aggregates (alongside Zendit/Accragh,
+per Task 48/b) — not something this repo calls directly. Direct
+product-owner confirmation, this session: **B-Pay-backend does not
+need its own Lizzysub integration** — a `providers/telcosOpik.js`
+(or equivalent) integrating against `telcos.opik.net`'s own audited
+API (Task 45/a: base URL `https://telco.opik.net/api/v1`,
+`POST /purchase/data`, `POST /purchase/airtime`, plus `GET /plans`,
+`GET /wallet`, `GET /transactions`, the webhook endpoints — full
+contract in `docs/openapi` and `docs/guides/`) is the actual
+integration surface for this domain, same encapsulation Task 54's own
+VTU/Gift-Cards routing decision (`telcos.opik.net` default,
+Flutterwave VTU fallback) already assumes. This closes the "Lizzysub's
+real API surface — no primary source consulted yet" open question
+from below by making it moot: no primary source for Lizzysub itself
+is needed, since this repo never calls it directly.
+
+**What's still genuinely open, carried forward under `telcos.opik.net`
+rather than Lizzysub specifically:**
 - What "VTU" concretely means for this repo's own route surface (new
   `/api/vtu*` routes? folded into `/pay`? a new resource type in
-  `routes.js`?).
-- Where Lizzysub credentials should live — likely an extension of the
-  existing `getProviderKey('provider', 'secret'|'public')` convention
-  in `utils/helpers.js`, but not confirmed.
-- Whether new Lizzysub routes should sit behind
-  `requireInternalApiKey`, matching this repo's own Task 42 pattern
-  for `/pay`/`/payout`.
+  `routes.js`?) — unchanged question, now scoped to a
+  `telcos.opik.net`-backed provider file instead of a Lizzysub one.
+- Where `telcos.opik.net` credentials should live — likely the same
+  `getProviderKey('provider', 'secret'|'public')` convention in
+  `utils/helpers.js` every other provider already uses, but not yet
+  confirmed for this one, and note `telcos.opik.net` itself already
+  has its own separate public/secret key model under discussion (Task
+  45/d) — for a *business* calling `telcos.opik.net`, not for this
+  repo calling it as a client; the two key pairs are not the same
+  thing and shouldn't be conflated when this gets built.
+- Whether the new route(s) should sit behind `requireInternalApiKey`,
+  matching this repo's own Task 42 pattern for `/pay`/`/payout`.
+- Task 45/a's own still-open 10-item list (`docs/guides/09-conventions-
+  and-open-items.md`) — exact auth header, full error shape, full
+  `transactions[].type`/`status` enums, webhook `events` set,
+  insufficient-balance behavior — needs direct confirmation against
+  the live `telcos.opik.net` server before a client integration here
+  relies on any of it, same as it would for any other caller of that
+  API.
 
 **Juicyway — partially built; specific issues flagged by mavins-web,
 now independently confirmed by a later session's audit (2026-09-06,

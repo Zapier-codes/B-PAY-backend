@@ -53,21 +53,54 @@
 > "not yet implemented"; Task 52/d had already built it) — corrected,
 > with a changelog line per that table's own convention.
 >
-> **Real next actionable item is now Task 51/b** — the domain-based
-> routing model is a confirmed product-owner decision but still not
-> implemented in code (`ROUTING_RULES`/`getProvider` in `routes.js`
-> haven't been rewritten to match the recorded tables). This doesn't
-> need external keys or credentials — it's implementing an
-> already-decided design into existing, already-tested provider code.
-> **Task 14** (end-to-end manual test pass) is separately still blocked
-> — this sandbox's network egress doesn't reach any payment-provider
-> domain regardless of key availability (confirmed:
-> `api.paystack.co` → `403 host_not_allowed`) — real keys living in
-> Render's env doesn't change that; unblocking it needs either a
-> network-settings change here or the product owner running/relaying
-> test results directly. Per No-skip-ahead, this session does not
-> substitute Task 45e/14 for Task 51 — 51 is legitimately next in line
-> on its own merits, not a workaround for the other two being stuck.
+> **Correction (2026-09-09, later same day): the "Task 51/b not yet
+> implemented" note above was stale and is wrong.** Checked directly
+> against `routes.js`: `POST /pay`, `POST /payout`, `GET
+> /payout/verify`, and `GET /banks` all already resolve their provider
+> via `classifyDomain()` + `resolveDomainDefaultProvider()` — this
+> matches Task 52's own log entry that its part (e), the routing-layer
+> rewrite, is fully closed (e-1 and all of e-2's leaves). The old
+> `ROUTING_RULES` object was never deleted, but it now only survives as
+> a last-resort fallback in `GET /payout/verify`'s Supabase-miss case
+> (line ~203) — it is not the live routing path anywhere else. Whoever
+> wrote the paragraph above was likely looking at the unchanged
+> `ROUTING_RULES` object itself and didn't check the call sites that
+> now bypass it. Task 51's own checkbox is left `[ ]` here regardless —
+> that's a documentation/convention call for the product owner, not
+> this correction's place to make.
+>
+> **Real next actionable item is now Task 53/a** (Korapay Card Issuing
+> discovery pass) — Task 53's own text flags this as required before
+> `providers/korapay.js` can gain any card-issuance methods, per Task
+> 0's Discovery Convention (no assuming a new provider surface behaves
+> like an already-integrated one). Confirmed directly against
+> developers.korapay.com this session (2026-09-09): card issuance is
+> **virtual-card-only today** (no physical cards yet), USD-only, and
+> requires Live Mode + requesting "Issuing" access on the dashboard
+> (PCI-DSS attestation required) — none of that is credential-gated for
+> discovery purposes, just documentation. Confirmed endpoints: `POST
+> {{baseurl}}/api/v1/cardholders` (create a card holder — required
+> before any card can be issued; needs KYC-shaped fields: identity
+> document, selfie reference, BVN/national_id per country), `POST
+> {{baseurl}}/api/v1/cards` (create the card itself — `currency` (USD
+> only), `amount`, `card_holder_reference`, `reference`, `type` (only
+> `virtual` accepted despite the field existing), `brand` (mastercard/
+> visa, defaults to mastercard)), `GET {{baseurl}}/api/v1/cards/:reference`
+> (card details incl. PAN/CVV), `GET {{baseurl}}/api/v1/cards` (list,
+> filterable by status/type/date range). Webhook event
+> `issuing.card_creation.success` fires on creation. **Not yet done:**
+> funding/withdrawal/suspend-terminate endpoint details (separate docs
+> pages — Issuing Balance, Virtual Card Funding, Virtual Card
+> Withdrawals, Activate/Suspend/Terminate — not fetched this session);
+> no `providers/korapay.js` code written yet, per Task 53's own
+> "decision-record only" discipline until the full discovery pass (not
+> just card-holder + card-creation) is done. **Task 14** (end-to-end
+> manual test pass) is separately still blocked — this sandbox's
+> network egress doesn't reach any payment-provider domain regardless
+> of key availability (confirmed: `api.paystack.co` → `403
+> host_not_allowed`) — real keys living in Render's env doesn't change
+> that; unblocking it needs either a network-settings change here or
+> the product owner running/relaying test results directly.
 >
 > **Updating this box:** when you finish your leaf, replace the two
 > paragraphs above with the new next task — don't append a new dated
@@ -82,6 +115,14 @@
 ---
 
 ## 📝 Session Log (newest first — one line per session, optional)
+
+- 2026-09-09 — Corrected a stale NEXT TASK claim: Task 51/b's
+  domain-based routing is actually already live in `routes.js` (Task
+  52 did wire it; the pointer box just wasn't updated). Started Task
+  53/a (Korapay Card Issuing discovery): confirmed cardholder/card
+  creation endpoints and payloads directly against
+  developers.korapay.com — funding/withdrawal/suspend-terminate
+  endpoints still unfetched, no provider code written yet.
 
 Add at most one line here when you finish a leaf, if you want a
 record beyond what the pointer box above and the task's own section
@@ -2680,7 +2721,14 @@ and jump on its own.
   `https://github.com/Phoenix-Boss/B-PAY-backend`; changes go through
   the fork→PR flow described in "Pull request workflow" below (commit
   → patch → human `git am` + `git push origin main` → auto-joins the
-  one open PR against upstream).
+  one open PR against upstream). **Local clone directory is
+  `B-PAY-backend`** — confirmed 2026-09-09 after a hand-off command
+  using the GitHub-repo casing (`B-Pay-backend`) failed with `cd: ...:
+  No such file or directory` on the human's own machine — same
+  casing-mismatch failure mode already documented below for
+  Mavins-web, now confirmed here too. Don't assume this repo's own
+  GitHub name matches its local folder name any more than Mavins-web's
+  does.
 - **`Mavins-web`** — `https://github.com/Zapier-codes/Mavins-web` —
   confirmed **not** a fork (checked directly via the GitHub API this
   session: `fork: false`, no parent repo) — no PR step; the human runs
@@ -3043,9 +3091,10 @@ persistence on every call.
    git format-patch -1 HEAD -o /mnt/user-data/outputs
    mv /mnt/user-data/outputs/0001-*.patch /mnt/user-data/outputs/NNNN-short-description.patch
    ```
-   Use the next free 4-digit number (check what's already in
-   `/mnt/user-data/outputs` and in this file's "Patches issued so far"
-   log below so numbers don't collide across sessions).
+   Use the next free 4-digit number — as of 2026-09-09 this is a
+   direct lookup, not a search: see "Patches issued so far" below,
+   take the last entry's number plus one, and add your own line to
+   that log as part of this same commit once you're done.
 8. **Verify the patch actually applies** before handing it over —
    clone the repo fresh to `/tmp`, reset to the commit *before* yours,
    `git am` the patch, confirm it applies cleanly and `node --check`
@@ -3175,7 +3224,76 @@ authoritative over a rate-limited API double-check.
 
 ---
 
-## Confirmed research findings (verified against primary sources — don't re-derive these, but do re-verify the specific endpoint page before shipping a task that depends on one)
+## Patches issued so far (this repo) — MANDATORY, read before generating any patch
+
+**Why this section exists:** step 7 of "How every session works" and
+rule 8 of the Patch Handoff Convention both tell you to check this log
+for the next free number — but as of 2026-09-09 this section had never
+actually been written, despite being referenced from three separate
+places in this file. Every prior session had to reconstruct the
+highest used number by grep-ing patch filenames out of old task
+write-ups instead, which is exactly the wasted rediscovery this log is
+supposed to prevent. Fixed here: this is now a real, standing log.
+
+**The rule, going forward:** whenever you generate a patch (step 7 of
+"How every session works"), add one line to the bottom of this log —
+as part of the *same commit* as the patch's own content, not a
+follow-up edit — with the number you used and a short description.
+Before generating a patch, your next free number is simply **one more
+than the last line's number**, full stop — no grepping, no searching
+old task sections. If you ever find this log doesn't match what's
+actually in a fresh clone's history (a gap, a duplicate, a number that
+was reused), fix the log in place with a dated correction note, the
+same discipline this file already applies to every other stale-note
+correction — don't just silently start numbering from whatever looks
+free.
+
+**Reconstructed history (0001–0015), recovered by grep across this
+file's task write-ups since no running log existed before this one —
+kept exactly as originally described, not re-verified against the
+repo's actual git log commit-by-commit:**
+
+- `0001` — webhook-route-skeleton (Task 2)
+- `0002` — paystack-webhook-signature (Task 3)
+- `0003` — korapay-webhook-signature (Task 4)
+- `0004` — korapay-paystack-currency-routing-validation (Task 9)
+- `0005` — post-pay-request-validation (Task 11)
+- `0006` — reference-format-validation (Task 12)
+- `0007` — handover-owner-decisions-wallet-reference
+- `0008` — handover-decision1-correction-edge-function
+- `0009` — task9b-dependency-check-mavins-web-task18-fix
+- `0010` — three-repo-navigation-sibling-repos
+- `0011` — mavins-web-push-step-and-folder-casing-fix (cross-repo note
+  recorded here; the patch itself applies to Mavins-web, not this repo
+  — see that repo's own log)
+- `0012` — task12-checkbox-reconciliation
+- `0013` — error-message-sanitization
+- `0014` — task15-audit-pass
+- `0015` — task17-checkbox-crossref
+
+**Gap, flagged plainly:** Tasks 42 through 55 each describe generating
+and handing over a `git format-patch` file (Payscribe removal, the
+Task 52 provider builds, Task 56/57's schema work, etc.), but none of
+those sessions recorded a filename in this file's prose the way
+`0001`–`0015` did — so there is no way to reconstruct exactly which
+numbers `0016`–`0015+N` those used, or how many there were, from this
+file alone. Not solved here — flagging so a future session doesn't
+assume this log's `0016` below is necessarily the true `0016` against
+every patch that has ever actually been generated for this repo, only
+that it's the first one *this log* tracks. If that gap ever causes a
+real collision (two different patches both claiming the same number
+against the real git history), reconcile against `git log` /
+`git ls-remote` directly and correct this log per the rule above,
+rather than guessing.
+
+- `0016` — handover-task51b-correction-task53a-discovery (this
+  session, 2026-09-09): corrects the stale Task 51/b pointer-box claim
+  + starts Task 53/a's Korapay Card Issuing discovery pass + adds this
+  log itself. **Not yet applied/pushed as of this writing** — sits on
+  top of `origin/main`'s `40865e6` locally, no `git am` run against
+  the real repo yet.
+
+**Next free number for whoever picks this up next: `0017`.**
 
 **Paystack — FULL API discovery pass, audited 2026-09-06 (supersedes
 all prior Paystack entries below; nothing from the prior audit was

@@ -3,7 +3,44 @@
 > **▶ START HERE — read this box only, then go straight to work. Skip
 > everything else below unless you get stuck.**
 >
-> **Newest note (2026-09-08, latest of all) — Task 57 (a–e) fully
+> **Newest note (2026-09-08, latest of all) — correction: e-2d and
+> e-2e were NOT still blocked — this box was stale.** A later
+> read-through of Task 52's own section (below, e-2d at line ~10465,
+> e-2e at line ~10574) found both leaves already resolved and built,
+> contradicting the "genuinely undecided"/"not yet actionable"
+> language the previous box below still carried. **Task 52/e-2d**
+> (promote-to-default mechanism) is built as a Supabase-backed
+> `routing_config` table (migrations `0005`/`0006`, read via
+> `getRoutingDefaultProvider()` in `utils/supabase.js`, consumed by
+> `resolveDomainDefaultProvider()` in `routes.js`) — the
+> Stripe-as-Reference-Model Convention's answer, mirroring Stripe's
+> Payment Method Configurations: a live, API/Dashboard-backed row, not
+> an env var or config file requiring a deploy. The old hardcoded
+> `DOMAIN_DEFAULT_PROVIDER` table is kept as the fallback safety-net,
+> unchanged. **Task 52/e-2e** (capability-mix flow support) is built as
+> a Supabase-backed `capabilities` table (migrations `0007`/`0008`,
+> read via `getCapabilityStatus()`), mirroring Stripe's Capabilities
+> API — each capability tracked as its own entity with its own status,
+> independent of whether a concrete multi-step route exists yet to
+> apply it to. Task 52's own top-level header already reflects this —
+> `[x]`, "every leaf under e-2 is built" — this box is the only place
+> that hadn't caught up. **Verified this session:** `node --check` on
+> `utils/supabase.js` and `routes.js`, both pass; no code changed, this
+> is a documentation-only correction of this box's own stale content.
+>
+> **The real open item now is NOT a design decision — it's whether
+> migrations `0005` through `0009` have actually been applied against
+> the live Supabase project.** Per the DB-Ops Handoff Process, that's a
+> step only the product owner can confirm/run, from the proot-distro
+> environment. Until confirmed, `getRoutingDefaultProvider()` and
+> `getCapabilityStatus()` will keep silently missing (falling through
+> to their hardcoded safety-net defaults) even though the code path is
+> fully built and verified.
+>
+> *(Superseded note, kept for its own record below rather than
+> deleted.)*
+>
+> **Previous newest note (2026-09-08, latest of all) — Task 57 (a–e) fully
 > closed; next item in the queue is blocked, per the No-skip-ahead
 > rule — no code or migration this session, documentation only.**
 > With Task 57/e applied and pushed, this session checked what's

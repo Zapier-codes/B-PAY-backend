@@ -236,8 +236,10 @@
 > same session, same pairing convention Task 61/a used for
 > `balance_transactions`. Storage only, per the "one part per session"
 > rule — full detail in Task 60/a's own section and the Session Log.
-> **Not yet applied to the live Supabase project** — product owner's
-> own DB-Ops step.
+> **Confirmed applied to the live Supabase project (2026-09-10)** —
+> `CREATE TABLE`/`CREATE TRIGGER`/`CREATE INDEX`/`ALTER TABLE`/`CREATE
+> POLICY` all ran clean via `\i` at the live `psql` prompt, no errors;
+> `db/SCHEMA.md`'s top confirmed-live note updated to match.
 >
 > **⏸️ Real next task: Task 60/b — dedup check in `webhookGateway.js`**
 > (look up `(provider, provider_event_id)` before running any handler
@@ -274,6 +276,13 @@
 
 ## 📝 Session Log (newest first — one line per session, optional)
 
+- 2026-09-10 — Task 60/a confirmed live: migrations `0016`/`0017`
+  applied against the real Supabase project via `\i` at the `psql`
+  prompt (`CREATE TABLE`/`CREATE TRIGGER`/`CREATE INDEX`/`ALTER
+  TABLE`/`CREATE POLICY`, no errors). `db/SCHEMA.md`'s top
+  confirmed-live note and Task 60/a's own write-up updated to match.
+  No code change. Next: Task 60/c (per-provider event-id discovery)
+  likely before Task 60/b, per this file's own dependency note.
 - 2026-09-10 — Task 60/a done: `webhook_events` table built (migration
   `0016` table + `0017` RLS, `db/SCHEMA.md` updated same session), same
   pairing convention Task 61/a used for `balance_transactions`.
@@ -13482,8 +13491,8 @@ Closes `STRIPE_DISCOVERY.md` §3's gap. Natural parts:
   that's Task 60/c's own still-open job, not guessed at here. Storage
   only, per the "one part per session" rule — nothing wired in
   `webhookGateway.js` yet (Task 60/b), no replay route (Task 60/d).
-  Not yet run against the live Supabase project — that's the product
-  owner's own DB-Ops step. Full column-by-column reasoning is in
+  Confirmed applied to the live Supabase project (2026-09-10) — see
+  `db/SCHEMA.md`'s top note. Full column-by-column reasoning is in
   migration `0016`'s own comments, not repeated here.
   (Original proposal text for part a, kept per this file's own
   "record what was decided" convention rather than deleted: `id`,

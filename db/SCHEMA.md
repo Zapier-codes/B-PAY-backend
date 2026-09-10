@@ -6,20 +6,23 @@ is a short, current index so a session doesn't have to reconstruct the
 schema by reading every migration in order. **Update this file in the
 same session as any migration that changes it.**
 
-**Migrations `0001`, `0003`, and `0004` are confirmed live** (2026-09-08)
-— `0001` applied by the product owner via `psql -f`, from the second
-(proot-distro Ubuntu) environment, against project ref
-`mfekzzwsoiezqkovabmp`; `0003`/`0004` applied the same way, same
-session as this update (`CREATE TABLE` / `CREATE TRIGGER` / `ALTER
+**Migrations `0001`, `0003`, `0004`, `0016`, and `0017` are confirmed
+live** — `0001` applied by the product owner via `psql -f`
+(2026-09-08), from the second (proot-distro Ubuntu) environment,
+against project ref `mfekzzwsoiezqkovabmp`; `0003`/`0004` applied the
+same way, same session (`CREATE TABLE` / `CREATE TRIGGER` / `ALTER
 TABLE` / `CREATE POLICY` all confirmed — the `DROP TRIGGER IF EXISTS`
 "does not exist, skipping" notice is expected on a brand-new table,
-same as `0001` saw for `transactions`). Every migration in
-`db/migrations/` not listed here still needs its own confirmation the
-same way before this file should be treated as describing live state
-for it — check `handover.md`'s per-migration notes, or run
-`\dt`/`\d <table>` yourself, rather than assuming everything in this
-directory has been applied just because some of it has. Migration
-`0002` (transactions RLS) is not yet confirmed live as of this update.
+same as `0001` saw for `transactions`); `0016`/`0017` applied the same
+way, 2026-09-10, via `\i` at the live `psql` prompt (`CREATE TABLE` /
+`CREATE TRIGGER` / `CREATE INDEX` / `ALTER TABLE` / `CREATE POLICY`
+all confirmed, no errors). Every migration in `db/migrations/` not
+listed here still needs its own confirmation the same way before this
+file should be treated as describing live state for it — check
+`handover.md`'s per-migration notes, or run `\dt`/`\d <table>`
+yourself, rather than assuming everything in this directory has been
+applied just because some of it has. Migration `0002` (transactions
+RLS) is not yet confirmed live as of this update.
 
 ## Shared conventions (locked in by migration `0001`, followed by every migration after)
 
@@ -312,9 +315,10 @@ anything that writes to it (Task 61/b), any per-business balance view
 reading from it (Task 61/c), and any reconciliation job (Task 61/d) —
 this migration is storage only, same division of labor every prior
 create-table migration in this schema used. Migrations `0005` through
-`0017` are **not yet confirmed live** — same "check before assuming"
+`0015` are **not yet confirmed live** — same "check before assuming"
 caveat this file's own top note already states for every migration
-not explicitly listed as confirmed there. **Not yet built for
+not explicitly listed as confirmed there (`0016`/`0017` are now
+confirmed, see the top note). **Not yet built for
 `webhook_events` (migrations `0016`/`0017`, Task 60/a):** anything
 that writes to it (Task 60/b), any per-provider `provider_event_id`
 mapping (Task 60/c), any manual replay route (Task 60/d), and any

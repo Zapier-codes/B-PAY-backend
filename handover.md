@@ -4,6 +4,25 @@
 > task's own section. Nothing else in this file is required reading to
 > start work.**
 >
+> **Task 68 is DONE (2026-09-10) as far as this session could take
+> it: `utils/novu.js` built** — a reusable Novu client (subscriber
+> upsert, trigger/bulk-trigger/broadcast, cancel, delete-by-
+> transaction), every endpoint shape confirmed directly against
+> `docs.novu.co` this session, Stripe-shaped error handling +
+> idempotency + bounded retry-on-5xx-only. `utils/alerts.js`'s
+> `deliverViaNovu()` refactored onto it — same env vars, same
+> never-throw posture, no behavior change visible from outside.
+> **Genuinely still open, and NOT this session's call to make:** no
+> subscriber-facing workflow (receipt/KYC-notice/etc.) was wired up,
+> because no such workflow exists in Novu's dashboard yet to point a
+> `workflowId` at — building one from a guessed trigger id/payload
+> shape would violate this file's own "don't guess a payload/path
+> shape" rule the same way Task 60/e's own header comment already
+> flags for Novu specifically. Whoever owns the Novu dashboard needs
+> to create the first real customer-facing workflow and hand back its
+> trigger id before that adoption work can start. Full detail in
+> Task 68's own section (end of file) and the Session Log.
+>
 > **Task 58 step 7 is done (2026-09-09):** `recordTransaction()` wired
 > into both `POST /api/vtu/data` and `POST /api/vtu/airtime` in
 > `routes.js` (fire-and-forget, `status: 'pending'`, same posture Task
@@ -330,6 +349,21 @@
 
 ## 📝 Session Log (newest first — one line per session, optional)
 
+- 2026-09-10 — Task 68 (new): generalized Novu from Task 60/e's single
+  hardcoded ops-alert call into a reusable client, `utils/novu.js`
+  (subscriber upsert, trigger/bulk-trigger/broadcast, cancel, delete-
+  by-transaction — every shape confirmed directly against
+  docs.novu.co this session). `utils/alerts.js`'s `deliverViaNovu()`
+  refactored onto it (same env vars, same never-throw posture; gains
+  bounded retry-with-backoff + idempotency it didn't have before).
+  Real `api.novu.co` calls not exercised live (no sandbox egress, same
+  standing limitation as Task 60/e); a stubbed-fetch harness exercised
+  9 cases instead (retry-on-5xx/network, no-retry-on-4xx, client-side
+  validation, subscriber upsert) — all passing, harness deleted after
+  use per this file's own "no scratch files committed" rule. Full
+  write-up in Task 68's own section. Patch generated, not applied or
+  pushed — per this repo's own Patch Handoff Convention, that's the
+  product owner's step.
 - 2026-09-10 — Task 60/e addendum: dual-path alerting — Novu added as
   a second, independent channel alongside `ALERT_WEBHOOK_URL` (fires
   concurrently, not a fallback). New env vars `NOVU_API_KEY` (existing
@@ -14445,5 +14479,144 @@ Does B-Pay need a payout-*schedule* concept (daily/weekly/manual, per
 business's behalf (e.g. the `telcos.opik.net` per-business wallet from
 Task 58)? Needs direct product-owner confirmation before this leaf is
 scoped into code — flag and ask, don't assume an answer.
+
+---
+
+#### Task 68 — Generalize Novu from a single ops-alert call into a reusable notification client [~] (client built + alerts.js refactored; not yet wired into any subscriber-facing send)
+
+**Why this is its own task, not folded into Task 60/e:** Task 60/e's
+`deliverViaNovu()` hardcoded one specific call (one workflow, one
+internal "ops" recipient) inline inside `utils/alerts.js`. That's
+correct for what Task 60/e needed, but it means every other place this
+app might eventually want to email an actual *customer* — a
+transaction receipt, a KYC status change, a payout notification, a
+dashboard invite once Task 46 exists — would either duplicate that
+inline fetch call or reach into an alerting-specific file to borrow
+from it. This task pulls the Novu-specific HTTP logic out into its own
+client so it's genuinely reusable, without changing what Task 60/e
+itself does.
+
+**What was found / what changed:**
+
+Built `utils/novu.js`, a standalone client covering every Novu
+endpoint this session found a real use for, each confirmed directly
+against `docs.novu.co` (not carried over from Task 60/e's narrower
+research, not guessed):
+
+- `upsertSubscriber()` — `POST /v2/subscribers` (confirmed via
+  `docs.novu.co/api-reference/subscribers/create-a-subscriber`:
+  `subscriberId` required, everything else optional, existing
+  subscriber is updated not rejected unless `failIfExists=true` is
+  passed as a query param).
+- `triggerWorkflow()` — `POST /v1/events/trigger`, the same endpoint
+  Task 60/e already used, now generalized (`workflowId`/`to`/
+  `payload`/`transactionId`/`overrides`/`actor`/`tenant`, matching the
+  full documented body shape rather than just the three fields
+  Task 60/e's own alert needed).
+- `triggerBulk()` — `POST /v1/events/trigger/bulk`, client-side
+  rejects >100 events before making a call at all (Novu's own
+  documented per-request limit).
+- `broadcastEvent()` — `POST /v1/events/trigger/broadcast`, kept as
+  its own explicit function specifically so a caller can't
+  accidentally broadcast to every subscriber by passing an empty `to`
+  to `triggerWorkflow()` — broadcast has no `to` field at all in
+  Novu's own schema, which this split enforces at the type level.
+- `cancelTriggeredEvent()` — `DELETE /v1/events/trigger/:transactionId`
+  (documented as useful for in-flight digests/delays; not relevant to
+  Task 60/e's own immediate-send alert workflow, but real surface for
+  a future delayed/digest workflow).
+- `deleteMessagesByTransaction()` — `DELETE
+  /v1/messages/transaction/:transactionId`, optional `channel` filter.
+
+**Stripe-shaped design choices, per the product-owner's own framing of
+this task ("do it exactly how Stripe would have done it"):**
+- `NovuError` class carrying `statusCode`/`code`/`body`, mirroring
+  Stripe's own error-object shape (`error.statusCode` is already the
+  pattern every `providers/*.js` webhook handler in this repo checks).
+- Idempotency keys on every mutating call (Novu's own docs: `idempotency-key`
+  header, confirmed present on both the subscriber-upsert and
+  trigger-event endpoints), generated by the caller and reused across
+  this client's own internal retries of that one logical call — never
+  minted fresh per retry, which would defeat the point.
+- Bounded exponential-backoff retry (2 retries, 300ms/600ms), and
+  **only** on 5xx or network-level failures — confirmed against
+  Novu's own "Best Practices" doc page, which explicitly separates
+  retryable (5xx, `ECONNRESET`, timeouts) from non-retryable (4xx —
+  the request itself is wrong and will fail identically every time).
+  A `409` (Novu's documented "first request still processing" state)
+  is deliberately **not** retried by this client — surfaced to the
+  caller as-is, since blind-retrying it just stacks more 409s per
+  Novu's own docs.
+- Deterministic-vs-random `transactionId` is left as the **caller's**
+  decision, never fabricated by this client — Novu's own docs
+  recommend a deterministic id (e.g. `order-confirmation-<orderId>`)
+  specifically when the caller wants cross-request dedup, which is not
+  always true (see `utils/alerts.js`'s own choice below).
+- This client still does **not** define, own, or guess any workflow's
+  email template/content — that stays entirely in Novu's own
+  dashboard, same posture Task 60/e's own header comment already
+  established. It only ever sends a `workflowId` + a `payload` object.
+
+**`utils/alerts.js` refactor:** `deliverViaNovu()`'s inline
+`fetch(NOVU_TRIGGER_URL, ...)` call is replaced with a call into
+`triggerWorkflow()`. Every existing env var (`NOVU_API_KEY`,
+`NOVU_WORKFLOW_ID`, `NOVU_SUBSCRIBER_ID`, `NOVU_ALERT_EMAIL`) and the
+existing "unconfigured → log + skip, never throw" posture are
+unchanged — this is a pure internal refactor from the outside. The one
+behavior change: each `notifyOps()` call now generates its own random
+idempotency key (deliberately **not** deterministic from the alert
+`payload` — two separate ops alerts that happen to share a subject,
+e.g. two different providers each crossing the failure threshold on
+the same day, must NOT dedup against each other; the key only protects
+against this client's own internal retries of that one alert call
+double-sending it).
+
+**Not done this session, deliberately — this task builds the client,
+it does not adopt it anywhere subscriber-facing yet:**
+- No transaction-receipt email, KYC-notice email, or any other
+  customer-facing send was wired up — there is no such workflow
+  configured in Novu's dashboard yet for this session to point at, and
+  guessing a `workflowId`/payload shape for a template that doesn't
+  exist would be exactly the kind of unconfirmed-shape guess this
+  file's standing convention forbids. That's real follow-on work
+  (its own future task, scoped separately) once the product owner (or
+  whoever owns the Novu dashboard) defines the first real customer-
+  facing workflow and its trigger id.
+- No new subscriber-identification strategy was designed (e.g.
+  "every `customers` row gets a Novu subscriber on creation") — that's
+  a product decision (what subscriber data to sync, when) not this
+  session's to make unilaterally; flagging it as the natural next
+  question once a real customer-facing workflow exists.
+
+**Verification:** `node --check` clean on `utils/novu.js`,
+`utils/alerts.js`, `routes.js`, and `index.js` (the latter two only
+import transitively, re-checked since they depend on `utils/alerts.js`).
+No new dependency added — `node-fetch` was already a dependency,
+imported the same way every other file in this repo does (`import
+fetch from 'node-fetch'`), not Node's global `fetch`. The real
+`api.novu.co` endpoint was **not** exercised live — same standing
+sandbox-egress limitation Task 60/e's own verification note already
+hit. Instead, built a throwaway stub replacing the `node-fetch` import
+with an in-memory queue of canned responses (deleted after use, not
+committed, same precedent as every prior throwaway test in this file)
+and exercised 9 cases against it: a happy-path trigger; a 4xx thrown
+as `NovuError` with no retry; a 5xx retried once then succeeding; a
+network-level throw retried once then succeeding; retries exhausted
+on a persistent 5xx, correctly re-thrown; client-side rejection of a
+call missing `workflowId`/`to` (no network call made at all); client-
+side rejection of a >100-event `triggerBulk()` call; client-side
+rejection of `upsertSubscriber()` missing `subscriberId`; and a
+successful `upsertSubscriber()` call including the `failIfExists`
+query param. All 9 passed.
+
+**Per the Patch Handoff Convention, a patch file covering this
+session's changes (`utils/novu.js` new, `utils/alerts.js` and this
+`handover.md` modified) was generated and handed to the product
+owner** — no `db/migrations/` change this session, so only the Patch
+Handoff block is owed, not the DB-Ops one. `git fetch origin` +
+`git log --oneline origin/main -5` confirmed no drift immediately
+before generating the patch (this session's base commit was already
+`origin/main`'s own tip — a fresh clone, not a continuation of an
+unapplied prior session's commit).
 
 ---

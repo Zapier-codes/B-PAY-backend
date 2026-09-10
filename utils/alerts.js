@@ -54,10 +54,21 @@
 // as an attempt, not a confirmed-working path; if it 400s, that's the
 // signal to go create a real subscriber and set `NOVU_SUBSCRIBER_ID`
 // instead, not a bug in this file.
+//
+// --- Task 68 update ---
+// The raw `fetch(NOVU_TRIGGER_URL, ...)` call that used to live in
+// this file has been pulled out into `utils/novu.js` as
+// `triggerWorkflow()` — a generic client the rest of the app can now
+// also use for subscriber-facing email (receipts, KYC notices, etc.),
+// not just this one ops-alert path. Behavior here is unchanged (same
+// env vars, same "unconfigured → log + skip, never throw" posture);
+// the only functional addition is `triggerWorkflow()`'s own bounded
+// retry-with-backoff on 5xx/network failures and a per-alert
+// idempotency key, both new from `utils/novu.js`, neither previously
+// present in this file's own inline call.
 import fetch from 'node-fetch';
 import { log } from './helpers.js';
-
-const NOVU_TRIGGER_URL = 'https://api.novu.co/v1/events/trigger';
+import { isNovuConfigured, triggerWorkflow, NovuError } from './novu.js';
 
 async function deliverViaWebhook(payload) {
   const url = process.env.ALERT_WEBHOOK_URL;
@@ -85,10 +96,9 @@ async function deliverViaWebhook(payload) {
 }
 
 async function deliverViaNovu(payload) {
-  const apiKey = process.env.NOVU_API_KEY;
   const workflowId = process.env.NOVU_WORKFLOW_ID;
 
-  if (!apiKey || !workflowId) {
+  if (!isNovuConfigured() || !workflowId) {
     log(`notifyOps: Novu not configured (need NOVU_API_KEY + NOVU_WORKFLOW_ID) — Novu channel skipped`, 'warn');
     return false;
   }
@@ -108,24 +118,24 @@ async function deliverViaNovu(payload) {
     return false;
   }
 
-  try {
-    const res = await fetch(NOVU_TRIGGER_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `ApiKey ${apiKey}`,
-      },
-      body: JSON.stringify({ name: workflowId, to, payload }),
-    });
+  // A fresh idempotency key per notifyOps() call — NOT deterministic
+  // from `payload`, deliberately: two separate ops alerts sharing a
+  // subject (e.g. two different "N consecutive failures" alerts for
+  // two different providers) must NOT dedup against each other. This
+  // key only protects `triggerWorkflow()`'s own internal retries of
+  // THIS one call from double-sending — see utils/novu.js's header
+  // comment on why a shared key across retries is the whole point.
+  const idempotencyKey = `notifyOps-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
-    if (!res.ok) {
-      const body = await res.text().catch(() => '');
-      log(`notifyOps: Novu trigger responded ${res.status} — ${body.slice(0, 300)}`, 'warn');
-      return false;
-    }
+  try {
+    await triggerWorkflow({ workflowId, to, payload }, { idempotencyKey });
     return true;
   } catch (err) {
-    log(`notifyOps: delivery via Novu failed (${err.message})`, 'warn');
+    if (err instanceof NovuError) {
+      log(`notifyOps: Novu trigger responded ${err.statusCode} — ${JSON.stringify(err.body).slice(0, 300)}`, 'warn');
+    } else {
+      log(`notifyOps: delivery via Novu failed (${err.message})`, 'warn');
+    }
     return false;
   }
 }

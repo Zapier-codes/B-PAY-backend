@@ -125,6 +125,86 @@ export async function recordTransaction({ reference, type, provider, currency, a
 }
 
 // ==================================================
+// 🧾 BALANCE-TRANSACTION RECORDING (Task 61/b)
+// ==================================================
+// The write half of the `balance_transactions` table (migrations
+// 0014/0015, Task 61/a). Deliberately a sibling of recordTransaction()
+// above, not a replacement or a wrapper around it — `transactions`
+// answers "what did this one attempt do" (mutable, pending → success/
+// failed in place), `balance_transactions` answers "what is the
+// complete, ordered ledger of everything that has ever moved a
+// balance" (append-only, migration 0014's own header comment). Every
+// call site below calls both, not one or the other.
+//
+// Same "best-effort, non-blocking, never throws" posture as
+// recordTransaction() (Task 56/d-3-a), for the identical reason: this
+// backend's core job is moving money, and a ledger-write failure must
+// never fail or delay the underlying payment/payout/purchase call.
+// Callers are expected to call this fire-and-forget, same as
+// recordTransaction() itself.
+//
+// `transaction_id` is deliberately never populated here and always
+// lands `null` — recordTransaction()'s own insert (above) discards
+// the inserted row's id (no `.select()`), so no call site in this
+// file actually has a `transactions.id` to pass in. This is not an
+// oversight: migration 0014's own header comment designed `reference`
+// as a plain, non-FK correlation column *specifically* so a
+// balance_transactions row survives with `transaction_id: null` — the
+// same tolerance it built in for the `adjustment` case applies here.
+// Wiring a real `transaction_id` through would mean changing
+// recordTransaction()'s own contract (adding a `.select()` and a
+// return value) — out of scope for this leaf, flagged as a possible
+// future tightening rather than done speculatively here.
+//
+// `business_id` is only ever passed by VTU call sites (Task 58) —
+// `/pay`/`/payout` have no business identity available yet
+// (`transactions.business_id` itself doesn't exist, migration 0010's
+// own still-open note; migration 0014's header comment says the same
+// thing about this column). Omitting it (rather than passing
+// `undefined` explicitly through every call site) keeps those two
+// call sites unchanged by this leaf.
+export async function recordBalanceTransaction({ business_id, reference, provider, type, amount, currency, available_on } = {}) {
+  let client;
+  try {
+    client = getSupabaseClient();
+  } catch (err) {
+    log(`recordBalanceTransaction skipped — Supabase not available: ${err.message}`, 'warn');
+    return;
+  }
+
+  try {
+    // Mirrors recordTransaction()'s own pattern of omitting an
+    // optional column entirely (rather than sending an explicit
+    // `null`) when the caller didn't supply it — `business_id` and
+    // `available_on` are both nullable columns (migration 0014) with
+    // no `NOT NULL` constraint, so leaving them out of the insert
+    // object has the same DB-level effect as sending `null` and keeps
+    // this object minimal for the common (business_id-less) case.
+    const row = { reference, provider, type, amount, currency };
+    if (business_id) {
+      row.business_id = business_id;
+    }
+    if (available_on) {
+      row.available_on = available_on;
+    }
+
+    const { error } = await client
+      .from('balance_transactions')
+      .insert(row);
+
+    if (error) {
+      // A Postgres/PostgREST-level failure (e.g. the CHECK constraint
+      // on `type`) — surfaced the same as a thrown error, still
+      // swallowed here rather than propagated to the caller, per this
+      // function's own "never throws" contract above.
+      log(`recordBalanceTransaction insert failed for reference '${reference}': ${error.message}`, 'warn');
+    }
+  } catch (err) {
+    log(`recordBalanceTransaction failed for reference '${reference}': ${err.message}`, 'warn');
+  }
+}
+
+// ==================================================
 // 🔎 TRANSACTION LOOKUP (Task 56/d-4)
 // ==================================================
 // The read half of the `transactions` table (migration 0001) —

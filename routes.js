@@ -4,7 +4,7 @@ import { Juicyway } from './providers/juicyway.js';
 import { Korapay } from './providers/korapay.js';
 import { TelcosOpik, provisionTelcosOpikAccount, resolveTelcosOpikApiKey } from './providers/telcosOpik.js';
 import { log, formatPayload, generateReference, getSupportedCurrencies, isValidCurrencyCode, isValidEmail, providerRequiresEmail, requireInternalApiKey, classifyDomain } from './utils/helpers.js';
-import { recordTransaction, getTransactionByReference, getRoutingDefaultProvider, getCapabilityStatus } from './utils/supabase.js';
+import { recordTransaction, recordBalanceTransaction, getTransactionByReference, getRoutingDefaultProvider, getCapabilityStatus } from './utils/supabase.js';
 import { getMissingFields } from './utils/fieldRequirements.js';
 import { resolveCustomer } from './utils/customerVault.js';
 import { handleGatewayEvent } from './webhookGateway.js';
@@ -126,6 +126,20 @@ router.post('/payout', requireInternalApiKey, async (req, res) => {
       currency,
       amount,
       status: 'pending',
+    });
+
+    // Task 61/b: best-effort ledger record, same fire-and-forget
+    // posture as recordTransaction() immediately above — see that
+    // helper's own header comment (utils/supabase.js) for why
+    // `business_id`/`transaction_id` are both left unset here.
+    // `type: 'payout'` matches the balance_transactions CHECK
+    // constraint's own value for this flow (migration 0014) directly.
+    recordBalanceTransaction({
+      reference: payoutRef,
+      provider: providerName,
+      type: 'payout',
+      amount,
+      currency,
     });
 
     res.json({ status: 'success', data: result });
@@ -897,6 +911,22 @@ router.post('/pay', requireInternalApiKey, async (req, res) => {
       provider_reference: providerName === 'juicyway' ? result?.data?.payment?.id : undefined,
     });
 
+    // Task 61/b: best-effort ledger record, same fire-and-forget
+    // posture as recordTransaction() immediately above — see
+    // recordBalanceTransaction()'s own header comment (utils/
+    // supabase.js) for why `business_id`/`transaction_id` are both
+    // left unset here. `type: 'payment'` per the balance_transactions
+    // CHECK constraint (migration 0014) — this table's taxonomy is
+    // Stripe's own simplified five-value one, not `transactions`'
+    // own per-flow `type` value.
+    recordBalanceTransaction({
+      reference: ref,
+      provider: providerName,
+      type: 'payment',
+      amount,
+      currency: resolvedCurrency,
+    });
+
     // Task 57/e: `customer_id` only appears when this call actually
     // saved a new vault row -- per Task 57's own "on save, the
     // response returns the new customer_id so the caller can reuse it
@@ -1178,6 +1208,30 @@ router.post('/vtu/data', requireInternalApiKey, async (req, res) => {
       status: 'pending',
     });
 
+    // Task 61/b: best-effort ledger record, same fire-and-forget
+    // posture as recordTransaction() immediately above — see that
+    // helper's own header comment (utils/supabase.js) for why
+    // `transaction_id` is left unset here. Unlike /pay and /payout,
+    // this route DOES have a `businessId` in scope (getVtuBusinessId()
+    // above) — passed through as `business_id`, per migration 0014's
+    // own note that the VTU routes are the one write path that
+    // currently can populate this column. `type: 'payment'`, not
+    // `'vtu_data'` — the balance_transactions CHECK constraint
+    // (migration 0014) only allows Stripe's own simplified five-value
+    // taxonomy (payment/payout/fee/refund/adjustment); a VTU purchase
+    // debits a business's balance the same way a payment does, so it
+    // maps to `'payment'` here even though `transactions.type` keeps
+    // the more specific `'vtu_data'` value for that table's own,
+    // per-flow taxonomy.
+    recordBalanceTransaction({
+      business_id: businessId,
+      reference: result?.data?.reference,
+      provider: 'telcosopik',
+      type: 'payment',
+      amount: result?.data?.amount,
+      currency: 'NGN',
+    });
+
     res.json({ status: 'success', data: result });
   } catch (error) {
     log(`VTU data purchase error: ${error.message}`, 'error');
@@ -1226,6 +1280,20 @@ router.post('/vtu/airtime', requireInternalApiKey, async (req, res) => {
       currency: 'NGN',
       amount,
       status: 'pending',
+    });
+
+    // Task 61/b: same wiring as POST /vtu/data above — see that
+    // route's own comment for the full reasoning on `business_id`/
+    // `transaction_id`/`type`. This route's request `amount` is used
+    // directly (matching its own recordTransaction() call just above),
+    // not a provider-echoed value.
+    recordBalanceTransaction({
+      business_id: businessId,
+      reference: result?.data?.reference,
+      provider: 'telcosopik',
+      type: 'payment',
+      amount,
+      currency: 'NGN',
     });
 
     res.json({ status: 'success', data: result });

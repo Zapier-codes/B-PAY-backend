@@ -194,13 +194,37 @@
 > this schema's own shared convention. Not yet run against the live
 > Supabase project — that's the product owner's own DB-Ops step.
 >
-> **⏸️ Real next task: Task 61/b — wire `/pay`, `/payout`, and the VTU
-> purchase routes to actually write a `balance_transactions` row**,
-> same non-blocking posture Task 56/d-3 already established for
-> `recordTransaction()`. Not blocked on anything — the table exists
-> now. Task 60 (webhook event ledger) remains open and un-promoted as
-> the other reasonable starting point, per Task 59/d's own priority
-> note, if a session prefers that instead.
+> **Task 61/b is DONE (2026-09-10)** — `recordBalanceTransaction()`
+> built in `utils/supabase.js` as a sibling of `recordTransaction()`
+> (Task 56/d-3-a), same "best-effort, never throws, fire-and-forget"
+> posture, and wired into `POST /pay`, `POST /payout`, `POST
+> /api/vtu/data`, and `POST /api/vtu/airtime` in `routes.js`,
+> alongside each route's existing `recordTransaction()` call (not
+> instead of it). `type` is always `'payment'` or `'payout'` per the
+> `balance_transactions` CHECK constraint's own simplified five-value
+> taxonomy (migration 0014) — VTU's `'vtu_data'`/`'vtu_airtime'`
+> values stay on the `transactions` table only, don't carry across.
+> `business_id` is only ever passed by the two VTU call sites (the
+> only ones with a `businessId` in scope); `transaction_id` is left
+> `null` everywhere — `recordTransaction()`'s own insert discards the
+> row id, so nothing to pass, and migration 0014's own header comment
+> designed `reference` as a non-FK correlation column precisely for
+> this case. Full detail (including why `transaction_id` wasn't
+> wired through instead) is in Task 61/b's own section below. Row
+> shape verified with a throwaway local-HTTP-stub script capturing the
+> actual insert payload for both the with- and without-`business_id`
+> cases — matched expectations exactly — then deleted per convention.
+> `node --check` clean on both touched files.
+>
+> **⏸️ Real next task: Task 61/c — per-business balance view (available
+> vs. pending, per currency).** Its own stated dependency ("(b) having
+> real rows to read") is now unblocked at the code level; note that no
+> rows will exist for real until migrations `0014`/`0015` are actually
+> applied to the live Supabase project, which is still the product
+> owner's own DB-Ops step, same as every prior migration in this file.
+> Task 60 (webhook event ledger) remains open and un-promoted as the
+> other reasonable starting point, per Task 59/d's own priority note,
+> if a session prefers that instead.
 >
 > **Updating this box:** when you finish your leaf, replace the two
 > paragraphs above with the new next task — don't append a new dated
@@ -216,6 +240,19 @@
 
 ## 📝 Session Log (newest first — one line per session, optional)
 
+- 2026-09-10 — Task 61/b done: `recordBalanceTransaction()` built in
+  `utils/supabase.js` (sibling of `recordTransaction()`, same
+  never-throws/fire-and-forget posture) and wired into `POST /pay`,
+  `POST /payout`, `POST /api/vtu/data`, `POST /api/vtu/airtime` in
+  `routes.js`, alongside each route's existing `recordTransaction()`
+  call. `type` mapped to the balance_transactions CHECK constraint's
+  five-value taxonomy (`'payment'`/`'payout'` only — VTU's own
+  `'vtu_data'`/`'vtu_airtime'` types stay on `transactions` only).
+  `business_id` populated only for the two VTU routes (only call sites
+  with one in scope); `transaction_id` left `null` everywhere,
+  flagged as a deliberate scope call, not an oversight. Row shape
+  verified via a throwaway local-HTTP-stub script, then deleted.
+  `node --check` clean. Next: Task 61/c (per-business balance view).
 - 2026-09-10 — Task 61/a done: `balance_transactions` table
   (migrations `0014`/`0015`), Stripe `BalanceTransaction`-shaped,
   deliberately append-only (no `updated_at` trigger). Promoted Task
@@ -13618,7 +13655,7 @@ isn't already split finely enough, and build exactly one part.
 
 ---
 
-## Task 61 — Balance/ledger + reconciliation (Stripe `BalanceTransaction` pattern, `STRIPE_DISCOVERY.md` §6) — part a built [ ] (a done — `balance_transactions` migration; b/c/d/e not started)
+## Task 61 — Balance/ledger + reconciliation (Stripe `BalanceTransaction` pattern, `STRIPE_DISCOVERY.md` §6) — parts a/b built [ ] (a/b done; c/d/e not started)
 
 **Promoted from Task 59/c's proposal to its own top-level task**, same
 convention Task 52 used when it picked up Task 51's decision-record
@@ -13670,12 +13707,71 @@ it" rule. **Not run against the live Supabase project** — per the
 DB-Ops Handoff Process, that's the product owner's own step from the
 second (proot-distro Ubuntu) environment, not this session's to run.
 
-### b. Wire `/pay`, `/payout`, and the VTU purchase routes to write a `balance_transactions` row [ ] — not started
+### b. Wire `/pay`, `/payout`, and the VTU purchase routes to write a `balance_transactions` row [x] — DONE (2026-09-10)
 
-Same non-blocking "never fail the request on a failed write" posture
-Task 56/d-3 established for `recordTransaction()`. Depends on nothing
-further from (a) — the table exists now, this leaf is pure route/
-provider-file wiring whenever a session picks it up next.
+Built `recordBalanceTransaction()` in `utils/supabase.js`, a sibling
+of `recordTransaction()` (Task 56/d-3-a) — same "best-effort, never
+fail the request on a failed write" non-blocking posture, called
+fire-and-forget from each route, never awaited into the response.
+
+**Wired into all four write sites named in this leaf's own title:**
+`POST /pay`, `POST /payout`, `POST /api/vtu/data`, `POST
+/api/vtu/airtime` — each call site now calls both
+`recordTransaction()` (unchanged, still writes `transactions`) and
+`recordBalanceTransaction()` (new, writes `balance_transactions`)
+back-to-back, not one instead of the other; they're two different
+tables answering two different questions, per migration `0014`'s own
+header comment.
+
+**`type` mapping — flagged, not silently assumed:** the
+`balance_transactions` CHECK constraint (migration `0014`) only
+allows Stripe's own simplified five-value taxonomy (`'payment'` |
+`'payout'` | `'fee'` | `'refund'` | `'adjustment'`), not
+`transactions.type`'s own more granular per-flow values. `/pay` →
+`'payment'`, `/payout` → `'payout'` (both direct matches). The two VTU
+routes' own `transactions.type` values (`'vtu_data'`/`'vtu_airtime'`)
+have no matching value in this constraint at all — both map to
+`'payment'` here (a VTU purchase debits a business's balance the same
+way a payment does), while `transactions.type` keeps the more specific
+value unchanged. This is a design decision made this leaf, not a
+pre-existing convention found in the repo.
+
+**`business_id` — populated only by the two VTU routes.** They're the
+only call sites with a `businessId` already in scope
+(`getVtuBusinessId()`, Task 58's own helper); `/pay`/`/payout` don't
+pass it at all (rather than passing an explicit `undefined`/`null`),
+matching migration `0014`'s own note that `transactions.business_id`
+doesn't exist yet so those two routes have no business identity to
+give.
+
+**`transaction_id` — deliberately left `null` at every call site, not
+wired through.** `recordTransaction()`'s own insert (Task 56/d-3-a)
+never selects the inserted row's id back (`.insert(row)` with no
+`.select()`), so no call site in `routes.js` actually has a
+`transactions.id` value available to pass in. Fixing that would mean
+changing `recordTransaction()`'s own return contract — judged out of
+scope for this leaf rather than done as an unplanned side effect.
+This is exactly the case migration `0014`'s own header comment
+designed `reference` (non-FK, plain correlation column) to tolerate —
+same tolerance it already built in for the `adjustment` type, which
+has no `transactions` row at all. Flagging as a possible future
+tightening (give `recordTransaction()` an optional `.select('id')`
+and return it) rather than guessing at it here.
+
+**Verification:** `node --check routes.js` and `node --check
+utils/supabase.js` both pass. Two throwaway scripts, both deleted
+after use per this file's own scratch-file convention: (1) called
+`recordBalanceTransaction()` directly with no `SUPABASE_URL`/
+`SUPABASE_SERVICE_ROLE_KEY` set, confirming it returns (doesn't throw)
+the same way `recordTransaction()` does when Supabase isn't
+configured; (2) stood up a local HTTP server as a stand-in for
+Supabase's REST endpoint and captured the actual insert payload for
+both the with- and without-`business_id` cases — confirmed
+`business_id`/`available_on` are omitted entirely (not sent as
+explicit `null`) when not supplied, and included correctly when they
+are. Not run against a live Supabase project — same DB-Ops Handoff
+Process as every prior migration/write path in this file; this leaf
+only adds application code, no new migration.
 
 ### c. Per-business balance view (available vs. pending, per currency) [ ] — not started
 

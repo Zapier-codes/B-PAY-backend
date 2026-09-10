@@ -14583,6 +14583,110 @@ both discovery-only.
 2026-09-10 (prior session) — discovery pass run against 6 of 10
 providers; reconciliation-job design itself still not started.
 
+**Design proposal, this session (2026-09-10) — decision-record only,
+no code, needs product-owner confirmation before building, same
+posture as Task 62's own "propose the shape, don't just build it."**
+Discovery is complete; this is what it actually unblocks.
+
+**d-1. The scope-limiting fact this design has to be built around,
+stated plainly up front:** of the 10 providers this discovery pass
+covered, only **3 have a real external settlement/statement endpoint
+to reconcile against** — Paystack, Flutterwave, DodoPayments (the
+same three already marked yes/yes/adjacent-yes above). The other
+**6 — Korapay, JuicyWay, Xixapay, Prestmit, PaymentPoint, Remita —
+have no such surface at all**, confirmed no, not merely unchecked.
+This is not a gap this job's own code can close; it's a hard ceiling
+on what "reconciliation" can mean for 6 of B-Pay's providers, the
+same class of finding as Korapay's own six-currency payout ceiling
+(Task 52/b) — more code cannot manufacture an endpoint a provider
+doesn't expose. **This forks the design into a real product decision,
+not a technical one:**
+- **Option A — external reconciliation only, for the 3 that support
+  it.** The other 6 get no reconciliation job coverage at all; a
+  mismatch there (provider says settled, B-Pay's ledger disagrees, or
+  vice versa) would go undetected by this job specifically. Simplest
+  to build, honest about its own limits, but leaves the majority of
+  providers uncovered.
+- **Option B — external reconciliation for the 3, plus an *internal*
+  consistency check for all 10.** The internal check would compare
+  `balance_transactions` rows against their originating `transactions`
+  rows (same reference, matching amount/currency/status) — this
+  catches B-Pay's own write-path bugs (Task 61/b's dual-write ever
+  falling out of sync) but **cannot** catch a provider silently
+  under-settling, delaying, or disputing a transaction on their own
+  side, since there is no external source of truth to check against
+  for those 6. Worth being explicit that this is a materially weaker
+  guarantee than what "reconciliation" implies for the 3 covered
+  providers — presenting Option B's internal check as equivalent
+  coverage to Option A's external check would be misleading.
+- **Option C — wait, and revisit per-provider as each one's own
+  discovery gets confirmed or reversed by a future finding** (e.g. if
+  a signed-in PaymentPoint portal session or new Remita material ever
+  surfaces something this pass didn't find). Slowest, but doesn't
+  build against a permanently-6-provider-shaped gap if that turns out
+  to be temporary.
+**Not decided here — this is exactly the kind of scope call this
+file's own convention says needs the product owner's direct word, not
+a session's guess**, the same standard already applied to Task 51's
+routing-domain model and Task 62's taxonomy shape.
+
+**d-2. Proposed schema, contingent on d-1's answer, not yet
+migrated.** A new `reconciliation_discrepancies` table (not a
+`reconciliation_runs` table — a *discrepancy* is the only row worth
+persisting; a clean run with zero mismatches needs no row, same
+"only append what's actually informative" instinct already applied to
+`balance_transactions`'s own append-only design): `id`, `provider`,
+`balance_transaction_id` (nullable FK — the internal side of the
+mismatch, when one exists), `provider_reference` (the external side —
+whatever field each provider's settlement API returns as its own
+correlation key, itself not yet confirmed per-provider since this
+discovery pass covered *whether* the endpoint exists, not its full
+response schema), `discrepancy_type` (`'missing_internally'` |
+`'missing_externally'` | `'amount_mismatch'` | `'currency_mismatch'`
+— a starting taxonomy, not confirmed against a real mismatch example
+yet, same honest caveat as every other proposed-not-observed
+enum in this file), `expected_amount`, `actual_amount`, `detected_at`,
+`resolved_at` (nullable — a human closes this out, this job doesn't
+auto-resolve anything). RLS: same `service_role`-only policy as every
+other table in this schema, no new pattern needed.
+
+**d-3. Scheduling mechanism — a real infrastructure decision, also
+not yet made.** `render.yaml` today defines exactly one service
+(`type: web`) — no cron/scheduled-job service exists anywhere in this
+repo's infrastructure. Render's own Blueprint spec supports a
+`type: cron` service (a separate process, its own `schedule` field,
+same repo/build), which would be the natural fit — but that's a new
+paid-tier-scoped resource decision for the product owner to make in
+Render's own dashboard, same class of action as every existing "manual
+product-owner step" already called out in `render.yaml`'s comments,
+not something a session can provision from here. Alternative (not
+recommended, flagged for completeness): an authenticated HTTP route
+triggered by an external scheduler (e.g. a GitHub Actions cron
+workflow, or a third-party ping service) — avoids a new Render
+service but adds an external dependency this repo doesn't otherwise
+have for its own core logic. **Recommend the Render cron service, but
+this is the product owner's infrastructure/cost call, not a default
+to build against.**
+
+**d-4. Not proposed here, deliberately:** the actual matching
+algorithm (how a Paystack settlement's own line items map back to
+specific `balance_transactions` rows — needs Paystack's settlement API
+response shape confirmed in detail first, which this discovery pass
+did not do, only confirmed the endpoint's existence), retry/backoff
+behavior for a failed provider API call mid-run, and how discrepancies
+actually reach a human (reusing Task 60/e's `notifyOps()` channel-
+agnostic alerting is the obvious fit, not yet confirmed as the actual
+choice).
+
+**Small doc-drift flagged in passing, not this leaf's job to fix:**
+`db/SCHEMA.md`'s own "Not yet built for `balance_transactions`"
+section still lists Task 61/b and 61/c as not-yet-built — both closed
+`[x]` in this file as of the same day (2026-09-10, above). `SCHEMA.md`
+wasn't updated when those landed; worth a follow-up sync, not urgent
+enough to fold into this design leaf.
+
+---
+
 ### e. Payout-schedule question for B-Pay's own wallet-style balances [ ] — open product question, not an implementation task
 
 Does B-Pay need a payout-*schedule* concept (daily/weekly/manual, per

@@ -241,26 +241,36 @@
 > POLICY` all ran clean via `\i` at the live `psql` prompt, no errors;
 > `db/SCHEMA.md`'s top confirmed-live note updated to match.
 >
-> **⏸️ Real next task: Task 60/b — dedup check in `webhookGateway.js`**
-> (look up `(provider, provider_event_id)` before running any handler
-> side effect, short-circuit with `2xx` if already `processed`), **or
-> Task 60/c — per-provider discovery of the real event-id field**
-> (Paystack/Korapay/JuicyWay, plus TelcosOpik once Task 58 step 8's
-> signing-scheme question resolves) — genuinely not yet known for any
-> of the four, do not guess a field name, confirm directly against
-> each provider's own webhook-payload docs first. **Note: Task 60/b
-> depends on Task 60/c's mapping to be practically useful** (the dedup
-> lookup needs `provider_event_id` actually populated per provider), so
-> a session picking this up should likely do 60/c first even though it
-> is lettered after 60/b — flag this explicitly if picking b before c,
-> per this file's own "confirm before building" discipline. Task 60/d
-> (manual replay route) and Task 61/d (reconciliation-job design, still
-> blocked on its own per-provider discovery pass) remain open after
-> that. Task 60/e (continuous-failure alerting) stays blocked on a
-> product-owner decision about what "notify" means here — don't guess a
-> channel. Task 61/e (payout-schedule question) is an open product
-> question, not an implementation task — needs direct product-owner
-> confirmation before it's scoped into code.
+> **Task 60/c is DONE, discovery-only, no code (2026-09-10)** —
+> per-provider event-id field checked directly against each provider's
+> own docs. **Paystack and Korapay both confirmed: neither documents a
+> dedicated event/delivery-id field** — Korapay's own docs page
+> directly confirms what `webhookGateway.js`'s Task 41 note had
+> already guessed. **JuicyWay stays a genuine open question** —
+> several candidate id-shaped fields found (`data.id`,
+> `data.transaction_id`, `data.correlation_id`, `data.reference`,
+> `data.channel_reference`, `data.provider_id`) but none labeled as
+> the dedup key by JuicyWay's own docs; `data.transaction_id` is a
+> plausible guess, not a confirmed answer. TelcosOpik still out of
+> scope (Task 58 step 8 unresolved). Full findings in Task 60/c's own
+> section and the Session Log.
+>
+> **⏸️ Real next task: Task 60/b — dedup check in `webhookGateway.js`.**
+> Paystack and Korapay can both be wired now on the confirmed fallback
+> key (`event` + `data.reference`, matching `webhookGateway.js`'s
+> existing Korapay dedupe logic) — no further discovery needed for
+> those two. JuicyWay is the one open call: either reuse the same
+> fallback for it too (safe, consistent with the other two) or spend
+> part of this leaf's own session confirming `data.transaction_id`
+> against a real sandbox payload first — whichever a session picks,
+> say so explicitly, don't silently guess one into the dedup key. Task
+> 60/d (manual replay route) and Task 61/d (reconciliation-job design,
+> still blocked on its own per-provider discovery pass) remain open
+> after that. Task 60/e (continuous-failure alerting) stays blocked on
+> a product-owner decision about what "notify" means here — don't
+> guess a channel. Task 61/e (payout-schedule question) is an open
+> product question, not an implementation task — needs direct
+> product-owner confirmation before it's scoped into code.
 >
 > **Updating this box:** when you finish your leaf, replace the two
 > paragraphs above with the new next task — don't append a new dated
@@ -276,6 +286,18 @@
 
 ## 📝 Session Log (newest first — one line per session, optional)
 
+- 2026-09-10 — Task 60/c done, discovery-only, no code: re-fetched
+  Paystack's and Korapay's own webhook docs directly — neither
+  documents a dedicated event/delivery-id field, confirming
+  `webhookGateway.js`'s existing Korapay guess rather than leaving it
+  a guess. JuicyWay's dedicated `/webhooks` page didn't surface this
+  session; found a real sample payload elsewhere in its docs instead,
+  showing several candidate id fields (`transaction_id`,
+  `correlation_id`, `id`, etc.) with none confirmed as the dedup key —
+  flagged as a genuine open question, not guessed. Next: Task 60/b,
+  which can wire Paystack+Korapay now on the confirmed fallback key;
+  JuicyWay's mapping is still an open call for that session to make
+  explicitly.
 - 2026-09-10 — Task 60/a confirmed live: migrations `0016`/`0017`
   applied against the real Supabase project via `\i` at the `psql`
   prompt (`CREATE TABLE`/`CREATE TRIGGER`/`CREATE INDEX`/`ALTER
@@ -13480,7 +13502,7 @@ sessions). Each task below states its natural parts so the session
 that picks it up doesn't have to re-derive them, exactly as the
 splitting rule's own "how to split, in practice" section describes.
 
-#### Task 60 — Webhook event ledger, idempotent dedup, and replay [ ] (a done; b/c/d open; e blocked)
+#### Task 60 — Webhook event ledger, idempotent dedup, and replay [ ] (a/c done; b/d open; e blocked)
 
 Closes `STRIPE_DISCOVERY.md` §3's gap. Natural parts:
 - **a. DONE (2026-09-10).** `webhook_events` table built: migrations
@@ -13506,11 +13528,72 @@ Closes `STRIPE_DISCOVERY.md` §3's gap. Natural parts:
   effect; short-circuit with a `2xx` (matching Stripe's own "return 2xx
   even for an already-processed duplicate" convention) if already
   `processed`.
-- **c.** Per-provider discovery of the actual event-id field each of
-  the four providers with webhooks today (Paystack/Korapay/JuicyWay,
-  plus TelcosOpik once Task 58 step 8's signing-scheme question
-  resolves) puts in its payload — genuinely not yet known for all
-  four, flag explicitly per provider rather than guessing.
+- **c. DONE, discovery-only, no code (2026-09-10).** Per-provider
+  event-id field checked directly against each provider's own docs,
+  same "confirm before building" discipline this file uses everywhere
+  else — findings below, nothing guessed:
+  - **Paystack** — re-fetched paystack.com/docs/payments/webhooks/
+    directly. Its own "Types of events" section and the one full
+    sample payload it documents (`customeridentification.failed`) show
+    no dedicated top-level event/delivery-id field at all — the
+    envelope is just `{ event, data }`. Cross-checked against real
+    `charge.success` payloads (this repo's own payment-channels
+    citation, Task 8's prior research): `data.id` is present there,
+    but it's the numeric charge/transaction ID (the same `id`
+    `GET /transaction/verify` itself returns), not a separate
+    delivery-id — and it's resource-specific, not universal (the
+    `customeridentification.*` sample has no `data.id` at all, only
+    `data.customer_id`). **No confirmed `provider_event_id` for
+    Paystack** — closest usable keys remain `data.id` (charge events
+    only) or `data.reference`, same conclusion `webhookGateway.js`
+    already reached independently for Korapay (below).
+  - **Korapay** — re-fetched developers.korapay.com/docs/webhooks
+    directly. Its own "Webhook Notification Request Payload
+    Definitions" table lists exactly `event`, `data`, `data.amount`,
+    `data.fee`, `data.currency`, `data.status`, `data.reference` — no
+    event/delivery-id field anywhere in that table or any of its five
+    sample payloads (`payment_reference`/`batch_reference` appear only
+    on specific event types, not as a general id). The page's own
+    "Best Practices" section tells integrators to track notifications
+    and check "this has not been processed before" — Korapay expects
+    dedup on the integrator's side but gives no id to key it on. **This
+    directly confirms `webhookGateway.js`'s own pre-existing Task 41
+    note** ("Korapay's webhook payload isn't confirmed to carry its own
+    globally unique event id") — no longer a guess, checked against
+    the live doc page. Its existing fallback dedupe key,
+    `` `${event}:${data.reference}` ``, is the correct one Task 60/b
+    should reuse.
+  - **JuicyWay** — the dedicated `/webhooks` page itself could not be
+    fetched this session (search didn't surface it as a direct result,
+    unlike the 2026-08-27 session that found it — flagged for whoever
+    picks this up next to retry, not a confirmed "page no longer
+    exists"). Fetched a real sample webhook payload instead, from
+    JuicyWay's own Interac e-Transfer docs
+    (`/payments/initialize-payment/interac-e-transfer`, "Confirming
+    Deposits" section): the `{ checksum, data, event }` envelope's
+    `data` object carries **several** candidate id-shaped fields not
+    previously known to this codebase — `data.id`, `data.transaction_id`,
+    `data.correlation_id`, `data.reference`, `data.channel_reference`,
+    `data.provider_id` — but the page never labels any single one as
+    "the" unique event/delivery id; they read as resource/tracing
+    fields (a payment-session id, a cross-system correlation id, a
+    channel-specific reference), not a documented dedup key. **Not
+    resolved — flagged as a real ambiguity, not guessed into a
+    mapping.** `data.transaction_id` is the most plausible single
+    candidate by name alone, but that's a hypothesis for Task 60/b to
+    verify against a real sandbox payload, not a confirmed field.
+  - **TelcosOpik** — out of scope this session, unchanged: Task 58 step
+    8's own signing-scheme question is still unresolved (per this
+    file's own pointer box), so nothing about its webhook payload shape
+    is discoverable yet either.
+  Net effect for Task 60/b: Paystack and Korapay both now have a
+  confirmed answer (no provider-native event id; dedupe on
+  `event`+`reference`, or `data.id` for Paystack's own `charge.success`
+  specifically). JuicyWay stays a real open question — Task 60/b should
+  either dedupe JuicyWay the same fallback way for now (safe, matches
+  the other two) or spend part of its own session confirming
+  `transaction_id` first — a call for whoever picks up 60/b, not
+  decided here.
 - **d.** Manual replay mechanism (an internal, `requireInternalApiKey`-
   gated route that re-runs a stored `webhook_events` row's handler) —
   mirrors Stripe Dashboard's own manual-resend affordance, scaled to

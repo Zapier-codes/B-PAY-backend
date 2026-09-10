@@ -13999,14 +13999,88 @@ route depends on. Not run against a live Supabase project — no new
 migration this leaf, same DB-Ops Handoff Process as every prior
 Supabase-dependent write/read path in this file.
 
-### d. Reconciliation-job design [ ] — not started, blocked on its own discovery pass
+### d. Reconciliation-job design [ ] — discovery pass started this session (6 of 10 providers checked), design/build still not started
 
-Needs a per-provider check: does each of the ten providers expose a
-statement/settlement-report endpoint B-Pay could compare its own
-`balance_transactions` rows against? **Not currently known for any
-provider** — same "confirm before building" discipline this file
-applies to every provider capability. Do not guess a provider's
-settlement-report shape when this leaf is picked up.
+**Scope note:** this leaf needs a per-provider check — does each of
+the ten providers expose a statement/settlement-report endpoint
+B-Pay could compare its own `balance_transactions` rows against?
+This session ran that check against primary docs (official
+developer-docs sites, not aggregators) for 6 of the 10 and is
+recording findings here, doc-only, same discipline as every other
+provider-capability research in this file — **no reconciliation-job
+code, no cron/scheduler, nothing built this session.** The box stays
+`[ ]`: a per-provider yes/no is not the reconciliation-job design
+itself, only its prerequisite.
+
+**Confirmed via primary source, this session (2026-09-10):**
+- **Korapay** — no dedicated settlement/statement-report API found.
+  `developers.korapay.com` documents a Payout History API (fetches
+  payout transactions) and, separately, a beta-only Pool Accounts
+  "downloadable transaction and settlement history" feature — neither
+  is a general-purpose settlement-reconciliation endpoint for ordinary
+  collection/payout activity. `support.korapay.com` describes
+  settlement status (pending/waiting-to-be-settled/unbatched) as a
+  **dashboard-only** view, no API path given. Treat as **no** unless a
+  future session finds something this pass missed.
+- **Paystack** — **yes.** `paystack.com/docs/api/settlement/` documents
+  a real Settlement API: list settlements paid to your bank account,
+  plus a per-settlement "fetch transactions" endpoint (the
+  transactions making up that settlement). Directly usable for
+  reconciliation as-is.
+- **JuicyWay** — no settlement endpoint. Fetched
+  `docs.juicyway.com/llms.txt` (the full doc index) directly rather
+  than relying on search snippets — no `settlement` term anywhere in
+  it. Closest fits are "Payment Statistics" (aggregate stats) and
+  "Export payment details" (payments/list, https://docs.juicyway.com/reference/payments/export-payment-details.md),
+  both transaction-level, not a settlement/payout-batch object. Treat
+  as **no**.
+- **Flutterwave** — **yes.** `developer.flutterwave.com/docs/settlements`
+  documents `GET /settlements` (F4B v4, filterable by page/size),
+  returning settlement status/destination/timestamp/local-vs-
+  international type per settlement. This is the v4 surface; not
+  separately re-verified against v3 this pass (Task 51/55's existing
+  v3-vs-v4 switch note applies to whichever version this repo ends up
+  calling).
+- **Remita** — **not confirmed either way.** Search surfaced only a
+  third-party GitHub mirror of Remita's contractor-integration doc
+  (`github.com/unizik/remita-api-doc`), not Remita's own settlement/
+  recon documentation — consistent with the base-URL/auth ambiguity
+  Tasks 49/50 already flagged for this provider generally. Needs
+  Remita's own real onboarding material (same blocker Task 49/b and
+  Task 50 are already waiting on), not a fresh guess here.
+- **DodoPayments** — **yes, adjacent.** `docs.dodopayments.com`
+  documents `GET /payouts` (List Payouts) and a payout-breakup
+  retrieval endpoint (`client.payouts.breakup.retrieve(payout_id)`,
+  a documented "Payout Breakup" object) — not labeled "settlement"
+  but functionally the same thing: a payout-level breakdown for
+  reconciliation. DodoPayments' own blog (`dodopayments.com/blogs/
+  payment-ledger-design`) explicitly frames "balance ledger entries
+  and payout breakups" as the reconciliation surface, in the same
+  Stripe-`BalanceTransaction`-adjacent language this repo's own Task
+  61 design already uses.
+
+**Not checked this session — genuinely not researched, not assumed
+`no`:**
+- **Xixapay** — only its marketing/pricing pages surfaced
+  (`xixapay.com`); no API reference content was returned by search.
+  `xixapay.com/documentation` exists but its content isn't indexed —
+  would need direct portal access (an account) to check.
+- **PaymentPoint** — no settlement/statement-specific doc surfaced;
+  general NG-payments search results returned unrelated providers
+  (Monnify, Sarepay, Flutterwave, Africa's Talking) instead. Needs a
+  targeted look at PaymentPoint's own developer docs directly.
+- **Prestmit** — not checked this pass. Per Task 48/a, Prestmit is a
+  gift-card/crypto off-ramp, not a bank/card processor — worth
+  confirming whether "settlement" is even a meaningful concept for its
+  product shape before spending a search pass on it.
+- **`telcos.opik.net`** — not checked this pass. This is Task 58's own
+  in-progress integration (not yet live per Task 58 step 8's open
+  blocker), so a settlement-endpoint check here is arguably premature
+  until that integration itself is unblocked.
+
+**Changelog:** 2026-09-10 — discovery pass run against 6 of 10
+providers (this session); reconciliation-job design itself still not
+started.
 
 ### e. Payout-schedule question for B-Pay's own wallet-style balances [ ] — open product question, not an implementation task
 

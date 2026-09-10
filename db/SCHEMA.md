@@ -233,7 +233,28 @@ before doing anything else.
 
 **Not yet built:** the actual account-provisioning call site (`providers/telcosOpik.js`'s constructor / `getProviderKey('telcosopik', businessId)`, Task 58/c, order-of-execution step 4) — this migration only creates the storage, same division of labor migration `0003` used for `customers`.
 
+### `balance_transactions` (migration `0014`) — Task 61/a's append-only ledger, Stripe `BalanceTransaction`-shaped
 
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `uuid` | primary key |
+| `business_id` | `uuid` | nullable, `references businesses(id)` — populated where the write path knows one (VTU routes); `/pay`/`/payout` can't yet, since `transactions.business_id` itself doesn't exist |
+| `transaction_id` | `uuid` | nullable, `references transactions(id)` — link back to the attempt-level record, when one exists |
+| `reference` | `text` | nullable, plain correlation column — deliberately **not** an FK to `transactions.reference` (see migration `0014`'s own note on why) |
+| `provider` | `text` | `not null` |
+| `type` | `text` | `'payment'` \| `'payout'` \| `'fee'` \| `'refund'` \| `'adjustment'` — `'fee'`/`'refund'` have no write path yet (Task 63/d still blocked on its own discovery pass), included now so widening the list later needs no new migration |
+| `amount` | `numeric` | |
+| `currency` | `text` | |
+| `available_on` | `timestamptz` | nullable — mirrors Stripe's pending-vs-available split; `null` = available immediately, today's honest default since no per-provider settlement delay is currently confirmed |
+| `created_at` | `timestamptz` | default `now()` — **no `updated_at`, deliberately** |
+
+**Append-only — the one table in this schema that does NOT get the shared `updated_at`/`set_updated_at()` treatment.** A ledger row is a statement of fact; a correction is a new row (e.g. a refund is its own `type: 'refund'` row referencing the original payment), never an in-place edit of an old one. No application code should ever `UPDATE` this table.
+
+**Indexes:** `balance_transactions_business_id_idx`, `balance_transactions_transaction_id_idx`, `balance_transactions_reference_idx` — one per the three lookup patterns this table currently serves (per-business, per-attempt, per-reference). No `created_at` index yet — added later if a reconciliation job's real query shape (Task 61/d, still open) needs one.
+
+**Row Level Security:** enabled (migration `0015`). One explicit policy, `balance_transactions_service_role_all`, scoped to `service_role` only — same pattern as every other table in this schema.
+
+**Not yet built:** nothing writes to this table yet (Task 61/b — wiring `/pay`/`/payout`/VTU routes to insert a row alongside their existing `recordTransaction()` call — is still open), no per-business balance view reads from it yet (Task 61/c), and no reconciliation job exists (Task 61/d, blocked on a still-needed per-provider discovery pass for whether each provider exposes a statement/settlement endpoint to reconcile against).
 
 - **`set_updated_at()`** — trigger function (migration `0001`). Keeps
   a row's `updated_at` current on any `UPDATE`. Shared by every table
@@ -265,10 +286,16 @@ provisioning code that reads/writes these tables (Task 58's own
 order-of-execution step 4, not this migration); a `business_id` FK on
 `transactions`/`customers`; any dashboard-login credential (Task
 45/c's still-open question); the actual Vault `create_secret`/
-`decrypted_secrets` call sites. Migrations `0005` through `0013` are
-**not yet confirmed live** — same "check before assuming" caveat this
-file's own top note already states for every migration not explicitly
-listed as confirmed there. Beyond that, nothing currently queued needs
-a further migration; the next schema change is whatever a future task
-actually requires (e.g. Task 46's dashboard, once its own auth design
-is decided).
+`decrypted_secrets` call sites. **Not yet built for
+`balance_transactions` (migrations `0014`/`0015`, Task 61/a):**
+anything that writes to it (Task 61/b), any per-business balance view
+reading from it (Task 61/c), and any reconciliation job (Task 61/d) —
+this migration is storage only, same division of labor every prior
+create-table migration in this schema used. Migrations `0005` through
+`0015` are **not yet confirmed live** — same "check before assuming"
+caveat this file's own top note already states for every migration
+not explicitly listed as confirmed there. Beyond that, nothing
+currently queued needs a further migration; the next schema change is
+whatever a future task actually requires (e.g. Task 46's dashboard,
+once its own auth design is decided, or Task 61/b once a session
+picks it up).

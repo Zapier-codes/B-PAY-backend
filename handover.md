@@ -184,15 +184,23 @@
 > split charges (no confirmed B-Pay use case) and Identity/KYC's
 > event-driven pattern (Task 54 already covers this correctly).
 >
-> **⏸️ Real next task: Task 61 (balance/ledger + reconciliation) or
-> Task 60 (webhook event ledger + dedup), per Task 59/d's own
-> recommendation — both foundational, pick either.** Neither is split
-> into a real a–e build yet; the next session's first job is picking
-> one, confirming/refining the proposed split in Task 59/c against
-> current code, then building exactly one part, per the standing
-> mandatory task-splitting rule. Task 61/a (the `balance_transactions`
-> migration) is the more foundational of the two and the suggested
-> starting point if no other constraint favors Task 60 first.
+> **Task 61/a is DONE (2026-09-10)** — promoted from Task 59/c's
+> proposal to its own top-level task (search "Task 61 — Balance/ledger
+> + reconciliation"). Migrations `0014`/`0015` create the append-only
+> `balance_transactions` table (Stripe `BalanceTransaction`-shaped,
+> `STRIPE_DISCOVERY.md` §6), `db/SCHEMA.md` updated in the same
+> session. Deliberately no `updated_at` trigger — this table is
+> append-only by design, flagged explicitly since it deviates from
+> this schema's own shared convention. Not yet run against the live
+> Supabase project — that's the product owner's own DB-Ops step.
+>
+> **⏸️ Real next task: Task 61/b — wire `/pay`, `/payout`, and the VTU
+> purchase routes to actually write a `balance_transactions` row**,
+> same non-blocking posture Task 56/d-3 already established for
+> `recordTransaction()`. Not blocked on anything — the table exists
+> now. Task 60 (webhook event ledger) remains open and un-promoted as
+> the other reasonable starting point, per Task 59/d's own priority
+> note, if a session prefers that instead.
 >
 > **Updating this box:** when you finish your leaf, replace the two
 > paragraphs above with the new next task — don't append a new dated
@@ -208,6 +216,12 @@
 
 ## 📝 Session Log (newest first — one line per session, optional)
 
+- 2026-09-10 — Task 61/a done: `balance_transactions` table
+  (migrations `0014`/`0015`), Stripe `BalanceTransaction`-shaped,
+  deliberately append-only (no `updated_at` trigger). Promoted Task
+  59/c's proposal to its own top-level Task 61. `db/SCHEMA.md`
+  updated. Not run live — product owner's own DB-Ops step. Next:
+  Task 61/b (wire `/pay`/`/payout`/VTU routes to write here).
 - 2026-09-10 — Task 59 (full Stripe discovery + orchestration gap
   analysis) done, discovery/documentation only: `STRIPE_DISCOVERY.md`
   written (12 sections, sourced from `docs.stripe.com`), re-confirmed
@@ -13601,5 +13615,90 @@ splitting rule's own "write out the natural parts before writing any
 code" instruction) — the next session should pick **one** of Tasks
 60–66 (Task 61 or Task 60 per (d)'s recommendation), split it if it
 isn't already split finely enough, and build exactly one part.
+
+---
+
+## Task 61 — Balance/ledger + reconciliation (Stripe `BalanceTransaction` pattern, `STRIPE_DISCOVERY.md` §6) — part a built [ ] (a done — `balance_transactions` migration; b/c/d/e not started)
+
+**Promoted from Task 59/c's proposal to its own top-level task**, same
+convention Task 52 used when it picked up Task 51's decision-record
+proposal — Task 59 itself is left as the discovery/proposal record,
+unedited; this section is where the actual build lives from here on.
+Picked over Task 60 per Task 59/d's own recommendation ("Task 61 is
+the more foundational of the two"); Task 60 (webhook event ledger)
+remains open and un-promoted, still available as Task 59/c wrote it.
+
+**Split into a–e per the standing mandatory task-splitting rule — this
+session builds only (a), the rest are explicitly not-started:**
+
+### a. `balance_transactions` table — DONE this session (2026-09-10)
+
+Migrations `0014` (`create table balance_transactions`) and `0015`
+(RLS) written, following this schema's own shared conventions (`uuid`
+PK, `text`+`CHECK` for `type`, indexed on the three columns real
+queries will actually filter by) with one deliberate, explicitly
+flagged deviation: **no `updated_at`/`set_updated_at()` trigger** —
+this table is append-only by design, mirroring Stripe's own
+`BalanceTransaction` object (a ledger entry is a statement of fact,
+never edited in place; a correction is a new row). Full column-by-
+column rationale is in migration `0014`'s own header comment and
+`db/SCHEMA.md`'s new `balance_transactions` section — not repeated
+here.
+
+**Design decisions made this leaf, each flagged in the migration
+itself rather than silently assumed:**
+- `business_id` is nullable — the VTU routes (Task 58) can populate
+  it, `/pay`/`/payout` cannot yet (`transactions.business_id` itself
+  still doesn't exist, migration `0010`'s own still-open note).
+- `reference` is a plain correlation column, **not** a foreign key to
+  `transactions.reference` — kept loose on purpose so a row survives
+  even where `transaction_id` is null (the `adjustment` type has no
+  guaranteed source row).
+- `available_on` is nullable with no default logic populating it yet
+  — `null` reads as "available immediately," the only honest default
+  given this repo doesn't yet know whether any of the ten providers
+  has a real settlement delay. Populating it for real is explicitly
+  out of scope for this leaf.
+- `type` CHECK includes `'fee'`/`'refund'` even though neither has a
+  B-Pay write path yet (Task 63/d is still blocked on its own
+  discovery pass) — included now so a future task doesn't need its
+  own migration just to widen this list.
+
+`db/SCHEMA.md` updated in the same session, per that file's own
+"update this file in the same session as any migration that changes
+it" rule. **Not run against the live Supabase project** — per the
+DB-Ops Handoff Process, that's the product owner's own step from the
+second (proot-distro Ubuntu) environment, not this session's to run.
+
+### b. Wire `/pay`, `/payout`, and the VTU purchase routes to write a `balance_transactions` row [ ] — not started
+
+Same non-blocking "never fail the request on a failed write" posture
+Task 56/d-3 established for `recordTransaction()`. Depends on nothing
+further from (a) — the table exists now, this leaf is pure route/
+provider-file wiring whenever a session picks it up next.
+
+### c. Per-business balance view (available vs. pending, per currency) [ ] — not started
+
+Depends on (b) having real rows to read. This is the concrete
+prerequisite Task 46's dashboard needs before it can show anything
+real about a business's own funds — flagged as a dependency there,
+not this leaf's own scope to build the dashboard itself.
+
+### d. Reconciliation-job design [ ] — not started, blocked on its own discovery pass
+
+Needs a per-provider check: does each of the ten providers expose a
+statement/settlement-report endpoint B-Pay could compare its own
+`balance_transactions` rows against? **Not currently known for any
+provider** — same "confirm before building" discipline this file
+applies to every provider capability. Do not guess a provider's
+settlement-report shape when this leaf is picked up.
+
+### e. Payout-schedule question for B-Pay's own wallet-style balances [ ] — open product question, not an implementation task
+
+Does B-Pay need a payout-*schedule* concept (daily/weekly/manual, per
+`STRIPE_DISCOVERY.md` §6) for any wallet-style balance it manages on a
+business's behalf (e.g. the `telcos.opik.net` per-business wallet from
+Task 58)? Needs direct product-owner confirmation before this leaf is
+scoped into code — flag and ask, don't assume an answer.
 
 ---

@@ -4,6 +4,20 @@
 > task's own section. Nothing else in this file is required reading to
 > start work.**
 >
+> **Task 63/a is DONE (2026-09-10)** — Task 51's b-1/b-2 fallback-order
+> tables formalized into a new `routing_fallbacks` table (migrations
+> `0019`/`0020`), purely additive — `routing_config` (migration `0005`)
+> was checked first and confirmed to only store a single
+> `default_provider` per domain, so a sibling table was used instead
+> of repurposing that column. Seeded with today's already-agreed order
+> for both domains; changes no routing decision. `routes.js` was NOT
+> touched — nothing reads this table yet, that's Task 63/b's own
+> scope. **Flagged, unresolved drift risk:** this table's own
+> `priority = 0` row and `routing_config.default_provider` both claim
+> to be "the current default," and nothing keeps them in sync today —
+> full detail in the migration's own header comment and Task 63/a's
+> section (search "Task 63/a — DONE").
+>
 > **Task 62/d is DONE (2026-09-10), pushed, part of PR #3, not yet
 > merged by Phoenix-Boss** — re-confirmed via `git ls-remote` against
 > both `Zapier-codes/B-Pay-backend` (`origin/main` at `4722cd7`,
@@ -14580,6 +14594,51 @@ Natural parts:
   data — the analytics half of Stripe's own Orchestration product
   (§12), scoped down to whatever's derivable from `transactions`
   without a new table.
+
+**Task 63/a — DONE (2026-09-10).** Formalized Task 51's b-1/b-2 prose
+tables into `routing_fallbacks` (migrations `0019`/`0020`), a new,
+purely additive table — `routing_config` (migration `0005`) was
+checked first, per this leaf's own instruction, and confirmed to only
+store a single `default_provider` per domain with no ordering concept,
+so extending it in place would have meant repurposing a column whose
+current single-value meaning `resolveDomainDefaultProvider()` already
+depends on; a new sibling table avoided that risk. Seeded with today's
+already-agreed fallback order for both domains (international:
+juicyway → korapay → paystack → flutterwave; african_rails: korapay →
+paystack → juicyway → flutterwave) — applying this migration changes
+no routing decision, only makes an existing one queryable. RLS enabled
+with the same `service_role`-only policy as every other table in this
+schema. `db/SCHEMA.md` updated in the same session, per that file's
+own rule.
+
+**Deliberately not done in this leaf, flagged plainly:**
+- **`routes.js` was not touched at all.** Nothing reads
+  `routing_fallbacks` yet — wiring it into an actual fallback-attempt
+  (retryable failure → try the next provider) is Task 63/b's own
+  scope, not this one. This leaf is schema-only, same "one part per
+  session" discipline as Task 61/a.
+- **A real, unresolved drift risk, named rather than silently
+  accepted:** this table's own `priority = 0` row and
+  `routing_config.default_provider` both claim to be "the current
+  default" for a domain, and nothing keeps them in sync — today's
+  "promote a fallback to default" workflow (migration `0005`'s own
+  documented `UPDATE routing_config`) only touches `routing_config`.
+  Full detail in the migration's own header comment and
+  `db/SCHEMA.md`'s new `routing_fallbacks` section. Whoever builds
+  Task 63/b should decide whether to read the default from this
+  table instead (retiring the duplication) rather than inheriting it
+  silently.
+
+**Verified:** both migration files parse as valid SQL structure (no
+live database to actually run them against from this sandbox — same
+limitation as every other migration in this repo; per the Patch
+Handoff Convention and the DB-Ops Handoff Process, applying this is
+the product owner's own step, not this session's). Read back both
+files in full after writing to confirm the seed data matches Task
+51's b-1/b-2 tables exactly, field for field, rather than trusting
+memory of what those tables said.
+
+---
 
 #### Task 64 — B-Pay-side fraud/risk layer
 

@@ -285,6 +285,27 @@ before doing anything else.
 
 **Status as of Task 60/e (2026-09-10):** a/b/c/d/e all done — dedup wired in `routes.js`'s `webhookHandlers` (60/b), per-provider event-id field discovery closed with Paystack/Korapay confirmed and JuicyWay flagged as a real open question (60/c), manual replay route live (60/d), and continuous-failure alerting wired via `utils/alerts.js`'s channel-agnostic `notifyOps()` (60/e) — see Task 60/e's own section in handover.md.
 
+### `routing_fallbacks` (migrations `0019`/`0020`) — Task 63/a's machine-readable ordered fallback chain per domain
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `uuid` | primary key |
+| `domain` | `text` | `not null` — one of `classifyDomain()`'s two return values (`'african_rails'` \| `'international'`); no `CHECK`, same reasoning as `routing_config.default_provider` |
+| `provider` | `text` | `not null` — no `CHECK`, `getProvider()` validates at request time |
+| `priority` | `integer` | `not null` — `0` = current default, `1`/`2`/`3` = fallback order, lower attempted first |
+| `created_at` | `timestamptz` | default `now()` |
+| `updated_at` | `timestamptz` | default `now()`, auto-updated via the shared `set_updated_at()` trigger |
+
+**Constraints:** unique `(domain, priority)` (no ambiguity about which provider is "next"), unique `(domain, provider)` (a provider can't appear twice in one domain's chain).
+
+**Seeded** (same migration) with Task 51's b-1/b-2 fallback-order tables exactly as they stand in `handover.md` today (international: juicyway → korapay → paystack → flutterwave; african_rails: korapay → paystack → juicyway → flutterwave) — applying this migration changes no current routing decision, only makes an already-agreed one queryable.
+
+**Not yet wired into the running application.** This leaf is data only — nothing in `routes.js` reads this table yet; that's Task 63/b's own scope (the actual fallback-attempt logic).
+
+**Known, flagged tradeoff, not resolved this leaf:** this table's own `priority = 0` row and `routing_config.default_provider` (above) both encode "today's default provider for domain X." Promoting a fallback to default today only updates `routing_config` (migration `0005`'s own documented workflow) — it does **not** keep this table in sync, so the two can drift if one is edited without the other. Reconciling that (e.g. Task 63/b deriving the default from this table's own `priority = 0` row instead of reading `routing_config` separately) is left for whoever builds Task 63/b, flagged here so it isn't rediscovered as a surprise.
+
+**Row Level Security:** enabled (migration `0020`). One explicit policy, `routing_fallbacks_service_role_all`, scoped to `service_role` only — same pattern as every other table in this schema.
+
 ## Not yet in this schema
 
 Task 56/d (a through e) is fully built. Task 57 (a through e,

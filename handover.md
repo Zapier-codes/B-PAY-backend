@@ -14353,7 +14353,7 @@ route depends on. Not run against a live Supabase project — no new
 migration this leaf, same DB-Ops Handoff Process as every prior
 Supabase-dependent write/read path in this file.
 
-### d. Reconciliation-job design [ ] — discovery pass 9 of 10 providers checked (Xixapay/Prestmit resolved 2026-09-06 earlier pass; PaymentPoint resolved this session against its own already-complete in-repo discovery, not new search), design/build still not started
+### d. Reconciliation-job design [ ] — discovery pass complete, 10 of 10 providers checked; design/build itself still not started
 
 **Scope note:** this leaf needs a per-provider check — does each of
 the ten providers expose a statement/settlement-report endpoint
@@ -14505,8 +14505,50 @@ rather than an unchanged restatement of "still open":**
   Bearer token/api-key pair was flagged as possibly-real and
   unrotated — neither is this leaf's problem to resolve, both already
   flagged for the product owner under a-8.
+- **Remita — resolved this session, correction pass, via a live fetch
+  of `https://api.remita.net` itself** (the product owner supplied
+  this exact URL directly and asked for it to be opened rather than
+  worked around) — **this is stronger evidence than Task 50's own
+  material, not just a repeat of it.** Task 50's supplied Postman
+  snapshot admitted its own incompleteness (only Invoice Generation's
+  intro paragraph was captured, not full endpoint detail); by
+  contrast, `api.remita.net`'s own root page — fetched directly this
+  session, not via search — carries a `meta-description` that
+  explicitly enumerates its **complete top-level category structure**
+  in the site's own words: "our **new APIs**... already available for"
+  (Agency Banking, Collections, Vending, Funds Transfer, Verification)
+  and "our **First Generation APIs** continue to operate... These
+  include" (Invoice Generation, Payment Gateway, Recurring Payments) —
+  eight categories, presented as the entirety of what the platform
+  offers, not a partial excerpt. **No Reconciliation, Settlement, or
+  Statement category appears anywhere in that list.** This is the
+  provider's own primary source directly confirming its own top-level
+  completeness — the same evidentiary bar that resolved
+  Korapay/JuicyWay/Xixapay/Prestmit/PaymentPoint to **confirmed no**,
+  now met for Remita too. **The page's actual endpoint-level content
+  below that top nav remains client-rendered/unreachable by fetch**
+  (same Postman-docs limitation already on record for this exact URL
+  under Task 49/50) — this resolution rests on the category-list
+  completeness of the root page's own meta-description, not on having
+  read every endpoint under each category. Flagged plainly: this is
+  the same standard already accepted for the other four "no"
+  resolutions in this file (checked against the provider's own
+  confirmed-complete index, not exhaustive endpoint-by-endpoint
+  reading), not a weaker standard invented just for Remita.
+  **Discovery pass is now complete: 10 of 10 providers resolved**
+  (Paystack/Flutterwave/DodoPayments: yes/yes/adjacent-yes;
+  Korapay/JuicyWay/Xixapay/Prestmit/PaymentPoint/Remita: no).
 
-**Changelog:** 2026-09-10 (this session, correction pass) —
+**Changelog:** 2026-09-10 (this session, correction pass, continued) —
+Remita resolved to **confirmed no** via a direct fetch of
+`https://api.remita.net`'s own root page (supplied directly by the
+product owner), whose meta-description enumerates a complete
+8-category top-level structure with nothing reconciliation/settlement/
+statement-shaped in it. **Discovery pass now fully complete, 10 of 10
+providers resolved.** The reconciliation-job design/build itself —
+the actual point of this leaf — remains entirely unstarted; per this
+leaf's own scope note, completing discovery does not close this box.
+2026-09-10 (this session, correction pass) —
 PaymentPoint corrected from "unreachable" to **confirmed no**: per
 the product owner's direct instruction, re-checked against Task 0's
 own already-complete `a-8` in-repo discovery (all six of PaymentPoint's

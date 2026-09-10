@@ -47,19 +47,38 @@
 > that exact 5-currency list — matches the shipped code byte-for-byte.
 > No provider code changed this session; this is a documentation-only
 > correction, same convention as the Task 45b/Task 51b staleness
-> corrections above. **Real next task: Korapay's card
-> suspend/status + events-log methods are still genuinely blocked** —
-> re-checked `developers.korapay.com/docs/activate-suspend-terminate-card-via-api`
-> live this session: the field-description-vs-worked-example
-> contradiction (`action: deactivate` vs the example's own
-> `action: "suspend"`) still exists today, unchanged. Per this file's
-> own "don't guess a payload shape, confirm or test it" rule, that
-> still needs a sandbox call or direct Korapay confirmation, not an
-> inference from which of the two conflicting parts of their own page
-> looks more authoritative. **Task 14** (end-to-end manual test pass)
-> is separately still blocked — re-confirmed this session, this
+> corrections above.
+>
+> **Korapay card suspend/status: RESOLVED via a live sandbox call
+> (2026-09-10), `updateCardStatus()` now built in
+> `providers/korapay.js`.** The product owner ran the actual PATCH
+> against this account's own reserved card
+> (`KPY-RVC-aOyZGJl1rxa4pj3`): `action: "suspend"` is the correct
+> value (not `"deactivate"` as the docs' own field description
+> claimed), and the real base path is `/api/v1/cards/:ref/status`, not
+> `/api/i/...` as that same doc page's opening sentence claimed —
+> confirmed by the call succeeding, then reverted with `action:
+> "activate"` (also confirmed working) to restore the card to `active`
+> before this session ended.
+>
+> **Real next task: the card events-log method is still genuinely
+> blocked, narrower than before.** Same live-testing session ruled out
+> `/api/v1/cards/:ref/events` (clean `404 resource not found` against
+> this account) but did NOT confirm `/api/i/cards/:ref/events` either
+> — that path returned `401 Invalid authentication token` using the
+> same `Bearer <secretKey>` header every other method in this class
+> uses successfully (including the now-confirmed status endpoint
+> above), suggesting `/api/i/` may need a different credential type
+> entirely, not just a different path segment. This is not resolvable
+> by testing more path/header guesses from this side — needs a direct
+> answer from Korapay support on the real path and auth requirement.
+> `providers/korapay.js`'s `getCardEvents()` is stubbed to throw with
+> a pointer back to this note, deliberately not guessed at. **Task 14**
+> (end-to-end manual test pass) is separately still blocked — this
 > sandbox's network egress still returns `403 host_not_allowed` for
-> both `api.juicyway.com` and `api.paystack.co`.
+> both `api.paystack.co` and `api.korapay.com` (confirmed again this
+> session); the live testing above happened from the product owner's
+> own Termux, not this sandbox.
 >
 > **Product-owner scope call, 2026-09-09: Task 9 checked off** for
 > Korapay+Paystack (confirmed); JuicyWay's amount-unit rule stays open,
@@ -165,6 +184,23 @@
 
 ## 📝 Session Log (newest first — one line per session, optional)
 
+- 2026-09-10 — Task 53/a leaf closed for suspend/status: product
+  owner ran live PATCH calls against their own reserved card
+  (`KPY-RVC-aOyZGJl1rxa4pj3`) from their own Termux (this sandbox
+  still can't reach `api.korapay.com`, Task 14 unchanged). Confirmed
+  `action: "suspend"` (not `"deactivate"`) and base path `/api/v1/`
+  (not `/api/i/`) — built `updateCardStatus()` in
+  `providers/korapay.js` against the confirmed shape, `node --check`
+  clean. Card was left in its original `active` state (suspend →
+  confirm → activate → confirm, in that order). Events-log blocker
+  narrowed but not resolved: `/api/v1/.../events` now ruled out
+  (clean 404 against the real API), `/api/i/.../events` returns a
+  different error class (`401`, "no token"/"invalid token") than a
+  bad key or bad path — suggests a different credential type, not a
+  path typo. `getCardEvents()` stubbed to throw rather than guess a
+  third variant; needs direct Korapay support confirmation. Per
+  No-skip-ahead, not substituting a different task for the still-open
+  half.
 - 2026-09-10 — Re-verification pass, no leaf finished, no code
   changed: pulled `origin/main`/`upstream/main` (PR #3 still open,
   unmerged — origin ahead of upstream as expected), read this file in
@@ -11576,6 +11612,52 @@ verification only, not a live-Korapay round trip; script run and
 deleted per convention, no artifact left in the repo. Real end-to-end
 verification against Korapay's own sandbox is still open, same
 standing blocker Task 14 already tracks.
+
+**Suspend/status blocker RESOLVED (2026-09-10) via a real live call —
+not this sandbox (still 403-blocked per Task 14), but the product
+owner's own Termux, with this account's real secret key and its own
+reserved card `KPY-RVC-aOyZGJl1rxa4pj3`:**
+- `PATCH {{baseurl}}/api/v1/cards/:reference/status` with
+  `{"action": "suspend", "reason": "..."}` → `{"status": true,
+  "message": "Card deactivated successfully", "data": {"status":
+  "suspended"}}`. Confirms **`/api/v1/` is the real base path, not
+  `/api/i/`** as this section's own discovery-pass note above records
+  the docs claiming — every other Card Issuing endpoint already used
+  `/api/v1/`, and this was the doc's own inconsistency, not a real
+  alternate path.
+- Same call with `{"action": "activate", ...}` → `{"status": true,
+  "message": "Card activated successfully", "data": {"status":
+  "active"}}`, used immediately after to restore the card to `active`
+  before ending the test — confirms `"activate"` (never actually in
+  question) and leaves the card in its original state.
+- `updateCardStatus(cardReference, action, reason)` built in
+  `providers/korapay.js` against this confirmed shape, right after
+  `withdrawCard()`. `node --check` clean.
+
+**Events-log blocker NARROWED, still open** — same live-testing
+session also tried both path variants against the real API:
+- `GET {{baseurl}}/api/v1/cards/:reference/events` → clean `{"status":
+  false, "message": "resource not found", ...}` (`404`). This path is
+  now ruled out with certainty, not just suspected wrong.
+- `GET {{baseurl}}/api/i/cards/:reference/events` (same `Bearer
+  <secretKey>` header the now-confirmed status call and every other
+  method in this class use successfully) → `{"status": false, "error":
+  "not_authenticated", "message": "no authorization token found"}` on
+  a bare-token retry and `{"status": false, "error": "unauthorized",
+  "message": "Invalid authentication token"}` with the standard
+  `Bearer` prefix — a **different error class** than a wrong path
+  (`404`) or a bad key (confirmed separately via `GET
+  {{baseurl}}/api/v1/balances`, which succeeded with the same key).
+  This suggests `/api/i/` may be a real route that requires a
+  different credential type entirely (a dashboard/session token, not
+  a merchant secret key), not simply a typo'd path segment. Per this
+  file's own "don't guess, confirm" rule, trying further header/prefix
+  variants from here would just accumulate more distinct error
+  messages without resolving anything — the next concrete step is
+  asking Korapay support directly what the real path and auth
+  requirement are. `getCardEvents()` is stubbed in
+  `providers/korapay.js` to throw with a pointer back to this note,
+  not silently guessed at.
 
 ### b. White-label branding — must be dynamic, not hardcoded
 

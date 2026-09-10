@@ -639,6 +639,72 @@ export class Korapay {
     return result;
   }
 
+  // PATCH /api/v1/cards/:reference/status — activate/suspend a card.
+  // CONFIRMED via a live sandbox call against this account's own
+  // reserved card (2026-09-10), not guessed: the endpoint's real base
+  // path is `/api/v1/...`, NOT `/api/i/...` as Task 53/a's discovery
+  // pass found the docs page's own opening sentence claiming (every
+  // other confirmed Card Issuing endpoint already used `/api/v1/`,
+  // and this test confirms status follows the same pattern — the
+  // `/api/i/` sentence on that doc page was a documentation error).
+  // The `action` value is also confirmed by the same live call:
+  // `"suspend"` is correct — NOT `"deactivate"` as the field's own
+  // description claimed (the doc page's own worked example already
+  // hinted at this; the live call confirms it). `"activate"` is
+  // unambiguous and was not in question — also confirmed working by
+  // the same test. Response shape on success:
+  // `{ status: true, message: '...', data: { status: 'active' |
+  // 'suspended' } }`.
+  async updateCardStatus(cardReference, action, reason) {
+    const payload = { action, reason };
+
+    log(`Korapay Update Card Status Request for ${cardReference}: ${formatPayload(payload)}`);
+
+    const result = await handleApiCall(async () => {
+      const response = await fetch(
+        `${this.baseUrl}/api/v1/cards/${encodeURIComponent(cardReference)}/status`,
+        {
+          method: 'PATCH',
+          headers: {
+            'Authorization': `Bearer ${this.secretKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(payload),
+        }
+      );
+
+      const responseData = await response.json();
+
+      if (!response.ok || !responseData.status) {
+        throw providerError(responseData.message || 'Korapay card status update failed');
+      }
+
+      return responseData;
+    }, 'korapay');
+
+    log(`Korapay Update Card Status Response for ${cardReference}: ${formatPayload(result)}`);
+    return result;
+  }
+
+  // GET .../cards/:reference/events — card lifecycle events log.
+  // STILL NOT BUILT — deliberately, same "confirm before guessing"
+  // posture as the rest of this section. A live sandbox call
+  // (2026-09-10) ruled out `/api/v1/cards/:reference/events`
+  // (clean `404 resource not found`) but did NOT confirm
+  // `/api/i/cards/:reference/events` either — that path returned
+  // `401 Invalid authentication token` using this account's normal
+  // merchant secret key (`Bearer <secretKey>`, the same header every
+  // other method in this class uses successfully), which suggests
+  // `/api/i/` may require a different credential type entirely, not
+  // just a different path. Needs a direct answer from Korapay support
+  // on the real path + auth requirement before this method is
+  // written — do not guess a third variant.
+  async getCardEvents() {
+    throw new Error(
+      'Korapay.getCardEvents() is not implemented — the events-log path/auth is unconfirmed. See this method\'s own comment and handover.md Task 53/a.'
+    );
+  }
+
   // ==================================================
   // 🔔 WEBHOOK SIGNATURE VERIFICATION
   // ==================================================

@@ -13995,13 +13995,10 @@ Closes §6. Natural parts:
 #### Task 62 — Cross-provider decline/error taxonomy
 
 Closes §4. Natural parts:
-- **a.** Design a canonical `{ code, category, retryable, message }`
-  shape, mirroring Stripe's three-layer split (API error / decline
-  code / outcome) collapsed into one B-Pay-appropriate shape — a
-  full Stripe replica is over-scoped per this file's own "pattern, not
-  feature import" rule; propose the collapsed shape for product-owner
-  confirmation before building, per the Stripe-Reference Convention's
-  own step 3.
+- **a. Design proposal written this session (2026-09-10) — decision-
+  record only, no code, per this leaf's own text: "propose the
+  collapsed shape for product-owner confirmation before building."**
+  See the full proposal immediately below this list.
 - **b.** Per-provider mapping table — what does each of the ten
   providers actually return on failure today? Much of this is already
   scattered across this file's own past task write-ups (Task 45c's
@@ -14024,6 +14021,100 @@ Closes §4. Natural parts:
   reaches this leaf should open it as its own follow-up task per
   provider group, not force all ten into parts a–e of this single
   leaf).
+
+**Task 62/a — the actual proposal, written this session (2026-09-10),
+decision-record only, no code changed.** Read `utils/helpers.js`'s
+existing `ApiError`/`providerError()`/`handleApiCall()` first (Task
+13) before evaluating this — today's real shape is `{ provider,
+statusCode, message, originalError }` plus a binary
+`err.isProviderMessage` flag (safe-to-surface or not), nothing
+resembling `code`/`category`/`retryable` exists anywhere in this
+codebase yet. This proposal is additive to that, not a rewrite —
+`ApiError` itself doesn't need to change shape, it needs three new
+fields.
+
+**Proposed shape:** `{ code, category, retryable, message }`, attached
+to the existing `ApiError` instance (`err.code`, `err.category`,
+`err.retryable`), not a replacement object — `providerError()` gains
+three new optional parameters (defaulting to safe fallbacks below),
+existing call sites that don't pass them keep working unchanged.
+
+- **`code`** — a stable, machine-readable, provider-*agnostic* string
+  where the underlying failure has an obvious shared meaning across
+  providers (`insufficient_funds`, `invalid_account`,
+  `authentication_failed`, `rate_limited`, `provider_unavailable`),
+  falling back to `provider_error` when a provider's own failure
+  doesn't cleanly map to a shared bucket. **Not proposed as an
+  exhaustive enum here** — Task 62/b's own per-provider mapping pass
+  is what actually populates the real vocabulary; inventing a fixed
+  list now, before seeing what all ten providers actually return,
+  risks the same "guessed enum, no real example" caveat already
+  flagged elsewhere in this file (Task 61/d-2's `discrepancy_type`,
+  above).
+- **`category`** — a small, fixed, closed set (unlike `code`):
+  `'validation'` (bad input — bad account number, malformed request),
+  `'authentication'` (bad/expired/missing credentials),
+  `'insufficient_funds'` (the one decline reason common and important
+  enough across every provider this file has audited to earn its own
+  category rather than living inside `'declined'`),
+  `'declined'` (any other provider-side refusal),
+  `'rate_limit'`, `'provider_unavailable'` (5xx/timeout/network-level —
+  maps to today's existing "internal/operational failure" bucket in
+  `handleApiCall()`), `'unknown'` (fallback, should shrink over time
+  as Task 62/b/e's real mappings land, never removed entirely since a
+  genuinely novel failure shape will always be possible). **This is
+  the layer Task 63's future automatic-fallback logic should actually
+  branch on** — `retryable` alone tells a caller *whether* to retry;
+  `category` tells them *what kind* of thing happened, useful for
+  logging/alerting (Task 60/e's `notifyOps()` is an obvious future
+  consumer: a spike in `authentication` errors for one provider means
+  something different than a spike in `insufficient_funds`).
+- **`retryable`** — boolean, the one field with a direct, immediate
+  consumer already built: Task 63's not-yet-started automatic-
+  fallback logic needs exactly this to decide "try the next provider
+  in the fallback chain" vs. "surface this failure, retrying won't
+  help" (an `insufficient_funds` decline on a customer's card
+  shouldn't trigger a same-request fallback to a different provider —
+  the customer's card is still short of funds regardless of which
+  provider is asked; a `provider_unavailable` 503 should). Default
+  mapping by category, overridable per-code if a specific one needs
+  it: `validation`/`authentication`/`insufficient_funds`/`declined` →
+  `false`; `rate_limit`/`provider_unavailable`/`unknown` → `true`.
+- **`message`** — unchanged in spirit from today's existing
+  `isProviderMessage`-flagged safe-to-surface text; this proposal
+  doesn't touch that logic, just sits alongside it. `handleApiCall()`
+  keeps deciding what's safe to show a caller exactly as it does today.
+
+**Why collapsed to four fields, not Stripe's real three-layer split
+(`type`/`code`/`decline_code`) — explicit reasoning, not just
+asserted:** Stripe's own three layers exist because Stripe
+distinguishes *API-level* errors (bad request shape) from
+*card-network*-level decline codes (`insufficient_funds`,
+`stolen_card`, etc.) from a *human-readable* outcome — a distinction
+that matters at Stripe's scale across card networks with their own
+standardized decline-code vocabularies (ISO 8583 response codes,
+etc.). B-Pay's ten providers are a much shallower, more heterogeneous
+mix (card processors, virtual-account/bank-transfer rails, airtime/
+data vending) with no shared underlying network standard to layer
+against — collapsing to one flat `category` (closed, small) +
+`code` (open, provider-sourced-but-normalized-where-possible) captures
+the same practical distinction (broad bucket vs. specific reason)
+without building infrastructure for a card-network layer this
+product's own rail mix doesn't actually have. Matches this file's own
+standing "pattern, not feature import" rule for the Stripe-Reference
+Convention generally, not a new principle invented for this leaf.
+
+**Not decided here, flagged for whoever picks up (b):** the complete
+`code` vocabulary (deliberately left open above), and whether
+`category: 'insufficient_funds'` should also imply `code:
+'insufficient_funds'` always (probably yes, but not confirmed against
+a real provider example yet — Task 62/b's job, not this one's).
+
+**Not proposed here, deliberately:** any code touching
+`utils/helpers.js` (that's Task 62/c's own scope, contingent on this
+proposal being confirmed first), and no per-provider mapping (Task
+62/b) — this leaf is the shape only, same discipline as Task 61/d's
+own design-not-code posture two tasks ago.
 
 #### Task 63 — Cross-provider automatic fallback/retry + performance tracking + unified refund path
 

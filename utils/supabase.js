@@ -526,6 +526,44 @@ export async function markWebhookEventStatus(id, status) {
   }
 }
 
+// Full-row fetch by primary key, for Task 60/d's manual replay route.
+// Unlike isWebhookEventProcessed() above (a status-only dedup lookup),
+// the replay route needs the actual `provider`, `payload`, and
+// `signature_valid` to re-run a handler — so this returns the whole
+// row, or `null` for "not found," "Supabase unavailable," or a query
+// error alike (the route itself is responsible for turning a `null`
+// into the right HTTP status; this helper just never throws, same
+// posture as every other read in this file).
+export async function getWebhookEventById(id) {
+  if (!id) return null;
+
+  let client;
+  try {
+    client = getSupabaseClient();
+  } catch (err) {
+    log(`getWebhookEventById skipped — Supabase not available: ${err.message}`, 'warn');
+    return null;
+  }
+
+  try {
+    const { data, error } = await client
+      .from('webhook_events')
+      .select('id, provider, provider_event_id, payload, signature_valid, status, received_at, processed_at')
+      .eq('id', id)
+      .maybeSingle();
+
+    if (error) {
+      log(`getWebhookEventById lookup failed for id '${id}': ${error.message}`, 'warn');
+      return null;
+    }
+
+    return data || null;
+  } catch (err) {
+    log(`getWebhookEventById failed for id '${id}': ${err.message}`, 'warn');
+    return null;
+  }
+}
+
 // ==================================================
 // 🧑‍💼 CUSTOMER VAULT — READ/WRITE (Task 57/d)
 // ==================================================

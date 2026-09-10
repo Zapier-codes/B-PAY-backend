@@ -4,7 +4,7 @@ import { Juicyway } from './providers/juicyway.js';
 import { Korapay } from './providers/korapay.js';
 import { TelcosOpik, provisionTelcosOpikAccount, resolveTelcosOpikApiKey } from './providers/telcosOpik.js';
 import { log, formatPayload, generateReference, getSupportedCurrencies, isValidCurrencyCode, isValidEmail, providerRequiresEmail, requireInternalApiKey, classifyDomain, computeProviderEventKey } from './utils/helpers.js';
-import { recordTransaction, recordBalanceTransaction, getBusinessBalance, getTransactionByReference, getRoutingDefaultProvider, getCapabilityStatus, isWebhookEventProcessed, recordWebhookEvent, markWebhookEventStatus } from './utils/supabase.js';
+import { recordTransaction, recordBalanceTransaction, getBusinessBalance, getTransactionByReference, getRoutingDefaultProvider, getCapabilityStatus, isWebhookEventProcessed, recordWebhookEvent, markWebhookEventStatus, getWebhookEventById } from './utils/supabase.js';
 import { getMissingFields } from './utils/fieldRequirements.js';
 import { resolveCustomer } from './utils/customerVault.js';
 import { handleGatewayEvent } from './webhookGateway.js';
@@ -548,6 +548,88 @@ const getProvider = (name) => {
 // to any of the three — all hash/checksum the express.json()-parsed-
 // and-re-serialized body (or, for Juicyway, a checksum field inside
 // that body), not raw bytes.
+// Task 60/d — split out from webhookHandlers below. Stripe's own
+// dashboard "resend" doesn't re-derive a new HMAC signature for a
+// replay; it re-delivers the *original*, already-verified payload and
+// lets the endpoint's own business logic run again. B-Pay has no
+// separate "endpoint" to redeliver to (this backend IS the endpoint),
+// so the equivalent here is re-running just the post-verification
+// side-effect logic against the stored payload — which only works if
+// that logic is reachable without a live signature header. Before this
+// task, it wasn't: verification and processing were fused into one
+// function per provider. This map is exactly that side-effect logic,
+// extracted so both the live webhook route (after a real signature
+// check) and the new manual-replay route (after loading a
+// `signature_valid: true` row) can call the same code, instead of the
+// replay route duplicating each switch statement or the live route
+// losing its verification step.
+const webhookEventProcessors = {
+  paystack: async (event, data) => {
+    switch (event) {
+      case 'charge.success':
+        // Per paystack.com/docs/payments/webhooks/, this is the
+        // authoritative "payment actually succeeded" signal — more
+        // reliable than the client-side redirect/callback. No
+        // persistence layer exists yet (see Task 12), so for now this
+        // just logs the confirmed transaction; a future task wires
+        // this into whatever store Task 12 decides on.
+        log(`Paystack charge.success: reference=${data?.reference}, amount=${data?.amount}, status=${data?.status}`);
+        break;
+      default:
+        // Paystack's docs list no dedicated "charge failed" event —
+        // failures simply don't raise a webhook, so every other event
+        // type here (transfer.*, refund.*, subscription.*, dispute.*,
+        // etc.) is just acknowledged and logged for now, not acted on.
+        log(`Paystack webhook event '${event}' received, no handler wired yet — logged only`);
+    }
+  },
+  korapay: async (event, data) => {
+    switch (event) {
+      case 'charge.success':
+      case 'charge.failed':
+      case 'transfer.success':
+      case 'transfer.failed':
+      case 'refund.success':
+      case 'refund.failed':
+        log(`Korapay ${event}: reference=${data?.reference}, amount=${data?.amount}, currency=${data?.currency}, status=${data?.status}`);
+        break;
+      default:
+        log(`Korapay webhook event '${event}' received, no handler wired yet — logged only`);
+    }
+
+    // Task 41 — this is now the single Korapay webhook receiver for
+    // every multi-tenant app (Korapay's dashboard only ever points at
+    // one URL, account-wide). Fan the verified event out to whichever
+    // app's `reference` prefix matches, via webhookGateway.js. This
+    // call is fire-and-forget-with-recording, not fire-and-wait: it
+    // records the event and attempts one immediate forward, but the
+    // response to Korapay below happens regardless of that forward's
+    // outcome — a failed forward gets retried by index.js's periodic
+    // sweep instead of holding Korapay's own webhook delivery hostage
+    // (Korapay has its own retry behavior on non-200, which is exactly
+    // what this is trying to avoid depending on for correctness — see
+    // webhookGateway.js's own file header for the full reasoning,
+    // including its one known limitation: in-memory only, not durable
+    // across a restart/redeploy yet). Also re-run on a manual replay —
+    // that's the whole point of replaying a Korapay event (e.g. a
+    // downstream app's own consumer missed the original fanout).
+    await handleGatewayEvent(event, data);
+  },
+  juicyway: async (event, data) => {
+    switch (event) {
+      case 'payment.session.succeeded':
+      case 'payment.session.failed':
+        // Per docs.juicyway.com/webhooks, `data.status` is 'success' or
+        // 'failed' regardless of which of these two events fired. No
+        // persistence layer exists yet (see Task 12).
+        log(`Juicyway ${event}: reference=${data?.reference}, amount=${data?.amount}, currency=${data?.currency}, status=${data?.status}`);
+        break;
+      default:
+        log(`Juicyway webhook event '${event}' received, no handler wired yet — logged only`);
+    }
+  },
+};
+
 const webhookHandlers = {
   paystack: async (req) => {
     const provider = new Paystack();
@@ -582,23 +664,7 @@ const webhookHandlers = {
       signature_valid: true,
     });
 
-    switch (event) {
-      case 'charge.success':
-        // Per paystack.com/docs/payments/webhooks/, this is the
-        // authoritative "payment actually succeeded" signal — more
-        // reliable than the client-side redirect/callback. No
-        // persistence layer exists yet (see Task 12), so for now this
-        // just logs the confirmed transaction; a future task wires
-        // this into whatever store Task 12 decides on.
-        log(`Paystack charge.success: reference=${data?.reference}, amount=${data?.amount}, status=${data?.status}`);
-        break;
-      default:
-        // Paystack's docs list no dedicated "charge failed" event —
-        // failures simply don't raise a webhook, so every other event
-        // type here (transfer.*, refund.*, subscription.*, dispute.*,
-        // etc.) is just acknowledged and logged for now, not acted on.
-        log(`Paystack webhook event '${event}' received, no handler wired yet — logged only`);
-    }
+    await webhookEventProcessors.paystack(event, data);
 
     await markWebhookEventStatus(eventRowId, 'processed');
     return { received: true };
@@ -638,34 +704,7 @@ const webhookHandlers = {
       signature_valid: true,
     });
 
-    switch (event) {
-      case 'charge.success':
-      case 'charge.failed':
-      case 'transfer.success':
-      case 'transfer.failed':
-      case 'refund.success':
-      case 'refund.failed':
-        log(`Korapay ${event}: reference=${data?.reference}, amount=${data?.amount}, currency=${data?.currency}, status=${data?.status}`);
-        break;
-      default:
-        log(`Korapay webhook event '${event}' received, no handler wired yet — logged only`);
-    }
-
-    // Task 41 — this is now the single Korapay webhook receiver for
-    // every multi-tenant app (Korapay's dashboard only ever points at
-    // one URL, account-wide). Fan the verified event out to whichever
-    // app's `reference` prefix matches, via webhookGateway.js. This
-    // call is fire-and-forget-with-recording, not fire-and-wait: it
-    // records the event and attempts one immediate forward, but the
-    // response to Korapay below happens regardless of that forward's
-    // outcome — a failed forward gets retried by index.js's periodic
-    // sweep instead of holding Korapay's own webhook delivery hostage
-    // (Korapay has its own retry behavior on non-200, which is exactly
-    // what this is trying to avoid depending on for correctness — see
-    // webhookGateway.js's own file header for the full reasoning,
-    // including its one known limitation: in-memory only, not durable
-    // across a restart/redeploy yet).
-    await handleGatewayEvent(event, data);
+    await webhookEventProcessors.korapay(event, data);
 
     await markWebhookEventStatus(eventRowId, 'processed');
     return { received: true };
@@ -709,17 +748,7 @@ const webhookHandlers = {
       signature_valid: true,
     });
 
-    switch (event) {
-      case 'payment.session.succeeded':
-      case 'payment.session.failed':
-        // Per docs.juicyway.com/webhooks, `data.status` is 'success' or
-        // 'failed' regardless of which of these two events fired. No
-        // persistence layer exists yet (see Task 12).
-        log(`Juicyway ${event}: reference=${data?.reference}, amount=${data?.amount}, currency=${data?.currency}, status=${data?.status}`);
-        break;
-      default:
-        log(`Juicyway webhook event '${event}' received, no handler wired yet — logged only`);
-    }
+    await webhookEventProcessors.juicyway(event, data);
 
     await markWebhookEventStatus(eventRowId, 'processed');
     return { received: true };
@@ -1465,6 +1494,90 @@ router.post('/webhooks/:provider', async (req, res) => {
     // class (e.g. `new Paystack()`), which can throw the same
     // isConfigError-tagged errors on a missing key.
     return res.status(error.statusCode || 500).json({ status: false, message: clientSafeMessage(error, 'Webhook processing failed') });
+  }
+});
+
+// POST /api/webhooks/:id/replay — Task 60/d
+//
+// Mirrors Stripe Dashboard's own manual "resend" affordance (migration
+// 0016/0017's own comments call this out as the reason `payload` is
+// stored in full), scaled to B-Pay's no-dashboard-yet reality (Task 46
+// still open) as a plain internal route instead of a UI button.
+// `requireInternalApiKey`-gated, same trust model as `/payout`, `/pay`,
+// and `GET /api/balance` — this replays real provider side effects
+// (Korapay's multi-tenant fanout in particular), so it is exactly as
+// sensitive as a live webhook delivery and gets the same protection,
+// not a lesser one.
+//
+// `:id` is a `webhook_events.id` (the row's own uuid primary key), not
+// a provider event id — the operator finds it by querying the table
+// directly (no list endpoint exists yet; Task 46's dashboard is the
+// eventual UI for this).
+//
+// Deliberately does NOT run the `isWebhookEventProcessed` dedup
+// short-circuit that the live route above does — a manual replay's
+// entire purpose is to re-run a delivery that may already be marked
+// `processed` (e.g. a downstream consumer never actually received the
+// original fanout), so the dedup check that protects the live route
+// from a provider's own duplicate retries would defeat the feature
+// here. This is an explicit operator action behind an internal-only
+// credential, not an untrusted inbound delivery — same reasoning
+// Stripe's own dashboard resend doesn't dedupe against prior
+// deliveries either.
+//
+// Refuses to replay a row whose `signature_valid` is not `true` — this
+// table is designed to eventually also hold failed-verification
+// attempts (Task 60/b's own flagged gap, still open), and even once it
+// does, an unverified payload must never be fed back through real
+// side-effect code just because an operator has an internal API key;
+// replay re-runs trusted history, it does not re-verify untrusted
+// input.
+router.post('/webhooks/:id/replay', requireInternalApiKey, async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    log(`Manual webhook replay requested for webhook_events.id='${id}'`);
+
+    const row = await getWebhookEventById(id);
+
+    if (!row) {
+      log(`Webhook replay: no webhook_events row found for id='${id}'`, 'warn');
+      return res.status(404).json({ status: 'error', message: `No webhook event found for id '${id}'` });
+    }
+
+    if (row.signature_valid !== true) {
+      log(`Webhook replay refused for id='${id}' — signature_valid is not true (${row.signature_valid})`, 'error');
+      return res.status(400).json({ status: 'error', message: 'Refusing to replay a webhook event that did not pass signature verification' });
+    }
+
+    const processor = webhookEventProcessors[row.provider?.toLowerCase()];
+    if (!processor) {
+      log(`Webhook replay: no processor registered for provider '${row.provider}' (id='${id}')`, 'error');
+      return res.status(400).json({ status: 'error', message: `No replay handler registered for provider '${row.provider}'` });
+    }
+
+    const { event, data } = row.payload || {};
+    log(`Replaying ${row.provider} webhook '${event}' (webhook_events.id='${id}', originally received ${row.received_at}, previous status '${row.status}')`);
+
+    await processor(event, data);
+
+    await markWebhookEventStatus(row.id, 'processed');
+
+    return res.status(200).json({
+      status: 'success',
+      message: 'Webhook event replayed',
+      data: { id: row.id, provider: row.provider, event, previous_status: row.status },
+    });
+  } catch (error) {
+    log(`Webhook replay error for id='${id}': ${error.message}`, 'error');
+    // Best-effort — if the row was found and matched above, mark it
+    // failed so the next replay attempt (or Task 60/e's future
+    // alerting) can see this one didn't succeed; if it failed before
+    // that point (e.g. the lookup itself), there's no row id to mark.
+    if (req.params.id) {
+      await markWebhookEventStatus(req.params.id, 'failed');
+    }
+    return res.status(error.statusCode || 500).json({ status: 'error', message: clientSafeMessage(error, 'Webhook replay failed') });
   }
 });
 

@@ -309,6 +309,20 @@
 
 ## 📝 Session Log (newest first — one line per session, optional)
 
+- 2026-09-10 — Task 60/d done: manual webhook replay route
+  (`POST /api/webhooks/:id/replay`, `requireInternalApiKey`-gated).
+  Required first splitting each `webhookHandlers` entry's fused
+  verify+process logic into a separate `webhookEventProcessors` map so
+  replay can re-run just the processing half against a stored,
+  already-verified payload. Refuses to replay a `signature_valid:
+  false` row; deliberately skips the live route's dedup short-circuit
+  (replaying an already-`processed` row is the feature). Auth/404 paths
+  smoke-tested live against the mounted router; the
+  signature-guard/success paths were reviewed but not exercised live
+  (no local Supabase REST stub set up this session — flagged for
+  whoever next has one). Task 60/e (continuous-failure alerting) is the
+  only leaf left in Task 60, still blocked on a product-owner decision
+  about what "notify" means here.
 - 2026-09-10 — Task 60/b done: dedup wired into `routes.js`'s
   `webhookHandlers` (not `webhookGateway.js` — corrected), uniform
   `event:reference` fallback key for Paystack/Korapay/Juicyway; failed-
@@ -13533,7 +13547,7 @@ sessions). Each task below states its natural parts so the session
 that picks it up doesn't have to re-derive them, exactly as the
 splitting rule's own "how to split, in practice" section describes.
 
-#### Task 60 — Webhook event ledger, idempotent dedup, and replay [ ] (a/c done; b/d open; e blocked)
+#### Task 60 — Webhook event ledger, idempotent dedup, and replay [ ] (a/b/c/d done; e blocked on a product-owner decision — see e's own entry)
 
 Closes `STRIPE_DISCOVERY.md` §3's gap. Natural parts:
 - **a. DONE (2026-09-10).** `webhook_events` table built: migrations
@@ -13693,11 +13707,73 @@ Closes `STRIPE_DISCOVERY.md` §3's gap. Natural parts:
   the other two) or spend part of its own session confirming
   `transaction_id` first — a call for whoever picks up 60/b, not
   decided here.
-- **d.** Manual replay mechanism (an internal, `requireInternalApiKey`-
-  gated route that re-runs a stored `webhook_events` row's handler) —
-  mirrors Stripe Dashboard's own manual-resend affordance, scaled to
-  B-Pay's no-dashboard-yet reality (Task 46 still open) as a plain
-  route instead of a UI button.
+- **d. DONE (2026-09-10).** Manual replay mechanism built:
+  `POST /api/webhooks/:id/replay`, `requireInternalApiKey`-gated, same
+  trust model as `/payout`/`/pay`/`GET /api/balance`. `:id` is a
+  `webhook_events.id` (the row's own uuid), looked up via the new
+  `getWebhookEventById()` in `utils/supabase.js` (same "never throws,
+  `null` on not-found/unavailable" posture as every other read in that
+  file).
+  - **Refactor this leaf required first:** the three `webhookHandlers`
+    entries in `routes.js` had signature verification and event
+    processing fused into one function each — a replay has no fresh
+    signature header to re-verify, only a stored, already-verified
+    payload, so that fusion made replay impossible without either
+    duplicating each provider's `switch` statement or skipping
+    verification unsafely on the live path too. Split each handler's
+    post-verification logic out into a new `webhookEventProcessors`
+    map (`{ paystack, korapay, juicyway }`, each `(event, data) =>
+    ...`); `webhookHandlers` now verifies + dedupes + records, then
+    calls into the matching `webhookEventProcessors` entry — same
+    behavior as before for the live route, now also independently
+    callable by the replay route. Korapay's processor still fires
+    `handleGatewayEvent()` (Task 41's multi-tenant fanout) — a replay
+    re-runs that too, deliberately: a missed downstream fanout is a
+    real reason to replay a Korapay event specifically.
+  - Refuses to replay a row whose `signature_valid` is not `true`
+    (400) — this table is designed to eventually also hold
+    failed-verification attempts (Task 60/b's own still-open flagged
+    gap), and even once it does, replay re-runs *trusted history*, not
+    a re-verification path, so an unverified payload must never reach
+    real side-effect code this way.
+  - Deliberately does **not** run the `isWebhookEventProcessed` dedup
+    short-circuit the live route uses — replaying a row already marked
+    `processed` is the entire point of a manual replay (e.g. a
+    downstream consumer missed the original fanout); the dedup guard
+    that protects the live route from a provider's own duplicate
+    retries would defeat this route if reused here. This is an
+    explicit, internal-key-gated operator action, not an untrusted
+    inbound delivery — same distinction Stripe's own dashboard resend
+    draws.
+  - On success: re-runs the matching processor, then
+    `markWebhookEventStatus(id, 'processed')`, responds
+    `{ status: 'success', data: { id, provider, event, previous_status
+    } }`. On a processor throwing: best-effort
+    `markWebhookEventStatus(id, 'failed')` before returning the error,
+    same `clientSafeMessage()` sanitization as every other route here.
+  - **Verification:** `node --check routes.js`/`utils/supabase.js`
+    both pass. `npm install` run clean (no new dependency added — this
+    leaf is pure application code + one migration-adjacent read
+    helper). Confirmed `routes.js` still imports cleanly end-to-end
+    (`import('./routes.js')` resolves with `node_modules` installed).
+    Live HTTP smoke test against the actual mounted router (Express app
+    + `fetch`, no live Supabase): missing internal key → 401; wrong
+    key → 401; correct key + no `SUPABASE_URL`/`SUPABASE_SERVICE_ROLE_KEY`
+    configured (this sandbox) → `getWebhookEventById` correctly
+    resolves `null` → route correctly returns 404. The
+    `signature_valid: false` guard and the full processed-row replay
+    path were checked by code review, not exercised live — ESM named
+    imports are read-only bindings from outside the module (confirmed
+    directly: attempting to monkeypatch `getWebhookEventById`/
+    `markWebhookEventStatus` from a throwaway harness throws
+    `TypeError: Cannot assign to read only property`), so faking those
+    two specific paths the way Task 60/b's own session stubbed a local
+    HTTP server standing in for Supabase's REST endpoint would need a
+    real `SUPABASE_URL` pointed at such a stub, not just an in-process
+    monkeypatch — left for whoever next has real or stubbed Supabase
+    REST access to close, not guessed passing here. Not run against a
+    live Supabase project — same DB-Ops Handoff Process as every prior
+    Supabase-dependent path in this file.
 - **e.** Continuous-failure alerting (mirrors Stripe's 3-day auto-
   disable-and-notify) — scoped down to whatever B-Pay's current
   notification capability actually is; needs a product-owner decision

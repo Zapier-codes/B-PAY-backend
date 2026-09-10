@@ -3646,21 +3646,18 @@ see step 2 above):** **PR #2 merged by Phoenix-Boss 2026-08-31**
 Zapier-codes/main," bringing in everything through `01df9c7`); the
 same session opened **PR #3** to cover the gap that left open (see the
 Session Pointer Archive's own 2026-08-31 entry for that PR's opening
-details). **Re-confirmed this session (2026-09-09):** `git ls-remote`
-against `Phoenix-Boss/B-PAY-backend` shows `refs/pull/3/head` at
-`d997785...` — this session's own Task 58 step 4 commit
-(`feat(providers): telcosOpik client + account-provisioning logic`),
-landed on `origin/main` and auto-joined PR #3, exactly as expected.
-`refs/pull/2/head` is still frozen at `01df9c7` (unchanged since the
-merge — expected, since a merged/closed PR's head ref doesn't move).
-**PR #3 is open, unmerged, and is the correct target for every push
-right now** — no new PR needed. A follow-up `api.github.com` call to
-confirm PR #3's `state`/`merged` fields directly hit this session's
-own rate limit (`403`, `API rate limit exceeded`, unauthenticated) —
-the `git ls-remote` evidence above (a still-live, still-moving
-`refs/pull/3/head`) is treated as sufficient without it, same as the
-2026-08-31 session's own `gh pr create` success output was treated as
-authoritative over a rate-limited API double-check.
+details). **Re-confirmed 2026-09-10** (Task 60/d push): `git
+ls-remote` against `Zapier-codes/B-Pay-backend` shows `origin/main` at
+`9cbeb88`, matching this session's own Task 60/d commit content exactly
+(`git diff` against the local pre-push commit is empty — same patch,
+different commit metadata from being applied via `git am` on the
+human's machine). `git ls-remote` against `Phoenix-Boss/B-PAY-backend`
+shows `refs/pull/3/head` at that same `9cbeb88` — the push landed and
+auto-joined PR #3, as expected. `upstream/main` is still at `63f72e2`,
+unchanged from the 2026-09-09 check — **PR #3 remains open and
+unmerged**, still the correct target for every push. (Previously
+re-confirmed 2026-09-09: `refs/pull/3/head` at `d997785`, Task 58 step
+4's commit, same pattern.)
 
 ---
 
@@ -13774,6 +13771,11 @@ Closes `STRIPE_DISCOVERY.md` §3's gap. Natural parts:
     REST access to close, not guessed passing here. Not run against a
     live Supabase project — same DB-Ops Handoff Process as every prior
     Supabase-dependent path in this file.
+  - **Confirmed pushed 2026-09-10** — `origin/main` at `9cbeb88`,
+    content-identical to this session's local commit (`git diff` empty);
+    `refs/pull/3/head` on `Phoenix-Boss/B-PAY-backend` matches the same
+    sha, so this is live on `origin/main` and part of **PR #3, not yet
+    merged by Phoenix-Boss** (see "Outstanding PRs status" above).
 - **e.** Continuous-failure alerting (mirrors Stripe's 3-day auto-
   disable-and-notify) — scoped down to whatever B-Pay's current
   notification capability actually is; needs a product-owner decision

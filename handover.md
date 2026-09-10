@@ -4,9 +4,18 @@
 > task's own section. Nothing else in this file is required reading to
 > start work.**
 >
-> **Task 62/d is DONE as far as this session could take it
-> (2026-09-10) — new `ERROR_HANDLING.md` (repo root) documents the
-> confirmed Task 62/a–c shape + Task 62/b's per-provider mapping.**
+> **Task 62/d is DONE (2026-09-10), pushed, part of PR #3, not yet
+> merged by Phoenix-Boss** — re-confirmed via `git ls-remote` against
+> both `Zapier-codes/B-Pay-backend` (`origin/main` at `4722cd7`,
+> content-identical to the pre-push commit — `git diff` empty, same
+> patch/different metadata from being applied via `git am` on the
+> human's machine) and `Phoenix-Boss/B-PAY-backend`
+> (`refs/pull/3/head` at that same `4722cd7` — auto-joined PR #3 as
+> expected, no extra command run). `upstream/main` unchanged at
+> `63f72e2` — PR #3 remains open and unmerged, still the correct
+> target for the next push. New `ERROR_HANDLING.md` (repo root)
+> documents the confirmed Task 62/a–c shape + Task 62/b's per-provider
+> mapping.**
 > Two real gaps found and flagged, not glossed over, full detail in
 > Task 62/d's own entry (inside Task 59's writeup, search "Task 62/d
 > — DONE"): (1) Task 57's canonical envelope was never actually
@@ -3792,7 +3801,11 @@ auto-joined PR #3, as expected. `upstream/main` is still at `63f72e2`,
 unchanged from the 2026-09-09 check — **PR #3 remains open and
 unmerged**, still the correct target for every push. (Previously
 re-confirmed 2026-09-09: `refs/pull/3/head` at `d997785`, Task 58 step
-4's commit, same pattern.)
+4's commit, same pattern.) **Re-confirmed again 2026-09-10** (Task
+62/d push): `origin/main` at `4722cd7`, content-identical to the
+pre-push commit (`git diff` empty); `refs/pull/3/head` at that same
+`4722cd7`, auto-joined as expected; `upstream/main` still `63f72e2`,
+unchanged — **PR #3 remains open and unmerged**, same steady state.
 
 ---
 
@@ -14116,10 +14129,12 @@ Closes §4. Natural parts:
   `utils/helpers.js` — the existing shared error-handling
   choke-point every provider file already routes through, so this is
   one call site, not ten.
-- **d.** Document the new shape in this repo's own API-facing docs
-  (wherever Task 57's canonical envelope is itself documented) so
-  callers of `/pay`/`/payout`/VTU routes get one consistent error
-  contract.
+- **d. DONE, pushed, part of PR #3 (2026-09-10) — see full write-up
+  below this list.** Document the new shape in this repo's own
+  API-facing docs (wherever Task 57's canonical envelope is itself
+  documented) so callers of `/pay`/`/payout`/VTU routes get one
+  consistent error contract. Built as `ERROR_HANDLING.md`; two real
+  gaps found and flagged rather than glossed over — see that entry.
 - **e.** Retrofit each of the ten provider files to actually populate
   the new shape — one provider per session, per the Build-focus rule's
   own "one part per session" discipline; this is the leaf most likely

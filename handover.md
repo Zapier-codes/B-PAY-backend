@@ -4,6 +4,26 @@
 > task's own section. Nothing else in this file is required reading to
 > start work.**
 >
+> **Task 62/c is DONE (2026-09-10)** — Stripe-mirrored error taxonomy
+> (Task 62/a) wired into the one shared choke-point,
+> `handleApiCall()`/`providerError()`/`ApiError` in `utils/helpers.js`,
+> only after direct product-owner confirmation of the shape ("Yes,
+> confirmed — build 62/c") per that leaf's own explicit gate.
+> `ApiError` now carries `type`/`code`/`decline_code`/`param`/
+> `transaction_id`/`doc_url` plus a derived `retryable` getter;
+> `providerError()`'s new second `details` param is fully optional —
+> confirmed via a throwaway test script that all ~55 existing
+> call-sites-with-no-details still behave identically. Deliberately
+> did NOT apply Task 62/a's proposed HTTP-status-alignment table (that
+> leaf's own text: "proposed, not yet applied") — this session's
+> confirmation covered the taxonomy shape only, not a change to live
+> response status codes, so `err.statusCode` derivation is untouched.
+> Full detail in Task 62/c's own section (inside Task 59's writeup,
+> search "Task 62/c — DONE"). **Task 62/e (retrofit each of the ten
+> provider files to actually populate `code`/`decline_code`/`param`)
+> is genuinely still open** — this leaf only builds the choke-point,
+> per its own "one call site, not ten" scope.
+>
 > **Task 23 is DONE (2026-09-10)** — `POST /pay` audited end-to-end:
 > caller-supplied `reference` already flowed through unchanged (a); the
 > `generateReference()` fallback is kept (not removed — no persistence
@@ -14349,6 +14369,76 @@ behavior was read directly from `providers/*.js` source this session
 recalled — exact line numbers available in each file if a future
 session wants to jump straight to the call sites. No code changed;
 this leaf is consolidation only, per its own text.
+
+**Task 62/c — DONE (2026-09-10). Shape confirmed by direct
+product-owner instruction this session** ("Yes, confirmed — build
+62/c") before any code was written, per this leaf's own explicit gate
+("contingent on this proposal being confirmed"). Wired into the one
+shared choke-point, `handleApiCall()`/`providerError()`/`ApiError` in
+`utils/helpers.js`, exactly as scoped — no provider file touched.
+
+- `ApiError` now carries the full confirmed shape: `type` (one of
+  Task 62/a's 8 values, defaulting to `api_error` when nothing more
+  specific is known), `code`, `decline_code`, `param`,
+  `transaction_id` (all `null` unless a provider supplies them),
+  `doc_url` (always `null` for now, per Task 62/a's own note — no
+  docs page yet, that's Task 62/d), and a `retryable` getter derived
+  from `type` (not stored, per Task 62/a's correction that Stripe
+  itself has no stored `retryable` field). A standalone `isRetryable(type)`
+  export does the same derivation for non-`ApiError` call sites (Task
+  63's future fallback logic).
+- `providerError(message, details = {})` — `details` is new and
+  entirely optional. Every one of this repo's ~55 existing
+  `providerError(message)` call sites across the 5 built provider
+  files (confirmed via `grep -rn "providerError(" providers/`,
+  matches Task 62/b's own count) keeps working completely unchanged.
+  A provider file can opt into passing `{ type, code, decline_code,
+  param, transaction_id }` later — that per-provider retrofit is Task
+  62/e's own still-open scope, not done here.
+- `handleApiCall()` classifies `type` at this one call site, most
+  specific signal first: an explicit `type` already on the caught
+  error (future Task 62/e work) wins outright; then `err.isConfigError`
+  → `authentication_error` (Stripe's own real meaning, "bad/expired/
+  missing... API key," fits B-Pay's own missing-credential case
+  exactly, just not the caller's key); then a raw `err.statusCode` of
+  401/403/429/400 maps to the matching type; then `err.isProviderMessage`
+  with nothing more specific known falls to `api_error` (Task 62/a's
+  own documented meaning for that value — an unmapped provider failure
+  shape — which is literally today's case, not a mismatch); anything
+  else (bare network/parse failures) becomes `api_connection_error`.
+- **Deliberately NOT applied here: Task 62/a's proposed HTTP-status
+  alignment table.** That leaf's own text calls it "proposed, not yet
+  applied," and this session's confirmation covered the taxonomy
+  shape, not a change to live response status codes — flipping every
+  existing failure's status (e.g. an ordinary provider decline going
+  from `500` to `402`, or an unmapped failure going from `500` to
+  `502`) is a real caller-facing behavior change this repo's own
+  discipline says needs its own explicit go-ahead, not a side effect
+  of wiring in a data shape. `err.statusCode` is still respected
+  unchanged wherever a caller already set one (webhook-signature
+  401s, Task 11's validation 400s, etc.) — nothing about status-code
+  derivation changed in this leaf, only the new taxonomy fields were
+  added alongside it. Flagged as real, separate, still-open follow-on
+  work, not silently deferred.
+- `routes.js`'s existing `clientSafeMessage()`/`isConfigError` check
+  is unaffected — confirmed by test case, not assumed: the
+  `isConfigError` flag is explicitly carried from the caught error
+  onto the new `ApiError` rather than being dropped by the wrap.
+
+**Verified:** `node --check utils/helpers.js` passes. A throwaway
+`node` script (deleted after use, not committed) exercised six cases
+end-to-end through the real `handleApiCall()`/`providerError()`: a
+legacy no-details call (→ `type: api_error`, message unchanged from
+pre-this-session behavior), an `isConfigError` error (→
+`authentication_error`, flag preserved), explicit `statusCode` 401 and
+429 (→ `authentication_error`/`rate_limit_error`, original status
+preserved), a bare network error (→ `api_connection_error`), and a
+new-style call passing explicit `type`/`code`/`decline_code` (→ passed
+through untouched). All six matched the design above; `retryable`
+matched `isRetryable()`'s table for every type. No provider file
+required changes to keep working — confirmed by the first (legacy)
+case producing the exact same `message` text `handleApiCall()` already
+produced before this leaf.
 
 ---
 

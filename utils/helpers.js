@@ -129,16 +129,79 @@ export function computeProviderEventKey(event, data) {
 }
 
 // ==================================================
-// 🛡️ ERROR HANDLING
+// 🛡️ ERROR HANDLING (Task 62/c: Stripe-mirrored taxonomy wired in —
+// shape confirmed by product owner 2026-09-10, see Task 62/a's own
+// section in handover.md for the full research/reasoning)
 // ==================================================
 
+// Task 62/a's confirmed `type` enum — mirrors Stripe's real 8 values
+// (4 from Stripe's raw JSON `type` field, 4 more from Stripe's own
+// SDK exception classes), not renamed. `signature_verification_error`
+// deliberately NOT included — B-Pay's webhook signature failures
+// never reach handleApiCall()/ApiError at all (Tasks 3/4/5's own
+// separate webhookHandlers path), so it would be an unused import of
+// a Stripe field this call site has no use for.
+const API_ERROR_TYPES = [
+  'api_error',
+  'card_error',
+  'idempotency_error',
+  'invalid_request_error',
+  'authentication_error',
+  'rate_limit_error',
+  'permission_error',
+  'api_connection_error',
+];
+
+// Task 62/a: Stripe itself has no stored `retryable` field on its
+// error object — it derives retry guidance from `type`/HTTP status
+// instead. Mirrored here as a small helper, not a persisted property,
+// for Task 63's future automatic-fallback logic to call at the point
+// of use rather than trusting a boolean that's really just a lookup
+// on `type` anyway.
+export function isRetryable(type) {
+  return type === 'api_error' || type === 'api_connection_error' || type === 'rate_limit_error';
+}
+
 export class ApiError extends Error {
-  constructor(provider, statusCode, message, originalError) {
+  constructor(provider, statusCode, message, originalError, details = {}) {
     super(message);
     this.name = 'ApiError';
     this.provider = provider;
     this.statusCode = statusCode;
     this.originalError = originalError;
+
+    // Task 62/c: every field below defaults to a safe, honest value
+    // rather than a guess. Task 62/e (retrofit each of the ten
+    // provider files to actually populate code/decline_code/param)
+    // is still not started — Task 62/b confirmed 100% of today's
+    // provider files only throw a flat message string — so `type`
+    // falls back to `api_error` when nothing more specific is known,
+    // which is Task 62/a's own documented meaning for that value
+    // ("an unmapped/unrecognized provider failure shape"): literally
+    // this case, not a mismatch swept under a default.
+    this.type = API_ERROR_TYPES.includes(details.type) ? details.type : 'api_error';
+    this.code = details.code ?? null;
+    this.decline_code = details.decline_code ?? null;
+    this.param = details.param ?? null;
+    this.transaction_id = details.transaction_id ?? null;
+    // Task 62/a: stays null until Task 62/d's docs page exists to
+    // point at — a named future leaf, not a permanent stub.
+    this.doc_url = null;
+    // Preserves routes.js's pre-existing isConfigError check
+    // (clientSafeMessage()) unchanged — that flag predates this task
+    // and is set by getProviderKey()/getProviderBaseUrl(), often
+    // before handleApiCall's own try/catch ever runs (constructor-
+    // time key lookups); when it IS present on the caught error here,
+    // it's carried onto the new ApiError instead of being silently
+    // dropped by the wrap.
+    if (details.isConfigError) this.isConfigError = true;
+  }
+
+  // Task 62/a: retryability derived from `type`, not stored — see
+  // isRetryable() above for the same logic, exposed here as a
+  // convenience getter on the thrown error itself.
+  get retryable() {
+    return isRetryable(this.type);
   }
 }
 
@@ -159,9 +222,20 @@ export class ApiError extends Error {
 // a generic client-facing message while the real detail still goes
 // to the server log line right above it (and to `originalError` on
 // the thrown ApiError, for anything logging that in future).
-export function providerError(message) {
+//
+// Task 62/c: `details` is new and entirely optional — every one of
+// this repo's ~55 existing `providerError(message)` call sites (Task
+// 62/b's own count) keeps working completely unchanged, since
+// `details` defaults to `{}` and every field it can carry
+// (type/code/decline_code/param/transaction_id) is read with a `??`
+// fallback wherever it's consumed. This is what lets a provider file
+// opt into the richer taxonomy later (Task 62/e, per-provider
+// retrofit, still not started) without a breaking signature change
+// now.
+export function providerError(message, details = {}) {
   const err = new Error(message);
   err.isProviderMessage = true;
+  Object.assign(err, details);
   return err;
 }
 
@@ -177,7 +251,61 @@ export async function handleApiCall(fn, provider = 'unknown') {
     const clientMessage = err.isProviderMessage
       ? errorMessage
       : `Unable to complete request with ${provider} right now. Please try again shortly.`;
-    throw new ApiError(provider, err.statusCode || 500, `API request failed: ${clientMessage}`, err);
+
+    // Task 62/c: classify `type` at this one shared choke point, most
+    // specific known signal first. A provider file that already
+    // passed an explicit `type` via providerError()'s new `details`
+    // (Task 62/e work — none exist yet, see Task 62/b) always wins;
+    // everything below is a fallback for today's still-unretrofitted
+    // providers, not a replacement for that future work.
+    let type = API_ERROR_TYPES.includes(err.type) ? err.type : null;
+    if (!type) {
+      if (err.isConfigError) {
+        // Stripe's own real meaning for authentication_error is
+        // "bad/expired/missing... API key" — this is B-Pay's own key
+        // rather than the caller's, but it's the same condition.
+        type = 'authentication_error';
+      } else if (err.statusCode === 401) {
+        type = 'authentication_error';
+      } else if (err.statusCode === 403) {
+        type = 'permission_error';
+      } else if (err.statusCode === 429) {
+        type = 'rate_limit_error';
+      } else if (err.statusCode === 400) {
+        type = 'invalid_request_error';
+      } else if (err.isProviderMessage) {
+        // A real failure the provider communicated, but with no
+        // structured code this codebase can trust yet — Task 62/a's
+        // own definition of api_error, not a mismatch.
+        type = 'api_error';
+      } else {
+        // fetch()-level network failure, JSON parse failure on a
+        // non-JSON response, etc. — nothing reached the provider's
+        // own error-communication path at all.
+        type = 'api_connection_error';
+      }
+    }
+
+    // Task 62/a's own proposed HTTP-status-alignment table is
+    // deliberately NOT applied here yet — that leaf's own text calls
+    // it "proposed, not yet applied," and changing the live status
+    // code returned for every existing failure path (e.g. an
+    // ordinary decline going from 500 to 402, or an unmapped provider
+    // failure going from 500 to 502) is a real production-facing
+    // behavior change this leaf's confirmation didn't cover. `err.
+    // statusCode` is still respected unchanged when a caller already
+    // set one (webhook-signature 401s, validation 400s, etc.) — only
+    // the new taxonomy fields are new here, not the status-code
+    // derivation. Flagging this explicitly as still-open, separate
+    // future work, not silently deferred.
+    throw new ApiError(provider, err.statusCode || 500, `API request failed: ${clientMessage}`, err, {
+      type,
+      code: err.code ?? null,
+      decline_code: err.decline_code ?? null,
+      param: err.param ?? null,
+      transaction_id: err.transaction_id ?? null,
+      isConfigError: err.isConfigError === true,
+    });
   }
 }
 

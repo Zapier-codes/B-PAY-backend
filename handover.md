@@ -14620,3 +14620,154 @@ before generating the patch (this session's base commit was already
 unapplied prior session's commit).
 
 ---
+
+#### Task 69 — Configure real email delivery for the `bpay-ops-alert` Novu workflow (Custom SMTP, not Novu's own default sender) [x]
+
+**No application code touched this session** — Task 68's `utils/novu.js`
+already covers `triggerWorkflow()` end-to-end; this leaf is pure Novu-
+account configuration (Integration Store), done the same way Task
+60/e's own original workflow/subscriber/trigger setup was done — the
+product owner running `curl` directly against `api.novu.co`, since
+this sandbox's network egress still doesn't reach that host (same
+standing limitation every prior Novu verification note in this file
+has hit). `handover.md` is the only file this session changes.
+
+**Why this was needed:** the `bpay-ops-alert` workflow (Task 60/e) was
+using Novu's own free/default "Novu Email" integration
+(`providerId: "novu-email"`) — functional, but not sent from B-Pay's
+own domain, which is a real deliverability/branding concern the
+product owner raised directly (wanting recipients to see the alert as
+coming from B-Pay's own address, not get flagged as generic/less-
+trusted Novu-sent mail).
+
+**What was tried, in order, and why the first path didn't work —
+flagged as a real dead end, not silently dropped:**
+- Product owner's domain (`edgesenterprise.com`) is already configured
+  in **ImprovMX**, on ImprovMX's **free tier**. Free-tier ImprovMX is
+  receive/forward-only — the SMTP Credentials page (what would supply
+  a real `host`/`user`/`password` to hand Novu's Custom SMTP provider)
+  is a paid-plan-only feature, confirmed directly by the product owner
+  attempting to find it (logged in via Google OAuth, no SMTP
+  credentials page available). **This closes off "use the existing
+  ImprovMX setup directly" as a real option on the current plan** —
+  flagged for the product owner as a future decision (upgrade ImprovMX,
+  or move to a dedicated transactional-email provider like Resend/
+  Brevo with the domain DNS-verified) if this stopgap proves
+  insufficient, not resolved here.
+
+**What was actually built instead — a Gmail "Send mail as" stopgap:**
+ImprovMX's own docs (confirmed this session, not guessed) describe
+exactly this combination for free-tier accounts: since ImprovMX
+already forwards `contact@edgesenterprise.com` to a real Gmail inbox
+(this part was already working, free, before this session), Gmail's
+legacy "Send mail as" feature can send *as* that alias by
+authenticating to `smtp.gmail.com` with the underlying Gmail account's
+own credentials, provided the alias has been added and verified as a
+"Send mail as" address in that Gmail account's own Settings →
+Accounts and Import (done directly by the product owner in Gmail's
+UI, not something this session could do). Novu's Custom SMTP provider
+id is `nodemailer` (confirmed against `docs.novu.co/platform/
+integrations/email/custom-smtp` and the `/v1/integrations` API
+reference's own `CredentialsDto` schema this session, not carried over
+from a secondary source) — credentials shape: `host`, `port`,
+`secure`, `user`, `password`, `from`, `senderName`.
+
+- **Integration created:** `POST /v1/integrations` with
+  `providerId: "nodemailer"`, `channel: "email"`, `host:
+  "smtp.gmail.com"`, `port: "587"`, `secure: false`, `from:
+  "contact@edgesenterprise.com"`, `senderName: "B-Pay"` — id
+  `6aa25caadcce37d4636174b5`.
+- **First auth attempt failed** — `user`/`password` were the Gmail
+  account's real login password. Google hard-rejects that for SMTP
+  `AUTH PLAIN` regardless of correctness (`534-5.7.9
+  Application-specific password required`, confirmed directly from
+  Novu's own Activity Feed execution-details panel, not guessed from
+  the trigger-accepted response alone — that response only confirms
+  Novu queued the send, not that it succeeded, and looked identical
+  for both the failing and later-succeeding attempt). **Fixed** by the
+  product owner generating a Google **App Password** (requires
+  2-Step Verification) and updating just the integration's
+  `credentials` via `PUT /v1/integrations/6aa25caadcce37d4636174b5` —
+  after that, the Activity Feed showed `Status: completed` / `Message
+  sent` with a real Message-ID, confirming the SMTP leg itself now
+  authenticates and sends.
+- `POST /v1/integrations/6aa25caadcce37d4636174b5/set-primary` run to
+  make it the integration Novu actually uses for the `email` channel
+  (an `active: true` integration is not automatically primary —
+  confirmed directly: the create response came back `primary: false`
+  until this call). The pre-existing default `novu-email` integration
+  (`6a7f4956762ecc65a8e383d9`) was then explicitly deactivated via
+  `PUT .../{id}` with `{"active": false}`, so nothing can silently
+  fall back to Novu's own sender.
+
+**Real, still-open gap — flagged, not resolved this session: mail-loop
+false positive on the very first "working" test.** The `bpay-ops`
+subscriber's registered email is `contact@edgesenterprise.com` — the
+same address the new integration sends *from*, authenticated through
+the same Gmail account that address forwards *into*. Novu's own
+Activity Feed reported `Status: completed` / `Message sent` for that
+test, and it genuinely was accepted and sent by Gmail's SMTP server —
+but the message never reached the `bpay-ops` inbox at all; the product
+owner confirmed it landed only in the **Sent** folder of the
+authenticating Gmail account, exactly the self-to-self loop pattern
+ImprovMX's own docs warn about for this exact setup. **This means a
+Novu `completed`/`Message sent` status is *not* sufficient evidence of
+real delivery for this integration specifically** — worth remembering
+for whoever next debugs a "Novu says sent but nobody got it" report
+against this same Gmail send-as path. Not fixed by changing the
+integration; the actual fix is on the **subscriber**, not the sender —
+`bpay-ops`'s `email` needs to point at a real, different inbox than
+`contact@edgesenterprise.com` (e.g. `POST /v2/subscribers` with a real
+monitored address) so the alert doesn't route back into its own
+sending identity. **Not yet done, this session** — the product owner
+had not yet re-run the trigger against a corrected subscriber email by
+the time this write-up was produced; that's real, immediate follow-on
+work for whoever picks this up next (very possibly the same session,
+just after this patch), not a confirmed-closed loop.
+
+**Known, accepted limitations of this stopgap — flagged for whoever
+next revisits this, per this file's own "don't let a caveat go
+unwritten" convention:**
+- Gmail's "Send mail as" over its own SMTP servers is a legacy feature
+  Google itself describes as having limited ongoing support; not
+  something to build customer-facing volume on top of.
+  Gmail's own sending caps (roughly 500/day on a standard, non-
+  Workspace account) apply — fine for low-volume ops alerts, not
+  sufficient if this integration is ever reused for the kind of
+  subscriber-facing send Task 68's own header comment flagged as
+  real future work (transaction receipts, KYC notices).
+- Recipients outside the loop case above may see a "via gmail.com"
+  annotation next to the sender name — a known cosmetic side effect
+  of this exact setup per ImprovMX's own docs. **Not yet actually
+  observed either way this session** — the only real test so far hit
+  the mail-loop case above before a legible inbox delivery could be
+  inspected, so whether the "via" tag actually appears (and whether
+  spam-filtering treats this favorably) is still unconfirmed, not
+  ruled out.
+- This is explicitly a stopgap the product owner chose after ImprovMX
+  free-tier SMTP turned out to be unavailable — upgrading ImprovMX to
+  a paid plan (real domain SMTP, no Gmail dependency, no "via" tag) or
+  moving to a dedicated transactional provider (Resend/Brevo, DNS-
+  verified against the same domain) remain live options for later, not
+  decided against here.
+
+**Verification:** every state change above (`POST`/`PUT`/`set-primary`
+calls, the two trigger tests) was run live against the real
+`api.novu.co` by the product owner directly and its real response
+pasted back into this session — not a throwaway stub, since this leaf
+IS the live-configuration task, not application code exercising a
+mocked client. `GET /v1/integrations` re-confirmed final state: the
+`nodemailer` integration is `active: true, primary: true`; the old
+`novu-email` default is `active: false, primary: false`. The SMTP
+auth path itself is confirmed working (real `Message sent` + Message-
+ID from Gmail's own server). **End-to-end delivery-to-a-real-inbox is
+NOT yet confirmed** — flagged above, not glossed over.
+
+**Per the Patch Handoff Convention, a patch file covering this
+session's changes (`handover.md` only — no application code, no
+migration) was generated and handed to the product owner.**
+`git fetch origin` + `git log --oneline origin/main -5` confirmed no
+drift immediately before generating the patch (local was already at
+`origin/main`'s own tip, `cbdfe1d` — Task 68's own commit).
+
+---

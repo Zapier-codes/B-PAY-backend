@@ -160,15 +160,39 @@
 > above): `async processPayout(data)` is already written there, and
 > Task 52's own header already says "fully closed — every part, (a)
 > through (e)." Task 53/e and Task 54 were evidently written before
-> that closure landed and never updated. **Not re-deriving a new "real
-> next actionable item" from this in this box** — three genuinely
-> open, non-stale items already stand (Korapay's two card-issuance doc
-> ambiguities above, Task 45e's JuicyWay sandbox-key block, Task 14's
-> network-egress block) and picking a fourth without auditing the rest
-> of the board the way this correction just audited one claim would
-> risk adding another stale pointer on top of the one just found.
-> Whoever resumes next should sanity-check the board's other "current
-> atomic unit" claims against actual code before trusting any of them.
+> that closure landed and never updated. Three still-genuinely-open
+> items remain from that audit: Korapay's two card-issuance doc
+> ambiguities (suspend/status now resolved 2026-09-10, events-log still
+> blocked — see below), Task 45e's JuicyWay sandbox-key block, Task
+> 14's network-egress block.
+>
+> **Task 59 is DONE (2026-09-10), plan/discovery-only, no code —
+> `STRIPE_DISCOVERY.md` (new file, repo root) documents a full pass
+> across Stripe's public API docs (object model, idempotency, webhooks,
+> error/decline taxonomy, Connect, balance/payouts/reconciliation,
+> disputes/refunds, Radar, Identity, API keys, versioning/rate-limits,
+> and Stripe's own Multiprocessor Orchestration product — the closest
+> 1:1 match to B-Pay's own purpose), cross-checked against Task 51's
+> routing tables per direct product-owner instruction to re-read the
+> African/international rail rules first.** Confirmed Task 51's
+> domain-based model is still the live routing path in `routes.js`,
+> unchanged. Seven concrete gaps identified and turned into **Tasks
+> 60–66**, each with its own proposed a–e split, in Task 59's own
+> section (search "Task 59 — Full Stripe platform discovery"). Two
+> Stripe concepts explicitly declared **out of scope** per this file's
+> own "pattern not feature import" rule: Connect-style multi-party
+> split charges (no confirmed B-Pay use case) and Identity/KYC's
+> event-driven pattern (Task 54 already covers this correctly).
+>
+> **⏸️ Real next task: Task 61 (balance/ledger + reconciliation) or
+> Task 60 (webhook event ledger + dedup), per Task 59/d's own
+> recommendation — both foundational, pick either.** Neither is split
+> into a real a–e build yet; the next session's first job is picking
+> one, confirming/refining the proposed split in Task 59/c against
+> current code, then building exactly one part, per the standing
+> mandatory task-splitting rule. Task 61/a (the `balance_transactions`
+> migration) is the more foundational of the two and the suggested
+> starting point if no other constraint favors Task 60 first.
 >
 > **Updating this box:** when you finish your leaf, replace the two
 > paragraphs above with the new next task — don't append a new dated
@@ -184,6 +208,13 @@
 
 ## 📝 Session Log (newest first — one line per session, optional)
 
+- 2026-09-10 — Task 59 (full Stripe discovery + orchestration gap
+  analysis) done, discovery/documentation only: `STRIPE_DISCOVERY.md`
+  written (12 sections, sourced from `docs.stripe.com`), re-confirmed
+  Task 51's routing model is still live and unchanged, identified 7
+  gaps and proposed Tasks 60–66 (each with its own a–e split) to close
+  them, ranked a priority order in Task 59/d. No code, no migration —
+  next session picks Task 60 or 61 and builds one part.
 - 2026-09-10 — Task 53/a leaf closed for suspend/status: product
   owner ran live PATCH calls against their own reserved card
   (`KPY-RVC-aOyZGJl1rxa4pj3`) from their own Termux (this sandbox
@@ -13256,5 +13287,319 @@ migration (open item, see step 4's own note and the pointer box at the
 top of this file). Migrations `0010`–`0013` (the `businesses`/
 `api_keys` tables themselves) are written per step 3 but still not
 applied to the live project.
+
+---
+
+## Task 59 — Full Stripe platform discovery; orchestration-completion gap analysis; Tasks 60–66 proposed to close every gap [ ] (discovery + task-creation only, no code this session, per direct product-owner instruction — same "plan only" pattern as Task 0 and Task 58's original session)
+
+**Scope note, read first:** direct product-owner instruction
+(2026-09-10), extending the existing Stripe-as-Reference-Model
+Convention (above) from "consult Stripe when a design blocker
+appears" into a standalone, full discovery pass across Stripe's public
+documentation — done once, written up once, so every future task can
+cite a specific finding instead of re-researching Stripe from
+scratch. **Full findings live in `STRIPE_DISCOVERY.md`** (new file,
+repo root) — twelve sections (object model/intents, idempotency,
+webhooks/events, error/decline taxonomy, Connect, balance/payouts/
+reconciliation, disputes/refunds, Radar/fraud, Identity/KYC, API keys/
+security, versioning/rate-limits/pagination/metadata, and Stripe's own
+**Multiprocessor Orchestration** product — the closest 1:1 match to
+B-Pay's own purpose). This task's own section here is the **task-facing
+summary** — read `STRIPE_DISCOVERY.md` for the "why," this section for
+the "what to build."
+
+**Same scope discipline `STRIPE_DISCOVERY.md` itself states, repeated
+here because it governs every task below:** B-Pay is a ten-provider
+aggregation layer, not a payments processor holding its own settlement
+balance or card-network membership. Every task below mirrors a Stripe
+*pattern* adapted to B-Pay's own scale — it is not a license to import
+a Stripe feature B-Pay has no confirmed use for. Task 62/e below is
+explicitly marked speculative for exactly this reason and should not
+be built until a real product requirement names it.
+
+### a. Routing-rules cross-check — Task 51/Task 63's own starting point
+
+Per the product-owner instruction to "read the routing rules for the
+exact method of African and international rails" before proposing
+anything new: re-read directly against `routes.js` this session (same
+check-the-code-not-the-prose discipline the Task 51/b and Task 53/e
+corrections above already established) — **Task 51's domain-based
+model (Juicyway default for international rails, Korapay default for
+African rails, every overlapping provider a full fallback) is confirmed
+still the live routing decision, unchanged since its last correction.**
+`classifyDomain()` + `resolveDomainDefaultProvider()` still drive
+`/pay`, `/payout`, `/payout/verify`, `/banks`, per the 2026-09-09
+correction already on record above. **Confirmed gap, not previously
+named this precisely:** Task 51's own tables list fallbacks but
+`routes.js` has no code path that actually *calls* a fallback when the
+domain default fails — a failed default-provider call returns failure
+to the caller today, full stop. Section 12 of `STRIPE_DISCOVERY.md`
+names this exact gap against Stripe's own "Orchestration" product
+(cross-processor waterfall retries) — Task 63 below is the fix.
+
+### b. Gap analysis — condensed from `STRIPE_DISCOVERY.md`'s own summary table
+
+| Gap | Stripe pattern (full detail in `STRIPE_DISCOVERY.md` §) | B-Pay today | Proposed task |
+|---|---|---|---|
+| No webhook event ledger/dedup/replay | §3 | Signature verification only (`webhookGateway.js`); duplicate deliveries re-run side effects | **Task 60** |
+| No balance/ledger/reconciliation | §6 | `transactions` records attempts only; no append-only ledger, no available-vs-pending concept, no reconciliation job | **Task 61** |
+| No shared error/decline taxonomy | §4 | Ad hoc per-provider error strings (Task 45c fixed one instance) | **Task 62** |
+| No cross-provider automatic fallback/retry, no per-provider performance data, no unified refund path | §12 | Task 51's fallback tables are decision-record only, never invoked | **Task 63** |
+| No B-Pay-side fraud/risk layer | §8 | Every request passed straight through to whichever provider Task 51 routes it to, with zero B-Pay-side signal | **Task 64** |
+| No universal, caller-supplied idempotency key | §2 | Task 12's idempotency work is provider-specific, not a universal caller-facing mechanism | **Task 65** |
+| No `metadata` field, no scoped API keys, no rate-limit-aware outbound wrapper | §§10-11 | `api_keys` (migration `0012`) is one unscoped key per (business, provider); no free-form field on `transactions`/`customers` | **Task 66** |
+| Connect-style multi-party split charges | §5 | `businesses`/`api_keys` (Task 58/c) is Connect-shaped for credential *storage* only | **Not tasked — speculative, no confirmed B-Pay use case names this yet, do not build** |
+| Identity/KYC event-driven pattern | §9 | Task 54 already decided this correctly (PaymentPoint default+fallback, DB-persisted) | **Not tasked — Task 54 already on track, no new task needed** |
+
+### c. Tasks 60–66 — proposed, none started, each to be split a–e by whichever session picks it up (per the mandatory task-splitting rule above)
+
+Per that rule, **this session does not itself split or build any of
+these** — Task 59's own job is discovery + proposing the task, not
+executing it (same as Task 0's and Task 58's original "plan only"
+sessions). Each task below states its natural parts so the session
+that picks it up doesn't have to re-derive them, exactly as the
+splitting rule's own "how to split, in practice" section describes.
+
+#### Task 60 — Webhook event ledger, idempotent dedup, and replay
+
+Closes `STRIPE_DISCOVERY.md` §3's gap. Natural parts:
+- **a.** New `webhook_events` table (migration): `id`, `provider`,
+  `provider_event_id` (whatever field each provider's own payload
+  uses as its unique event identifier — needs a per-provider discovery
+  pass first, since Paystack/Korapay/JuicyWay/TelcosOpik don't
+  necessarily name this field the same way), `payload` (jsonb),
+  `signature_valid` (bool), `status` (`received`/`processed`/`failed`),
+  `received_at`, `processed_at`. Mirrors Stripe's own
+  "every delivery attempt is a queryable record" posture from §3.
+- **b.** Dedup check in `webhookGateway.js`: look up
+  `(provider, provider_event_id)` before running any handler side
+  effect; short-circuit with a `2xx` (matching Stripe's own "return 2xx
+  even for an already-processed duplicate" convention) if already
+  `processed`.
+- **c.** Per-provider discovery of the actual event-id field each of
+  the four providers with webhooks today (Paystack/Korapay/JuicyWay,
+  plus TelcosOpik once Task 58 step 8's signing-scheme question
+  resolves) puts in its payload — genuinely not yet known for all
+  four, flag explicitly per provider rather than guessing.
+- **d.** Manual replay mechanism (an internal, `requireInternalApiKey`-
+  gated route that re-runs a stored `webhook_events` row's handler) —
+  mirrors Stripe Dashboard's own manual-resend affordance, scaled to
+  B-Pay's no-dashboard-yet reality (Task 46 still open) as a plain
+  route instead of a UI button.
+- **e.** Continuous-failure alerting (mirrors Stripe's 3-day auto-
+  disable-and-notify) — scoped down to whatever B-Pay's current
+  notification capability actually is; needs a product-owner decision
+  on what "notify" means here (email? log line? Task 46's future
+  dashboard?) before this leaf is buildable — flag as blocked on that
+  decision, don't guess a channel.
+
+#### Task 61 — Balance/ledger + reconciliation (the largest single gap per `STRIPE_DISCOVERY.md`'s own verdict)
+
+Closes §6. Natural parts:
+- **a.** Design a `balance_transactions` table, Stripe-`BalanceTransaction`-
+  shaped: `id`, `business_id`, `provider`, `type` (`payment`/`payout`/
+  `fee`/`refund`/`adjustment`), `amount`, `currency`,
+  `reference` (FK to `transactions.provider_reference` where one
+  exists), `available_on` (nullable — mirrors Stripe's
+  pending-vs-available split), `created_at`. Migration only, no code
+  yet.
+- **b.** Wire `/pay`, `/payout`, and the VTU purchase routes (Task 58)
+  to also write a `balance_transactions` row alongside the existing
+  `recordTransaction()` call — same non-blocking "never fail the
+  request on a failed write" posture Task 56/d-3 established.
+- **c.** Per-business balance view (available vs. pending, per
+  currency) derived from (a)/(b) — this is the concrete prerequisite
+  Task 46's dashboard needs before it can show anything real about a
+  business's own funds; flag as a dependency, don't duplicate Task 46's
+  own scope here.
+- **d.** Reconciliation job design: for each of the ten providers,
+  does it expose a statement/settlement-report endpoint B-Pay could
+  compare its own `balance_transactions` rows against? **Needs its own
+  per-provider discovery pass — not yet known**, same "confirm before
+  building" discipline every provider integration in this file already
+  follows. Do not guess a provider's settlement-report shape.
+- **e.** Decide whether B-Pay itself needs a payout-*schedule* concept
+  (daily/weekly/manual, per Stripe §6) for any wallet-style balance it
+  manages on a business's behalf (e.g. the `telcos.opik.net` per-
+  business wallet from Task 58) — **open product question, not an
+  implementation task**, flag for product-owner confirmation before
+  scoping code.
+
+#### Task 62 — Cross-provider decline/error taxonomy
+
+Closes §4. Natural parts:
+- **a.** Design a canonical `{ code, category, retryable, message }`
+  shape, mirroring Stripe's three-layer split (API error / decline
+  code / outcome) collapsed into one B-Pay-appropriate shape — a
+  full Stripe replica is over-scoped per this file's own "pattern, not
+  feature import" rule; propose the collapsed shape for product-owner
+  confirmation before building, per the Stripe-Reference Convention's
+  own step 3.
+- **b.** Per-provider mapping table — what does each of the ten
+  providers actually return on failure today? Much of this is already
+  scattered across this file's own past task write-ups (Task 45c's
+  JuicyWay fix, Korapay's various error-shape notes); this leaf's job
+  is consolidating what's already known plus filling the providers not
+  yet covered, not re-discovering everything from zero.
+- **c.** Wire the shape into `handleApiCall()`/`providerError()` in
+  `utils/helpers.js` — the existing shared error-handling
+  choke-point every provider file already routes through, so this is
+  one call site, not ten.
+- **d.** Document the new shape in this repo's own API-facing docs
+  (wherever Task 57's canonical envelope is itself documented) so
+  callers of `/pay`/`/payout`/VTU routes get one consistent error
+  contract.
+- **e.** Retrofit each of the ten provider files to actually populate
+  the new shape — one provider per session, per the Build-focus rule's
+  own "one part per session" discipline; this is the leaf most likely
+  to itself need splitting further once picked up (ten providers is
+  more than the 5-part cap allows in one task, so whichever session
+  reaches this leaf should open it as its own follow-up task per
+  provider group, not force all ten into parts a–e of this single
+  leaf).
+
+#### Task 63 — Cross-provider automatic fallback/retry + performance tracking + unified refund path
+
+Closes §12 — the most direct application of `STRIPE_DISCOVERY.md`'s
+own finding that Task 51's routing model is the right shape but
+incomplete relative to what Stripe itself calls "orchestration."
+Natural parts:
+- **a.** Formalize Task 51's b-1/b-2 prose tables into a
+  machine-readable ordered list per domain (reusing/extending the
+  existing `routing_config` table, migration `0005`, per Task
+  52/e-2d — check that table's current shape before assuming a new
+  one is needed).
+- **b.** Implement the actual fallback attempt in `routes.js`: when
+  the domain-default provider's call fails with a **retryable**
+  failure (per Task 62's taxonomy — this task depends on Task 62/a's
+  shape existing, at minimum the `retryable` flag; sequence
+  accordingly), automatically attempt the next-listed fallback before
+  returning failure to the caller. **Critical, stated explicitly
+  because Radar's own `fraudulent` guidance (§4/§8) is the cautionary
+  example:** never blind-retry a hard-decline/fraud-flagged failure
+  against a fallback — a fraud block is a signal about the request
+  itself, not about that one provider, and retrying it elsewhere just
+  repeats the same bad outcome against a different provider's own risk
+  profile.
+- **c.** Record which provider actually served a given request — check
+  whether `transactions` already captures this (it likely does, via
+  whichever provider's client wrote the row) before adding a new
+  column; this is the data (b)'s and (e)'s reporting needs.
+- **d.** Unified refund path — **blocked on its own discovery pass
+  first**: which of the ten providers support refunds at all, and
+  what does each one's refund API look like? Not currently documented
+  anywhere in this repo. Do not design a unified `POST /refund` route
+  before that discovery exists — same "confirm before building"
+  discipline as every other provider capability in this file.
+- **e.** Basic per-provider success-rate reporting, derived from (c)'s
+  data — the analytics half of Stripe's own Orchestration product
+  (§12), scoped down to whatever's derivable from `transactions`
+  without a new table.
+
+#### Task 64 — B-Pay-side fraud/risk layer
+
+Closes §8. Natural parts:
+- **a.** **Open product question, not yet an implementation task:** is
+  B-Pay-side fraud screening even in scope right now, given B-Pay
+  itself doesn't hold funds or a merchant risk profile the way Stripe
+  does? Needs direct product-owner confirmation before any code —
+  flag prominently, this whole task may be deferred entirely depending
+  on the answer.
+- **b.** If confirmed in scope: minimal velocity/rate checks per
+  business/API key (request-count-per-window), the smallest possible
+  first signal.
+- **c.** Flag-don't-block first pass — log a risk signal without
+  rejecting anything yet, mirroring §8's own `risk_score`-is-attached-
+  regardless-of-blocking pattern, before graduating to any actual
+  blocking rule.
+- **d.** Allow-list mechanism for false positives, mirroring §8's own
+  Dashboard-allow-list pattern (scaled to B-Pay's no-dashboard-yet
+  reality, same caveat as Task 60/d).
+- **e.** Surface the risk signal in the canonical envelope's response
+  (Task 57), via a `metadata`-shaped field per Task 66/a below —
+  sequence accordingly if both are picked up.
+
+#### Task 65 — Universal, caller-supplied idempotency key
+
+Closes §2. Natural parts:
+- **a.** Accept a caller-supplied `Idempotency-Key` header on every
+  mutating B-Pay route (`/pay`, `/payout`, the VTU purchase routes) —
+  not just whatever Task 12 already built for one specific provider
+  interaction.
+- **b.** New table mapping `(business_id, idempotency_key)` →
+  cached response, checked before any provider call runs; a retried
+  request with the same key returns the cached result instead of
+  re-calling the provider — mirrors §2's own caching behavior exactly.
+- **c.** Decide behavior on a conflicting request body reused with the
+  same key — Stripe's own answer is "still return the cached original,
+  don't re-validate the new body" (§2); propose mirroring that for
+  product-owner confirmation rather than assuming it, per the
+  Stripe-Reference Convention's step 3.
+- **d.** Document the `429`/`401`-not-idempotency-safe caveat (§2) in
+  this repo's own conventions, so a future session doesn't assume
+  idempotency-key caching covers every failure mode.
+- **e.** Per-provider audit — which of the ten providers already
+  support their own native idempotency key B-Pay could simply pass
+  through, vs. which need B-Pay's own new layer (b) to compensate for
+  having none. Needs its own discovery pass per provider, not assumed.
+
+#### Task 66 — Metadata field, scoped API keys, rate-limit-aware outbound wrapper (lower priority, batched together because each is small)
+
+Closes §§10-11. Natural parts:
+- **a.** Free-form `metadata` (jsonb) column on `transactions` and
+  `customers`, Stripe-shaped passthrough field per §11 — explicitly
+  not read or acted on by any B-Pay logic, purely a caller convenience.
+- **b.** Scoped-permission model for the `api_keys` table (migration
+  `0012`) — today one key is unscoped per (business, provider); design
+  a minimal read/write distinction mirroring §10's restricted-key
+  pattern, for product-owner confirmation before building (this
+  touches the credential model Task 58/c already built, so treat as an
+  extension proposal, not a silent redesign).
+- **c.** Pagination convention for any future list endpoint — relevant
+  once Task 46's dashboard needs to list transactions/businesses at
+  scale; not urgent before that.
+- **d.** API-version pinning convention for B-Pay's *outbound* calls —
+  record, per provider, which documented version/date of that
+  provider's own API this repo was built against (inverts §11's
+  versioning lesson, since B-Pay doesn't control the providers'
+  versioning the way Stripe controls its own) — this is a
+  documentation convention, not code; would have caught Task 45a's
+  wrong-endpoint-path and Korapay's self-contradicting-docs incidents
+  (Task 53/a) sooner had it existed already.
+- **e.** Basic rate-limit-aware outbound wrapper — backoff on a `429`
+  from any provider, applied at the shared `handleApiCall()` choke
+  point (same call site Task 62/c already touches; sequence those two
+  leaves against each other if both land in the same session's
+  vicinity).
+
+### d. Recommended priority order (this session's own recommendation, not a product-owner decision — flag for confirmation)
+
+**Task 61 (ledger/reconciliation) and Task 60 (webhook event log)
+first** — both are foundational data-integrity gaps that every other
+proposed task either depends on (Task 63/c needs to know which
+provider served a request; Task 64/e needs a place to attach a risk
+signal) or is strictly safer to have in place before increasing
+request volume through more automated logic (Task 63's automatic
+fallback, Task 65's caller-facing idempotency). **Task 62 (error
+taxonomy) third**, since Task 63/b explicitly depends on its
+`retryable` flag existing. **Task 63 (fallback/retry) fourth** — the
+direct completion of Task 51's own routing model and the closest
+match to what "orchestration" means in this file's own Stripe-
+Reference Convention. **Tasks 64/65/66 unordered relative to each
+other**, lower urgency, pick whichever has an unblocked product
+decision already in hand.
+
+### e. Not yet done this session, deliberately
+
+No migration, no route, no provider-file change — this task is
+discovery + proposal only, matching Task 0's and Task 58's original
+sessions. `STRIPE_DISCOVERY.md` itself is the only new artifact.
+Tasks 60–66 are none of them split into their own a–e sub-builds yet
+by an actual session (the parts listed above are this task's own
+proposal of what that split should look like, per the mandatory
+splitting rule's own "write out the natural parts before writing any
+code" instruction) — the next session should pick **one** of Tasks
+60–66 (Task 61 or Task 60 per (d)'s recommendation), split it if it
+isn't already split finely enough, and build exactly one part.
 
 ---

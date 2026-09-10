@@ -4,6 +4,28 @@
 > task's own section. Nothing else in this file is required reading to
 > start work.**
 >
+> **Task 62/d is DONE as far as this session could take it
+> (2026-09-10) — new `ERROR_HANDLING.md` (repo root) documents the
+> confirmed Task 62/a–c shape + Task 62/b's per-provider mapping.**
+> Two real gaps found and flagged, not glossed over, full detail in
+> Task 62/d's own entry (inside Task 59's writeup, search "Task 62/d
+> — DONE"): (1) Task 57's canonical envelope was never actually
+> documented anywhere before this, so this is a new file, not an
+> addition to an existing page; (2) **the new error-taxonomy fields
+> are not actually present in any HTTP response yet** — `routes.js`'s
+> `catch` blocks still build responses via `clientSafeMessage()`,
+> which only returns a string, so Task 62's own stated goal for this
+> leaf ("callers get one consistent error contract") isn't true yet
+> despite the shape being fully designed and internally wired.
+> Wiring the new fields into every route's actual JSON response is a
+> live caller-facing contract change and needs its own explicit
+> product-owner go-ahead first — not done here, not yet numbered as
+> its own task. **The real next task remains the same as before this
+> session touched Task 62/d** (this was documentation work picked up
+> under the No-skip-ahead rule's own allowance for an explicit
+> product-owner override, not a claim that it was next in the
+> pointer-box queue) — see below, unchanged.
+>
 > **Task 62/c is DONE (2026-09-10)** — Stripe-mirrored error taxonomy
 > (Task 62/a) wired into the one shared choke-point,
 > `handleApiCall()`/`providerError()`/`ApiError` in `utils/helpers.js`,
@@ -8616,6 +8638,17 @@ nothing further to decide there.)
   new patches in this file too, so numbering doesn't have to track
   three repos' independent, interleaved sessions.
 
+- `b-pay-backend-task-62d-error-taxonomy-docs.patch` (2026-09-10) —
+  Task 62/d: adds `ERROR_HANDLING.md`, the Task 62/d write-up in the
+  Task 62 section, and this log line. **This log itself is still
+  known-incomplete between this entry and
+  `b-pay-backend-task17-correction.patch` above** — the existing
+  "Gap, flagged plainly" note earlier in this section already covers
+  Tasks 42–61's undocumented patches; not re-solved here, just not
+  making it worse. Verified with a fresh `/tmp` clone reset to this
+  session's pre-commit `origin/main` tip, `git am` applied cleanly;
+  `node --check` not needed (docs-only commit, no `.js` touched).
+
 
 ---
 
@@ -14439,6 +14472,57 @@ matched `isRetryable()`'s table for every type. No provider file
 required changes to keep working — confirmed by the first (legacy)
 case producing the exact same `message` text `handleApiCall()` already
 produced before this leaf.
+
+**Task 62/d — DONE as far as this session could take it (2026-09-10).
+New file `ERROR_HANDLING.md` (repo root) documents the confirmed
+shape, the 8 `type` values, and the Task 62/b per-provider mapping —
+this leaf's own literal scope ("document the new shape ... wherever
+Task 57's canonical envelope is itself documented").**
+
+**Real premise gap found and flagged, not glossed over:** this leaf's
+own text assumes Task 57's canonical envelope has an existing
+documented home to add the error shape next to. It doesn't — checked
+directly (`git log --diff-filter=A --name-only`) rather than assumed.
+`docs/` is explicitly the **Reseller/TelcosOpik product's** own API
+docs (`docs/README.md`'s own opening line: "documentation for the
+Reseller API... a separate product this codebase may integrate
+*with*"), not B-Pay-backend's own outward contract. Task 57's
+envelope has in fact never been documented anywhere except this
+file's own prose. So `ERROR_HANDLING.md` is a new file at repo root
+(same placement as `STRIPE_DISCOVERY.md`), not an addition to an
+existing page — flagged here so a future session doesn't go looking
+for a page that was never actually written.
+
+**Second, more important gap found this session, also flagged rather
+than quietly written around:** the new taxonomy fields are not
+actually present in any HTTP response body today. Every route's
+`catch` block in `routes.js` still builds its JSON response via
+`clientSafeMessage()`, which only ever returns a string — none of
+`type`/`code`/`decline_code`/`param`/`transaction_id`/`retryable` are
+read back off the thrown `ApiError` before the response is sent
+(confirmed by reading every `catch` block's `res.status(...).json(...)`
+call in `routes.js`, not assumed from Task 62/c's own scope
+description). This means Task 62's own stated goal for this leaf —
+"callers of `/pay`/`/payout`/VTU routes get one consistent error
+contract" — is **not yet actually true**, even though the shape
+itself is fully designed, confirmed, and internally wired.
+`ERROR_HANDLING.md` documents this gap explicitly (its own "What
+callers actually get today" section) rather than describing a
+caller-facing contract that doesn't exist yet. **Deliberately not
+fixed in this session**: wiring the new fields into every route's
+`res.json()` call is a live API response shape change — the same
+category of caller-facing behavior change Task 62/c's own writeup
+already declined to make for the HTTP-status-alignment table, for the
+same reason (needs its own explicit product-owner go-ahead, not a
+side effect of a docs task). Not yet numbered as its own task leaf —
+whoever picks this up next should confirm with the product owner
+whether/how callers should receive these fields (flat on the response
+body vs. nested under an `error` key, Stripe-style) before writing
+that code.
+
+**Not touched this session:** any `.js` file (docs-only leaf, no
+`node --check` needed), `docs/` (deliberately left alone — it's the
+other product's own documentation, per the gap noted above).
 
 ---
 

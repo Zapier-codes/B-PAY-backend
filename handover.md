@@ -14353,7 +14353,7 @@ route depends on. Not run against a live Supabase project — no new
 migration this leaf, same DB-Ops Handoff Process as every prior
 Supabase-dependent write/read path in this file.
 
-### d. Reconciliation-job design [ ] — discovery pass 8 of 10 providers checked (Xixapay/Prestmit resolved this session), design/build still not started
+### d. Reconciliation-job design [ ] — discovery pass 9 of 10 providers checked (Xixapay/Prestmit resolved 2026-09-06 earlier pass; PaymentPoint resolved this session against its own already-complete in-repo discovery, not new search), design/build still not started
 
 **Scope note:** this leaf needs a per-provider check — does each of
 the ten providers expose a statement/settlement-report endpoint
@@ -14479,21 +14479,47 @@ rather than an unchanged restatement of "still open":**
   not proof no such endpoint exists for onboarded merchants. Needs
   Remita's own real onboarding material to close, same blocker as
   ever — not guessed at here.
-- **PaymentPoint** — re-attempted from a different angle (searched
-  for the API/webhook/virtual-account documentation directly, not
-  just the settlement question) rather than re-fetching the same
-  known-client-rendered `paymentpoint.co/documentation` URL a third
-  time. Results returned only unrelated providers (the UK "PayPoint,"
-  Payabli, various others) — **no PaymentPoint (the Nigerian
-  `paymentpoint.co`) developer-docs content surfaced at all this
-  pass**, not even the client-rendered shell the prior two sessions
-  at least reached. Treat as **still unreachable via search/fetch**,
-  not as new evidence either way on the underlying settlement
-  question. Same resolution as before: needs a signed-in portal
-  session or a directly-supplied doc URL from someone with account
-  access.
+- **PaymentPoint** — **correction, same session, later pass: this was
+  the wrong approach entirely.** The two prior attempts (this session
+  and the one before it) both went back to open web search/fetch for
+  PaymentPoint's docs, when Task 0's own `a-8` discovery pass
+  (2026-09-06, commit `c3a7b8c`) had already audited PaymentPoint's
+  **complete** documented API surface — all six pages supplied
+  directly by the product owner (Authentication, Errors, Webhook
+  Documentation, Create Virtual Account, Identity Verification,
+  Liveness Check), explicitly confirmed at the time to match **every
+  entry in PaymentPoint's own sidebar nav**, i.e. nothing in
+  PaymentPoint's own documented surface was left unread by that pass.
+  Per the product owner's explicit instruction this session: re-checked
+  that existing write-up (search "PaymentPoint — FULL API discovery
+  pass" in this file) rather than searching the public web again —
+  **no settlement/reconciliation/statement endpoint appears anywhere
+  in it.** Since that pass already covers PaymentPoint's entire own
+  nav, this absence is now treated as a **confirmed no** — the same
+  evidentiary bar already applied to resolve Korapay/JuicyWay/Xixapay/
+  Prestmit (checked against the provider's own primary/complete doc
+  index, not silence from an incomplete search). **PaymentPoint moves
+  from "unreachable" to resolved-no.** Real caveat carried over
+  unchanged from a-8 itself, still open: no sandbox/test-mode behavior
+  is documented anywhere across those six pages, and a live-looking
+  Bearer token/api-key pair was flagged as possibly-real and
+  unrotated — neither is this leaf's problem to resolve, both already
+  flagged for the product owner under a-8.
 
-**Changelog:** 2026-09-10 (this session, later pass) — Remita and
+**Changelog:** 2026-09-10 (this session, correction pass) —
+PaymentPoint corrected from "unreachable" to **confirmed no**: per
+the product owner's direct instruction, re-checked against Task 0's
+own already-complete `a-8` in-repo discovery (all six of PaymentPoint's
+own doc pages, confirmed complete against their own nav) instead of
+searching the public web a third time — no settlement/reconciliation
+endpoint appears anywhere in it. **9 of 10 providers now have a
+confirmed answer**; Remita remains the sole open item, genuinely
+blocked on account/portal access rather than search technique. Worth
+flagging plainly for whoever reads this next: the two immediately
+preceding passes (below) both defaulted to public web search without
+first checking whether this repo already had the answer — a mistake,
+not a dead end, and cheap to have avoided.
+2026-09-10 (this session, later pass) — Remita and
 PaymentPoint both re-attempted from fresh angles; both remain
 unresolved, with Remita's negative evidence now stronger (checked
 every public SDK, not just the base-URL ambiguity) and PaymentPoint's

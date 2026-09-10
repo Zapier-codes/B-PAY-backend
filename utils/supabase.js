@@ -377,6 +377,156 @@ export async function getTransactionByReference(reference) {
 }
 
 // ==================================================
+// 🪝 WEBHOOK EVENT DEDUP (Task 60/b)
+// ==================================================
+// The read/write halves of the `webhook_events` table (migrations
+// 0016/0017, Task 60/a). Wired into routes.js's `webhookHandlers`
+// (Task 60/b), after signature verification succeeds — a failed
+// signature check throws before any of this runs, so this leaf does
+// NOT record `signature_valid: false` rows; that's a real, flagged
+// gap (the table's own migration comment says every delivery attempt
+// should be a queryable record, including failed verification), left
+// for a future leaf rather than expanding this session's scope.
+//
+// `provider_event_id` here is whatever `computeProviderEventKey()`
+// (utils/helpers.js) computes for a given provider/event/data — per
+// Task 60/c's discovery, no provider gives this codebase a confirmed
+// dedicated event-id field, so this is always the same
+// `${event}:${data.reference}` fallback key `webhookGateway.js`'s
+// Korapay-specific `computeDedupeKey()` already used, extended to all
+// three providers this leaf touches (Paystack, Korapay, Juicyway).
+// This is a deliberate, explicit choice for JuicyWay specifically —
+// Task 60/c flagged `data.transaction_id` as a plausible alternative
+// but left it unconfirmed; using the same safe fallback for all three
+// keeps this leaf's behavior uniform and doesn't guess at an
+// unconfirmed field. If a future session confirms JuicyWay's own
+// event-id field, this is the one place to change it.
+
+// Looks up whether a given (provider, provider_event_id) has already
+// been fully processed. Returns `true` only on a confirmed
+// already-processed duplicate; `false` for everything else, including
+// "not found," "found but still `received`/`failed`," AND "Supabase
+// unavailable" or a query error — same "can't validate, let it
+// through" posture Task 10's `assertCurrencySupported` already
+// established for an unconfirmed case, applied here rather than
+// risking a real webhook silently getting dropped by a false
+// duplicate signal.
+export async function isWebhookEventProcessed(provider, providerEventId) {
+  if (!providerEventId) return false;
+
+  let client;
+  try {
+    client = getSupabaseClient();
+  } catch (err) {
+    log(`isWebhookEventProcessed skipped — Supabase not available: ${err.message}`, 'warn');
+    return false;
+  }
+
+  try {
+    const { data, error } = await client
+      .from('webhook_events')
+      .select('status')
+      .eq('provider', provider)
+      .eq('provider_event_id', providerEventId)
+      .eq('status', 'processed')
+      .maybeSingle();
+
+    if (error) {
+      log(`isWebhookEventProcessed lookup failed for ${provider}/${providerEventId}: ${error.message}`, 'warn');
+      return false;
+    }
+
+    return !!data;
+  } catch (err) {
+    log(`isWebhookEventProcessed failed for ${provider}/${providerEventId}: ${err.message}`, 'warn');
+    return false;
+  }
+}
+
+// Inserts a `received` row for a verified, non-duplicate webhook
+// delivery, before its handler's side effects run. Unlike
+// recordTransaction()/recordBalanceTransaction(), this DOES select
+// the inserted row's `id` back — markWebhookEventStatus() below needs
+// it to update the same row once the handler finishes, and (unlike
+// those two functions' own flagged `transaction_id: null` gap) there
+// is no existing call site depending on this insert NOT returning an
+// id, so there's no backward-compatibility reason to omit it here.
+// Returns the new row's `id`, or `null` if the write itself failed —
+// callers should treat a `null` id as "couldn't record this delivery"
+// and proceed with the handler anyway (never block a webhook's actual
+// side effects on this table being reachable), matching every other
+// Supabase helper's own "best-effort, never blocks the money-moving
+// path" posture.
+export async function recordWebhookEvent({ provider, provider_event_id, payload, signature_valid } = {}) {
+  let client;
+  try {
+    client = getSupabaseClient();
+  } catch (err) {
+    log(`recordWebhookEvent skipped — Supabase not available: ${err.message}`, 'warn');
+    return null;
+  }
+
+  try {
+    const row = { provider, payload, signature_valid, status: 'received' };
+    if (provider_event_id) {
+      row.provider_event_id = provider_event_id;
+    }
+
+    const { data, error } = await client
+      .from('webhook_events')
+      .insert(row)
+      .select('id')
+      .maybeSingle();
+
+    if (error) {
+      log(`recordWebhookEvent insert failed for ${provider}/${provider_event_id}: ${error.message}`, 'warn');
+      return null;
+    }
+
+    return data?.id || null;
+  } catch (err) {
+    log(`recordWebhookEvent failed for ${provider}/${provider_event_id}: ${err.message}`, 'warn');
+    return null;
+  }
+}
+
+// Moves a previously-recorded `webhook_events` row from `received` to
+// its final `status` (`'processed'` or `'failed'`) once
+// webhookHandlers' own side effects have run. `processed_at` is set
+// to `now()` here rather than left to the shared `set_updated_at()`
+// trigger (migration 0016), since "processed" is this application's
+// own outcome, not a fact Postgres can infer from the row change
+// alone — same reasoning migration 0016's own header comment gives.
+// Fire-and-forget from the caller's side, same "never throws, don't
+// block on this" posture as every other write in this file — a
+// no-op `id: null` (recordWebhookEvent() having already failed above)
+// is a normal, expected input here, not an error.
+export async function markWebhookEventStatus(id, status) {
+  if (!id) return;
+
+  let client;
+  try {
+    client = getSupabaseClient();
+  } catch (err) {
+    log(`markWebhookEventStatus skipped — Supabase not available: ${err.message}`, 'warn');
+    return;
+  }
+
+  try {
+    const { error } = await client
+      .from('webhook_events')
+      .update({ status, processed_at: new Date().toISOString() })
+      .eq('id', id);
+
+    if (error) {
+      log(`markWebhookEventStatus update failed for id '${id}': ${error.message}`, 'warn');
+    }
+  } catch (err) {
+    log(`markWebhookEventStatus failed for id '${id}': ${err.message}`, 'warn');
+  }
+}
+
+// ==================================================
 // 🧑‍💼 CUSTOMER VAULT — READ/WRITE (Task 57/d)
 // ==================================================
 // The read/write halves of the `customers` table (migrations 0003/

@@ -255,22 +255,45 @@
 > scope (Task 58 step 8 unresolved). Full findings in Task 60/c's own
 > section and the Session Log.
 >
-> **⏸️ Real next task: Task 60/b — dedup check in `webhookGateway.js`.**
-> Paystack and Korapay can both be wired now on the confirmed fallback
-> key (`event` + `data.reference`, matching `webhookGateway.js`'s
-> existing Korapay dedupe logic) — no further discovery needed for
-> those two. JuicyWay is the one open call: either reuse the same
-> fallback for it too (safe, consistent with the other two) or spend
-> part of this leaf's own session confirming `data.transaction_id`
-> against a real sandbox payload first — whichever a session picks,
-> say so explicitly, don't silently guess one into the dedup key. Task
-> 60/d (manual replay route) and Task 61/d (reconciliation-job design,
-> still blocked on its own per-provider discovery pass) remain open
-> after that. Task 60/e (continuous-failure alerting) stays blocked on
-> a product-owner decision about what "notify" means here — don't
-> guess a channel. Task 61/e (payout-schedule question) is an open
-> product question, not an implementation task — needs direct
-> product-owner confirmation before it's scoped into code.
+> **Task 60/b is DONE (2026-09-10)** — dedup wired into `routes.js`'s
+> `webhookHandlers` (Paystack/Korapay/Juicyway), not `webhookGateway.js`
+> (that file is Task 41's separate Korapay-only fanout concern, its own
+> in-memory store — this bullet's original text named the wrong file,
+> corrected in Task 60/b's own section). Fallback `event:reference` key
+> used uniformly for all three providers, including JuicyWay — an
+> explicit choice per Task 60/c's own unconfirmed-field finding, not a
+> guess. Real flagged gap: a failed signature check still throws before
+> any row is recorded, so `webhook_events` doesn't yet capture rejected
+> deliveries. Full detail in Task 60/b's own section.
+>
+> **⏸️ Real next task: Task 60/d — manual replay route.** An internal,
+> `requireInternalApiKey`-gated route that re-runs a stored
+> `webhook_events` row's handler — mirrors Stripe Dashboard's own
+> manual-resend affordance, scaled to this repo's no-dashboard-yet
+> reality (Task 46 still open) as a plain route instead. Task 60/b's
+> own `webhook_events` rows (with the full raw `payload` migration 0016
+> preserved for exactly this) are the input; needs a design decision on
+> whether replay re-runs the same `webhookHandlers[provider]` entry
+> directly (simplest, reuses existing signature-verified-payload logic)
+> or something narrower — say which was picked, don't leave it
+> implicit. After that: **Task 61/d** still has 4 of 10 providers
+> unchecked (Xixapay, PaymentPoint, Prestmit, `telcos.opik.net` — see
+> its own section for why each was skipped) before the reconciliation-
+> job design itself can start. **Task 60/e** (continuous-failure
+> alerting) stays blocked on a product-owner decision about what
+> "notify" means here — don't guess a channel. **Task 61/e** (payout-
+> schedule question) is an open product question, not an implementation
+> task — needs direct product-owner confirmation before it's scoped
+> into code.
+>
+> **Task 61/d had a discovery pass run against 6 of 10 providers
+> (2026-09-10)** — Paystack and Flutterwave both confirmed to have real
+> settlement-list APIs; DodoPayments has an adjacent payout-breakup
+> endpoint; Korapay/JuicyWay confirmed to have no such endpoint;
+> Remita stays unconfirmed (same base-URL/auth ambiguity Tasks 49/50
+> already flagged). Full per-provider findings in Task 61/d's own
+> section — this box only records that the box's own former "not
+> currently known for any provider" line is now stale for those 6.
 >
 > **Updating this box:** when you finish your leaf, replace the two
 > paragraphs above with the new next task — don't append a new dated
@@ -286,6 +309,14 @@
 
 ## 📝 Session Log (newest first — one line per session, optional)
 
+- 2026-09-10 — Task 60/b done: dedup wired into `routes.js`'s
+  `webhookHandlers` (not `webhookGateway.js` — corrected), uniform
+  `event:reference` fallback key for Paystack/Korapay/Juicyway; failed-
+  signature deliveries still not recorded, flagged as a real gap.
+- 2026-09-10 — Task 61/d discovery pass: 6 of 10 providers checked
+  against primary docs (Paystack/Flutterwave yes, DodoPayments
+  adjacent-yes, Korapay/JuicyWay no, Remita unconfirmed); Xixapay/
+  PaymentPoint/Prestmit/telcosOpik not yet checked.
 - 2026-09-10 — Task 60/c done, discovery-only, no code: re-fetched
   Paystack's and Korapay's own webhook docs directly — neither
   documents a dedicated event/delivery-id field, confirming
@@ -13523,11 +13554,79 @@ Closes `STRIPE_DISCOVERY.md` §3's gap. Natural parts:
   `processed_at` — matches what migration `0016` actually built,
   `updated_at` added beyond the original list since `status` is a real
   in-place lifecycle column, per that migration's own note.)
-- **b.** Dedup check in `webhookGateway.js`: look up
-  `(provider, provider_event_id)` before running any handler side
-  effect; short-circuit with a `2xx` (matching Stripe's own "return 2xx
-  even for an already-processed duplicate" convention) if already
-  `processed`.
+- **b. DONE (2026-09-10).** Dedup check wired in — **correction to
+  this bullet's own original text: the actual call site is
+  `routes.js`'s `webhookHandlers` (Task 3/4/5's Paystack/Korapay/
+  Juicyway signature-verification handlers), not `webhookGateway.js`.**
+  `webhookGateway.js` is Task 41's separate Korapay-only
+  multi-tenant-fanout concern (its own in-memory, no-DB-by-design event
+  store, forwarding to mavins-web etc.) — a different table/store
+  entirely from this table's general `webhook_events` ledger. Both now
+  dedupe independently on the same fallback key shape; they don't share
+  state, and don't need to.
+  - Added `computeProviderEventKey(event, data)` to `utils/helpers.js`
+    — the same `` `${event}:${data.reference}` `` fallback
+    `webhookGateway.js`'s own `computeDedupeKey()` already used for
+    Korapay (Task 41), extended here to all three providers this table
+    covers. **Explicit choice, not an oversight:** JuicyWay's
+    `data.transaction_id` (Task 60/c's own most-plausible-candidate
+    note) is deliberately NOT used — staying on the same safe fallback
+    for all three keeps this leaf uniform and doesn't guess an
+    unconfirmed field into the codebase. Change this one function if a
+    future session confirms JuicyWay's real event-id field.
+  - Added three functions to `utils/supabase.js`, same "never throws,
+    best-effort" posture as every other helper in that file:
+    `isWebhookEventProcessed(provider, providerEventId)` (returns
+    `true` only on a confirmed `status: 'processed'` match — `false`
+    for "not found," "found but still `received`/`failed`," AND
+    "Supabase unreachable," so an unconfirmed case never blocks a real
+    webhook from running); `recordWebhookEvent(...)` (inserts the
+    `received` row, **does** `.select('id')` back — unlike
+    `recordTransaction()`'s own flagged gap, there was no existing call
+    site depending on this insert not returning an id, so nothing
+    stopped this one from doing it properly); `markWebhookEventStatus
+    (id, status)` (moves the row to `processed`/`failed`, fire-and-
+    forget from the caller).
+  - Wired into all three `webhookHandlers` entries in `routes.js`,
+    right after signature verification succeeds and `{ event, data }`
+    is extracted, before each handler's own `switch`: compute the
+    dedupe key → check `isWebhookEventProcessed` → short-circuit
+    `{ received: true, duplicate: true }` on a confirmed duplicate →
+    else `recordWebhookEvent` (capturing the row id) → run the
+    existing `switch` unchanged → `markWebhookEventStatus(id,
+    'processed')`. Korapay's handler keeps its own pre-existing
+    `handleGatewayEvent()` fanout call exactly where it already was,
+    or, marking this table's own `processed` status right after it, not
+    instead of it — the two dedupe mechanisms run side by side, not
+    one replacing the other.
+  - **Real, flagged gap, not silently left out:** a *failed* signature
+    verification still throws before any of this runs, same as before
+    this leaf — so `webhook_events` does NOT yet get a
+    `signature_valid: false` row for a rejected delivery, even though
+    migration `0016`'s own header comment frames this table as "every
+    delivery attempt, including failed verification." Closing that gap
+    would mean restructuring where/how each handler decides to
+    throw — out of scope for this leaf, left for whoever picks this up
+    next, not attempted speculatively here.
+  - **Verification:** `node --check routes.js`/`utils/supabase.js`/
+    `utils/helpers.js` all pass. `computeProviderEventKey` exercised
+    directly (reference present → correct key; no reference / no data →
+    `null`, both correct). A throwaway local HTTP stub standing in for
+    Supabase's REST endpoint (deleted after use, not committed)
+    exercised the real lifecycle end-to-end: not-yet-processed (no
+    row) → `false`; row recorded, id returned; still `received` →
+    `false`; marked `processed`; now → `true`; a different provider
+    with the same key → `false` (provider is part of the lookup, not
+    just the event key). All six assertions passed. Also directly
+    exercised the unconfigured-Supabase path (no `SUPABASE_URL`/
+    `SUPABASE_SERVICE_ROLE_KEY` set) for all three new functions — none
+    threw, all resolved to the same safe defaults
+    (`isWebhookEventProcessed` → `false`, `recordWebhookEvent` → `null`,
+    `markWebhookEventStatus` → no-op), matching this file's own
+    "never blocks the money-moving path" posture for every Supabase
+    helper. Not run against a live Supabase project — same DB-Ops
+    Handoff Process as every prior Supabase-dependent path in this
+    file; this leaf adds application code only, no new migration.
 - **c. DONE, discovery-only, no code (2026-09-10).** Per-provider
   event-id field checked directly against each provider's own docs,
   same "confirm before building" discipline this file uses everywhere

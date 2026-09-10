@@ -108,6 +108,27 @@ export function isValidReference(reference) {
 }
 
 // ==================================================
+// 🪝 WEBHOOK EVENT DEDUP KEY (Task 60/b, per Task 60/c's discovery)
+// ==================================================
+// Per Task 60/c's per-provider discovery pass (see handover.md): none
+// of Paystack, Korapay, or Juicyway document a dedicated top-level
+// event/delivery-id field this codebase can rely on. This is the same
+// `${event}:${data.reference}` fallback webhookGateway.js's own
+// Korapay-specific computeDedupeKey() already used (Task 41),
+// extended here to cover all three providers `routes.js`'s
+// `webhookHandlers` verifies. Deliberately uniform across all three —
+// Juicyway's `data.transaction_id` is a plausible alternative per
+// Task 60/c's own findings but was left unconfirmed, so this
+// function does not special-case it; picking the same safe fallback
+// for every provider is this leaf's explicit choice, not an oversight.
+// Returns `null` if `data.reference` itself is missing — callers
+// should treat that as "can't dedupe this one," not throw.
+export function computeProviderEventKey(event, data) {
+  if (!data?.reference) return null;
+  return `${event}:${data.reference}`;
+}
+
+// ==================================================
 // 🛡️ ERROR HANDLING
 // ==================================================
 

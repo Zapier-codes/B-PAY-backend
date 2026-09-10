@@ -3,8 +3,8 @@ import { Paystack } from './providers/paystack.js';
 import { Juicyway } from './providers/juicyway.js';
 import { Korapay } from './providers/korapay.js';
 import { TelcosOpik, provisionTelcosOpikAccount, resolveTelcosOpikApiKey } from './providers/telcosOpik.js';
-import { log, formatPayload, generateReference, getSupportedCurrencies, isValidCurrencyCode, isValidEmail, providerRequiresEmail, requireInternalApiKey, classifyDomain } from './utils/helpers.js';
-import { recordTransaction, recordBalanceTransaction, getBusinessBalance, getTransactionByReference, getRoutingDefaultProvider, getCapabilityStatus } from './utils/supabase.js';
+import { log, formatPayload, generateReference, getSupportedCurrencies, isValidCurrencyCode, isValidEmail, providerRequiresEmail, requireInternalApiKey, classifyDomain, computeProviderEventKey } from './utils/helpers.js';
+import { recordTransaction, recordBalanceTransaction, getBusinessBalance, getTransactionByReference, getRoutingDefaultProvider, getCapabilityStatus, isWebhookEventProcessed, recordWebhookEvent, markWebhookEventStatus } from './utils/supabase.js';
 import { getMissingFields } from './utils/fieldRequirements.js';
 import { resolveCustomer } from './utils/customerVault.js';
 import { handleGatewayEvent } from './webhookGateway.js';
@@ -565,6 +565,23 @@ const webhookHandlers = {
     const { event, data } = req.body || {};
     log(`Paystack webhook event: ${event}`);
 
+    // Task 60/b — dedup, per Task 60/c's discovery (no confirmed
+    // native event-id for Paystack; fallback `event:reference` key).
+    // Recorded only after signature verification succeeds above — see
+    // utils/supabase.js's own Task 60/b header note on that flagged
+    // gap (a failed-signature attempt gets no row here).
+    const dedupeKey = computeProviderEventKey(event, data);
+    if (dedupeKey && await isWebhookEventProcessed('paystack', dedupeKey)) {
+      log(`Paystack webhook '${dedupeKey}' already processed — short-circuiting, no side effects re-run`);
+      return { received: true, duplicate: true };
+    }
+    const eventRowId = await recordWebhookEvent({
+      provider: 'paystack',
+      provider_event_id: dedupeKey,
+      payload: req.body,
+      signature_valid: true,
+    });
+
     switch (event) {
       case 'charge.success':
         // Per paystack.com/docs/payments/webhooks/, this is the
@@ -583,6 +600,7 @@ const webhookHandlers = {
         log(`Paystack webhook event '${event}' received, no handler wired yet — logged only`);
     }
 
+    await markWebhookEventStatus(eventRowId, 'processed');
     return { received: true };
   },
   korapay: async (req) => {
@@ -600,6 +618,25 @@ const webhookHandlers = {
 
     const { event, data } = req.body || {};
     log(`Korapay webhook event: ${event}`);
+
+    // Task 60/b — dedup, per Task 60/c's discovery (Korapay's own docs
+    // confirm no dedicated event-id field; same `event:reference`
+    // fallback webhookGateway.js's own Task 41 computeDedupeKey()
+    // already used for its separate multi-tenant-fanout concern — this
+    // is B-Pay's own general webhook_events ledger, a distinct table
+    // from that gateway's in-memory-only event store, so both dedupe
+    // independently on the same key shape rather than sharing state).
+    const dedupeKey = computeProviderEventKey(event, data);
+    if (dedupeKey && await isWebhookEventProcessed('korapay', dedupeKey)) {
+      log(`Korapay webhook '${dedupeKey}' already processed — short-circuiting, no side effects re-run`);
+      return { received: true, duplicate: true };
+    }
+    const eventRowId = await recordWebhookEvent({
+      provider: 'korapay',
+      provider_event_id: dedupeKey,
+      payload: req.body,
+      signature_valid: true,
+    });
 
     switch (event) {
       case 'charge.success':
@@ -630,6 +667,7 @@ const webhookHandlers = {
     // across a restart/redeploy yet).
     await handleGatewayEvent(event, data);
 
+    await markWebhookEventStatus(eventRowId, 'processed');
     return { received: true };
   },
   juicyway: async (req) => {
@@ -651,6 +689,26 @@ const webhookHandlers = {
     const { event, data } = req.body || {};
     log(`Juicyway webhook event: ${event}`);
 
+    // Task 60/b — dedup. Task 60/c found several candidate id-shaped
+    // fields in Juicyway's own sample payloads (`data.id`,
+    // `data.transaction_id`, `data.correlation_id`, etc.) but none
+    // confirmed as THE dedup key — deliberately using the same safe
+    // `event:reference` fallback as Paystack/Korapay above rather than
+    // guessing `data.transaction_id` into this codebase unconfirmed;
+    // see computeProviderEventKey()'s own header note in
+    // utils/helpers.js for the explicit reasoning.
+    const dedupeKey = computeProviderEventKey(event, data);
+    if (dedupeKey && await isWebhookEventProcessed('juicyway', dedupeKey)) {
+      log(`Juicyway webhook '${dedupeKey}' already processed — short-circuiting, no side effects re-run`);
+      return { received: true, duplicate: true };
+    }
+    const eventRowId = await recordWebhookEvent({
+      provider: 'juicyway',
+      provider_event_id: dedupeKey,
+      payload: req.body,
+      signature_valid: true,
+    });
+
     switch (event) {
       case 'payment.session.succeeded':
       case 'payment.session.failed':
@@ -663,6 +721,7 @@ const webhookHandlers = {
         log(`Juicyway webhook event '${event}' received, no handler wired yet — logged only`);
     }
 
+    await markWebhookEventStatus(eventRowId, 'processed');
     return { received: true };
   },
 };

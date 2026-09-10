@@ -266,25 +266,30 @@
 > any row is recorded, so `webhook_events` doesn't yet capture rejected
 > deliveries. Full detail in Task 60/b's own section.
 >
-> **⏸️ Real next task: Task 60/d — manual replay route.** An internal,
-> `requireInternalApiKey`-gated route that re-runs a stored
-> `webhook_events` row's handler — mirrors Stripe Dashboard's own
-> manual-resend affordance, scaled to this repo's no-dashboard-yet
-> reality (Task 46 still open) as a plain route instead. Task 60/b's
-> own `webhook_events` rows (with the full raw `payload` migration 0016
-> preserved for exactly this) are the input; needs a design decision on
-> whether replay re-runs the same `webhookHandlers[provider]` entry
-> directly (simplest, reuses existing signature-verified-payload logic)
-> or something narrower — say which was picked, don't leave it
-> implicit. After that: **Task 61/d** still has 4 of 10 providers
-> unchecked (Xixapay, PaymentPoint, Prestmit, `telcos.opik.net` — see
-> its own section for why each was skipped) before the reconciliation-
-> job design itself can start. **Task 60/e** (continuous-failure
-> alerting) stays blocked on a product-owner decision about what
-> "notify" means here — don't guess a channel. **Task 61/e** (payout-
-> schedule question) is an open product question, not an implementation
-> task — needs direct product-owner confirmation before it's scoped
-> into code.
+> **⏸️ Real next task:** Task 60/e (continuous-failure alerting) stays
+> blocked on a product-owner decision about what "notify" means here —
+> don't guess a channel. **Task 61/d** (reconciliation-job design) now
+> has 8 of 10 providers confirmed (Paystack/Flutterwave/DodoPayments:
+> yes/yes/adjacent-yes; Korapay/JuicyWay/Xixapay/Prestmit: no) — Remita
+> (pre-existing base-URL/auth ambiguity) and PaymentPoint (docs
+> unreachable, client-rendered) remain open, `telcos.opik.net`
+> deliberately deferred pending Task 58 step 8. The reconciliation-job
+> *design* itself (comparing `balance_transactions` against whichever
+> providers' settlement APIs came back **yes**) is Task 61/d's real
+> next step, once Remita/PaymentPoint are resolved or explicitly
+> deprioritized. **Task 61/e** (payout-schedule question) is an open
+> product question, not an implementation task — needs direct
+> product-owner confirmation before it's scoped into code.
+>
+> **Task 60/d is DONE (2026-09-10)** — manual replay route,
+> `POST /api/webhooks/:id/replay`, `requireInternalApiKey`-gated.
+> Required splitting each `webhookHandlers` entry's fused verify+process
+> logic into a new `webhookEventProcessors` map so replay can re-run
+> just the processing half against a stored, already-verified payload.
+> Refuses to replay a `signature_valid: false` row; deliberately skips
+> the live route's dedup short-circuit. Confirmed pushed to
+> `origin/main` (`9cbeb88`), part of PR #3, not yet merged. Full detail
+> in Task 60/d's own section.
 >
 > **Task 61/d had a discovery pass run against 6 of 10 providers
 > (2026-09-10)** — Paystack and Flutterwave both confirmed to have real
@@ -309,6 +314,16 @@
 
 ## 📝 Session Log (newest first — one line per session, optional)
 
+- 2026-09-10 — Task 61/d discovery continued: Xixapay and Prestmit
+  both resolved to confirmed **no** settlement/statement endpoint, via
+  each provider's own real primary doc index (fetched directly, not
+  relying on search snippets — both had been unreachable/unchecked
+  last session). PaymentPoint re-attempted, still unreachable (its
+  docs page is client-rendered with no server-side content).
+  `telcos.opik.net` still deliberately deferred pending Task 58 step
+  8. Now 8 of 10 providers confirmed; Remita and PaymentPoint remain
+  open. Doc-only, no code — reconciliation-job design itself still not
+  started.
 - 2026-09-10 — Task 60/d done: manual webhook replay route
   (`POST /api/webhooks/:id/replay`, `requireInternalApiKey`-gated).
   Required first splitting each `webhookHandlers` entry's fused
@@ -14176,7 +14191,7 @@ route depends on. Not run against a live Supabase project — no new
 migration this leaf, same DB-Ops Handoff Process as every prior
 Supabase-dependent write/read path in this file.
 
-### d. Reconciliation-job design [ ] — discovery pass started this session (6 of 10 providers checked), design/build still not started
+### d. Reconciliation-job design [ ] — discovery pass 8 of 10 providers checked (Xixapay/Prestmit resolved this session), design/build still not started
 
 **Scope note:** this leaf needs a per-provider check — does each of
 the ten providers expose a statement/settlement-report endpoint
@@ -14238,26 +14253,62 @@ itself, only its prerequisite.
 
 **Not checked this session — genuinely not researched, not assumed
 `no`:**
-- **Xixapay** — only its marketing/pricing pages surfaced
-  (`xixapay.com`); no API reference content was returned by search.
-  `xixapay.com/documentation` exists but its content isn't indexed —
-  would need direct portal access (an account) to check.
-- **PaymentPoint** — no settlement/statement-specific doc surfaced;
-  general NG-payments search results returned unrelated providers
-  (Monnify, Sarepay, Flutterwave, Africa's Talking) instead. Needs a
-  targeted look at PaymentPoint's own developer docs directly.
-- **Prestmit** — not checked this pass. Per Task 48/a, Prestmit is a
-  gift-card/crypto off-ramp, not a bank/card processor — worth
-  confirming whether "settlement" is even a meaningful concept for its
-  product shape before spending a search pass on it.
-- **`telcos.opik.net`** — not checked this pass. This is Task 58's own
-  in-progress integration (not yet live per Task 58 step 8's open
-  blocker), so a settlement-endpoint check here is arguably premature
-  until that integration itself is unblocked.
+- **PaymentPoint** — still not reachable via primary docs this pass
+  either. `paymentpoint.co/documentation` returns a client-rendered
+  page with no server-side content (confirmed directly: fetching it
+  returns only a WhatsApp link, no doc body — same client-side-JS
+  wall the prior session's search hit). A marketing page
+  (`gemezu.com`'s own PaymentPoint writeup) uses the phrase "Reconcile
+  your books... and generate reports with complete data," but that's
+  third-party marketing copy, not PaymentPoint's own API reference —
+  not treated as a confirmed **yes**. Needs either a signed-in portal
+  session or a directly-supplied doc URL from someone with account
+  access; not guessed at here.
+- **Prestmit** — **confirmed no**, resolved this session (was
+  previously unchecked). Fetched Prestmit's real API docs directly
+  (`documentation.prestmit.io`, a ReadMe-hosted site with a full
+  sidebar index) — sections are Getting Started, Sell/Buy Gift Card,
+  Wallet/Bank Accounts/Payouts, and a "how to make money" guide; no
+  settlement, statement, or reconciliation-report page anywhere in the
+  index. Confirms Task 48/a's own expectation (gift-card/crypto
+  off-ramp, not a bank/card processor) directly against primary
+  source rather than leaving it assumed.
+- **`telcos.opik.net`** — still not checked, deliberately. This is
+  Task 58's own in-progress integration (not yet live per Task 58 step
+  8's open signing-scheme blocker), so a settlement-endpoint check
+  here is arguably premature until that integration itself is
+  unblocked — same judgment call the prior session made, not
+  revisited this session.
 
-**Changelog:** 2026-09-10 — discovery pass run against 6 of 10
-providers (this session); reconciliation-job design itself still not
-started.
+**Resolved this session (2026-09-10) — was previously unchecked:**
+- **Xixapay** — **confirmed no.** The prior session's search couldn't
+  surface indexed doc content; this session found and fetched
+  Xixapay's real API docs directly (`documentation.xixapay.com`, also
+  a GitBook-hosted site with a full page index via its own
+  `llms.txt`). Full index: Overview, Authentication, Error Codes,
+  Customer, Virtual Account, Card USD/NGN, ID Verification, Payout
+  (Withdrawal) Integration, Webhook — no settlement/statement/
+  reconciliation-report page anywhere in it. The overview page's own
+  marketing language mentions "reconciliation" only as a general
+  product benefit ("simplifies... payment acceptance, reconciliation,
+  and management"), not a named endpoint — same distinction drawn for
+  PaymentPoint's marketing copy above, not treated as a **yes** on
+  that basis alone.
+
+**Changelog:** 2026-09-10 (this session) — Xixapay and Prestmit
+resolved to **confirmed no** via each provider's own primary doc
+index; PaymentPoint re-attempted, still unreachable (client-rendered
+docs page, no server-side content); `telcos.opik.net` still
+deliberately deferred. **8 of 10 providers now have a confirmed
+answer** (Paystack/Flutterwave/DodoPayments: yes/yes/adjacent-yes;
+Korapay/JuicyWay/Xixapay/Prestmit: no); Remita and PaymentPoint remain
+open (Remita on its own pre-existing base-URL/auth ambiguity,
+PaymentPoint on doc-portal access); `telcos.opik.net` intentionally
+not yet in scope. Reconciliation-job design itself — the actual point
+of this leaf — still not started; this and the prior session were
+both discovery-only.
+2026-09-10 (prior session) — discovery pass run against 6 of 10
+providers; reconciliation-job design itself still not started.
 
 ### e. Payout-schedule question for B-Pay's own wallet-style balances [ ] — open product question, not an implementation task
 

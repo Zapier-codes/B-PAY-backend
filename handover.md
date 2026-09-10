@@ -266,9 +266,21 @@
 > any row is recorded, so `webhook_events` doesn't yet capture rejected
 > deliveries. Full detail in Task 60/b's own section.
 >
-> **⏸️ Real next task:** Task 60/e (continuous-failure alerting) stays
-> blocked on a product-owner decision about what "notify" means here —
-> don't guess a channel. **Task 61/d** (reconciliation-job design) now
+> **Task 60/e is DONE (2026-09-10)** — continuous-failure alerting,
+> `utils/alerts.js`'s channel-agnostic `notifyOps()` (POSTs to a
+> deploy-time `ALERT_WEBHOOK_URL`, always logs regardless), wired via
+> `routes.js`'s new `runWebhookProcessor()` on a consecutive-failure
+> streak (env-overridable threshold, default 5). Full detail in Task
+> 60/e's own section — not repeated here. **Real open item this
+> leaves:** `ALERT_WEBHOOK_URL` isn't set anywhere yet, so alerts are
+> log-only in every environment until whoever owns ops tooling points
+> it at something (Slack/PagerDuty/email-relay endpoint) — not this
+> session's decision to make on its own authority. **Not pushed** —
+> committed locally only, no push credentials this session; see commit
+> `feat(webhooks): Task 60/e — continuous-failure alerting` on branch
+> `task-60e-webhook-failure-alerting`.
+>
+> **⏸️ Real next task:** **Task 61/d** (reconciliation-job design) now
 > has 8 of 10 providers confirmed (Paystack/Flutterwave/DodoPayments:
 > yes/yes/adjacent-yes; Korapay/JuicyWay/Xixapay/Prestmit: no) — Remita
 > (pre-existing base-URL/auth ambiguity) and PaymentPoint (docs
@@ -314,6 +326,12 @@
 
 ## 📝 Session Log (newest first — one line per session, optional)
 
+- 2026-09-10 — Task 60/e done: continuous-failure alerting via
+  `utils/alerts.js`'s channel-agnostic `notifyOps()` + a consecutive-
+  failure streak check in `routes.js`; migration `0018`. Not pushed
+  (no push credentials this session) — local branch
+  `task-60e-webhook-failure-alerting`. `ALERT_WEBHOOK_URL` still needs
+  a real destination from whoever owns that decision.
 - 2026-09-10 — Task 61/d discovery continued: Xixapay and Prestmit
   both resolved to confirmed **no** settlement/statement endpoint, via
   each provider's own real primary doc index (fetched directly, not
@@ -13559,7 +13577,7 @@ sessions). Each task below states its natural parts so the session
 that picks it up doesn't have to re-derive them, exactly as the
 splitting rule's own "how to split, in practice" section describes.
 
-#### Task 60 — Webhook event ledger, idempotent dedup, and replay [ ] (a/b/c/d done; e blocked on a product-owner decision — see e's own entry)
+#### Task 60 — Webhook event ledger, idempotent dedup, and replay [x] (a/b/c/d/e all done — see e's own entry, 2026-09-10)
 
 Closes `STRIPE_DISCOVERY.md` §3's gap. Natural parts:
 - **a. DONE (2026-09-10).** `webhook_events` table built: migrations
@@ -13791,12 +13809,75 @@ Closes `STRIPE_DISCOVERY.md` §3's gap. Natural parts:
     `refs/pull/3/head` on `Phoenix-Boss/B-PAY-backend` matches the same
     sha, so this is live on `origin/main` and part of **PR #3, not yet
     merged by Phoenix-Boss** (see "Outstanding PRs status" above).
-- **e.** Continuous-failure alerting (mirrors Stripe's 3-day auto-
-  disable-and-notify) — scoped down to whatever B-Pay's current
-  notification capability actually is; needs a product-owner decision
-  on what "notify" means here (email? log line? Task 46's future
-  dashboard?) before this leaf is buildable — flag as blocked on that
-  decision, don't guess a channel.
+- **e. DONE (2026-09-10).** Continuous-failure alerting. Resolved the
+  blocking question differently than originally framed, rather than
+  picking one of the listed channels by guess: independently confirmed
+  against Stripe's live docs and third-party integration write-ups
+  that the industry pattern (Stripe, and every other webhook-sending
+  platform checked — Truv, others) is genuinely just "auto-disable +
+  email the account owner" — but this codebase has zero existing
+  email/SMTP infrastructure (checked: no `nodemailer`/`sendgrid`/
+  similar anywhere), so reproducing that exactly would mean picking a
+  mail vendor and a real destination address on this session's own
+  authority — the same kind of unowned decision the original block was
+  trying to avoid, just moved one layer down.
+  - Built `utils/alerts.js`'s `notifyOps(subject, details)` instead:
+    channel-agnostic, POSTs to `ALERT_WEBHOOK_URL` (a deploy-time env
+    var) if configured — that one HTTP-POST-to-an-endpoint shape covers
+    Slack/Teams/Discord incoming webhooks, PagerDuty's Events API v2,
+    or any transactional-email API (Postmark/SendGrid/Resend) via a
+    thin relay, without this codebase depending on one vendor's SDK.
+    Un configured is a supported, non-error state: every alert is
+    always also emitted as a structured `error`-level log line first,
+    so nothing is silently lost before a real channel is wired up —
+    same "never throws, never blocks the money-moving path" posture
+    every `utils/supabase.js` helper already follows.
+  - B-Pay doesn't control provider retry schedules (Task 60/c already
+    flagged Korapay/JuicyWay's own retry cadence as undocumented), so
+    Stripe's literal "3 continuous days" isn't a threshold B-Pay can
+    enforce on itself — the B-Pay-appropriate analog built here is a
+    **consecutive-failure streak** on this table's own `status` column,
+    which this app does fully control. `routes.js`'s new
+    `runWebhookProcessor()` wraps each provider's post-verification
+    processor call, always resolving the row to `'processed'`/`'failed'`
+    (closing a real pre-existing gap: before this leaf, a processor
+    throwing left the row stuck at `'received'` forever, per Task 60/b's
+    own flagged note — invisible to any failure count). On failure,
+    checks the provider's last `WEBHOOK_ALERT_THRESHOLD` (env-
+    overridable, default 5) rows via the new
+    `getRecentWebhookOutcomes()` in `utils/supabase.js`; alerts exactly
+    once when that window is a fresh all-`'failed'` streak, not on every
+    failure after — a single `'processed'` row resets it, same "one
+    success clears the clock" semantics Stripe's own retry/disable
+    logic uses.
+  - New migration `0018`: `webhook_events_provider_status_idx` on
+    `(provider, received_at desc, status)` — the exact index migration
+    `0016`'s own comment deferred until this leaf's real query shape was
+    known. `db/SCHEMA.md` updated in the same session.
+  - **Verification:** `node --check` clean on all three touched/new
+    files. `npm install` clean, no new dependency added (`node-fetch`
+    was already a dependency, reused for the webhook POST, matching
+    every provider file's own import convention). `import('./routes.js')`
+    resolves end-to-end. Directly exercised against this sandbox's own
+    unconfigured state (no `SUPABASE_URL`/`SUPABASE_SERVICE_ROLE_KEY`,
+    no `ALERT_WEBHOOK_URL`): `getRecentWebhookOutcomes()` → `[]`,
+    `notifyOps()` → logs only, returns `false` — neither throws. Then
+    against a throwaway local HTTP stub standing in for a real
+    `ALERT_WEBHOOK_URL` (deleted after use, not committed, same
+    precedent as Task 60/b's own Supabase stub): `notifyOps()` POSTs the
+    expected JSON body and returns `true`. Streak-detection logic
+    (`isFreshStreak`) checked in isolation against four cases (a clean
+    5-in-a-row streak, a streak broken by one `'processed'` row, a
+    too-short window, a too-long window) — all four correct. Not run
+    against a live Supabase project or a real alert destination — same
+    DB-Ops Handoff Process as every prior Supabase-dependent path in
+    this file; `ALERT_WEBHOOK_URL` similarly needs a real endpoint from
+    whoever owns that decision before it does anything beyond logging.
+  - **Not pushed to `origin/main`** — this session has no push
+    credentials for `Zapier-codes/B-Pay-backend`. Committed locally on
+    branch `task-60e-webhook-failure-alerting`; see the session's own
+    reply for the exact commands to push and open a PR, same review
+    flow as the still-open PR #3.
 
 #### Task 61 — Balance/ledger + reconciliation (the largest single gap per `STRIPE_DISCOVERY.md`'s own verdict)
 

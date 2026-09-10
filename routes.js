@@ -4,10 +4,11 @@ import { Juicyway } from './providers/juicyway.js';
 import { Korapay } from './providers/korapay.js';
 import { TelcosOpik, provisionTelcosOpikAccount, resolveTelcosOpikApiKey } from './providers/telcosOpik.js';
 import { log, formatPayload, generateReference, getSupportedCurrencies, isValidCurrencyCode, isValidEmail, providerRequiresEmail, requireInternalApiKey, classifyDomain, computeProviderEventKey } from './utils/helpers.js';
-import { recordTransaction, recordBalanceTransaction, getBusinessBalance, getTransactionByReference, getRoutingDefaultProvider, getCapabilityStatus, isWebhookEventProcessed, recordWebhookEvent, markWebhookEventStatus, getWebhookEventById } from './utils/supabase.js';
+import { recordTransaction, recordBalanceTransaction, getBusinessBalance, getTransactionByReference, getRoutingDefaultProvider, getCapabilityStatus, isWebhookEventProcessed, recordWebhookEvent, markWebhookEventStatus, getWebhookEventById, getRecentWebhookOutcomes } from './utils/supabase.js';
 import { getMissingFields } from './utils/fieldRequirements.js';
 import { resolveCustomer } from './utils/customerVault.js';
 import { handleGatewayEvent } from './webhookGateway.js';
+import { notifyOps } from './utils/alerts.js';
 
 const router = express.Router();
 
@@ -630,6 +631,59 @@ const webhookEventProcessors = {
   },
 };
 
+// Task 60/e — continuous-failure alerting, mirroring Stripe's own
+// "auto-disable + notify the account owner after sustained failure"
+// pattern (STRIPE_DISCOVERY.md §3; confirmed independently against
+// Stripe's live docs and third-party integration guides this session:
+// ~3 days of continuous non-2xx/timeout retries, then disable +
+// email). B-Pay isn't the one retrying deliveries here — the ten
+// providers are, on their own undocumented schedules (Task 60/c
+// already flagged this as unconfirmed for Korapay/JuicyWay) — so a
+// wall-clock "3 days" isn't a meaningful threshold B-Pay can enforce
+// on itself. The B-Pay-appropriate analog is a *consecutive-failure
+// streak* on this table's own `status` column: this app has full
+// control over that value ('processed' vs 'failed', wired below).
+// `WEBHOOK_ALERT_THRESHOLD` overrides the default for a slower-moving
+// or noisier provider without a code change.
+const WEBHOOK_ALERT_THRESHOLD = parseInt(process.env.WEBHOOK_ALERT_THRESHOLD, 10) || 5;
+
+// Runs a provider's post-verification processor, always resolving the
+// `webhook_events` row to a terminal status (this closes the real gap
+// Task 60/b's own section flagged: before this leaf, a processor
+// throwing left the row stuck at 'received' forever — indistinguishable
+// from "still being processed," and invisible to any failure count).
+// On failure: marks the row 'failed', checks whether this provider's
+// most recent rows are now a run of `WEBHOOK_ALERT_THRESHOLD`
+// consecutive failures (a single 'processed' row anywhere in that
+// window resets the streak, same "one success clears it" semantics
+// Stripe's own retry/disable clock uses), and fires notifyOps() exactly
+// once per streak — at the moment the threshold is crossed, not on
+// every failure after — so a sustained outage pages once, not on a
+// loop. Re-throws the original error either way; the caller's own
+// try/catch (POST /webhooks/:provider below) is unchanged and still
+// owns the HTTP response.
+async function runWebhookProcessor(provider, eventRowId, processor) {
+  try {
+    await processor();
+    await markWebhookEventStatus(eventRowId, 'processed');
+  } catch (err) {
+    await markWebhookEventStatus(eventRowId, 'failed');
+
+    const recent = await getRecentWebhookOutcomes(provider, WEBHOOK_ALERT_THRESHOLD);
+    const isFreshStreak = recent.length === WEBHOOK_ALERT_THRESHOLD && recent.every((status) => status === 'failed');
+    if (isFreshStreak) {
+      await notifyOps(`${provider} webhook processing: ${WEBHOOK_ALERT_THRESHOLD} consecutive failures`, {
+        provider,
+        threshold: WEBHOOK_ALERT_THRESHOLD,
+        latestError: err.message,
+        latestEventRowId: eventRowId,
+      });
+    }
+
+    throw err;
+  }
+}
+
 const webhookHandlers = {
   paystack: async (req) => {
     const provider = new Paystack();
@@ -664,9 +718,8 @@ const webhookHandlers = {
       signature_valid: true,
     });
 
-    await webhookEventProcessors.paystack(event, data);
+    await runWebhookProcessor('paystack', eventRowId, () => webhookEventProcessors.paystack(event, data));
 
-    await markWebhookEventStatus(eventRowId, 'processed');
     return { received: true };
   },
   korapay: async (req) => {
@@ -704,9 +757,8 @@ const webhookHandlers = {
       signature_valid: true,
     });
 
-    await webhookEventProcessors.korapay(event, data);
+    await runWebhookProcessor('korapay', eventRowId, () => webhookEventProcessors.korapay(event, data));
 
-    await markWebhookEventStatus(eventRowId, 'processed');
     return { received: true };
   },
   juicyway: async (req) => {
@@ -748,9 +800,8 @@ const webhookHandlers = {
       signature_valid: true,
     });
 
-    await webhookEventProcessors.juicyway(event, data);
+    await runWebhookProcessor('juicyway', eventRowId, () => webhookEventProcessors.juicyway(event, data));
 
-    await markWebhookEventStatus(eventRowId, 'processed');
     return { received: true };
   },
 };

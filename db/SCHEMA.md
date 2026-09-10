@@ -279,11 +279,11 @@ before doing anything else.
 | `processed_at` | `timestamptz` | nullable — set once `status` leaves `'received'` |
 | `updated_at` | `timestamptz` | default `now()`, kept current by the shared `set_updated_at()` trigger — this table follows the shared convention (unlike `balance_transactions`) since `status` is a genuine lifecycle |
 
-**Indexes:** `webhook_events_provider_event_idx` on `(provider, provider_event_id)`, for Task 60/b's dedup lookup. No `status`/`received_at` index yet — Task 60/e (alerting) is blocked on a product-owner decision, so its real query shape isn't known.
+**Indexes:** `webhook_events_provider_event_idx` on `(provider, provider_event_id)`, for Task 60/b's dedup lookup. `webhook_events_provider_status_idx` on `(provider, received_at desc, status)` (migration `0018`, Task 60/e) — serves `getRecentWebhookOutcomes()`'s "most recent N rows for one provider" query, used to detect a consecutive-failure streak.
 
 **Row Level Security:** enabled (migration `0017`). One explicit policy, `webhook_events_service_role_all`, scoped to `service_role` only — same pattern as every other table in this schema.
 
-**Not yet built:** nothing writes to this table yet (Task 60/b, the dedup-check wiring in `webhookGateway.js`, is still open), `provider_event_id` isn't populated for any provider yet (Task 60/c, a per-provider discovery pass, not started), no manual replay route exists (Task 60/d), and Task 60/e (continuous-failure alerting) is blocked on a product-owner decision about what "notify" means here.
+**Status as of Task 60/e (2026-09-10):** a/b/c/d/e all done — dedup wired in `routes.js`'s `webhookHandlers` (60/b), per-provider event-id field discovery closed with Paystack/Korapay confirmed and JuicyWay flagged as a real open question (60/c), manual replay route live (60/d), and continuous-failure alerting wired via `utils/alerts.js`'s channel-agnostic `notifyOps()` (60/e) — see Task 60/e's own section in handover.md.
 
 ## Not yet in this schema
 

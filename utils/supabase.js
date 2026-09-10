@@ -564,6 +564,42 @@ export async function getWebhookEventById(id) {
   }
 }
 
+// Reads back the most recent `status` values for one provider, newest
+// first, for Task 60/e's continuous-failure check. Migration 0018
+// indexes exactly this access pattern. Returns `[]` (never throws) on
+// "Supabase unavailable" or a query error — same "can't validate, so
+// don't alert on a false signal" posture `isWebhookEventProcessed()`
+// already established above; an empty result reads to the caller as
+// "nothing to alert on," never as "everything's failing."
+export async function getRecentWebhookOutcomes(provider, limit = 10) {
+  let client;
+  try {
+    client = getSupabaseClient();
+  } catch (err) {
+    log(`getRecentWebhookOutcomes skipped — Supabase not available: ${err.message}`, 'warn');
+    return [];
+  }
+
+  try {
+    const { data, error } = await client
+      .from('webhook_events')
+      .select('status')
+      .eq('provider', provider)
+      .order('received_at', { ascending: false })
+      .limit(limit);
+
+    if (error) {
+      log(`getRecentWebhookOutcomes lookup failed for ${provider}: ${error.message}`, 'warn');
+      return [];
+    }
+
+    return (data || []).map((row) => row.status);
+  } catch (err) {
+    log(`getRecentWebhookOutcomes failed for ${provider}: ${err.message}`, 'warn');
+    return [];
+  }
+}
+
 // ==================================================
 // 🧑‍💼 CUSTOMER VAULT — READ/WRITE (Task 57/d)
 // ==================================================

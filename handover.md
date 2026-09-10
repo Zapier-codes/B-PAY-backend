@@ -165,6 +165,29 @@
 
 ## 📝 Session Log (newest first — one line per session, optional)
 
+- 2026-09-10 — Re-verification pass, no leaf finished, no code
+  changed: pulled `origin/main`/`upstream/main` (PR #3 still open,
+  unmerged — origin ahead of upstream as expected), read this file in
+  full, and re-checked both items the pointer box calls genuinely
+  open. **Korapay card suspend/status**: fetched
+  `developers.korapay.com/docs/activate-suspend-terminate-card-via-api`
+  live — the same self-contradiction is still there today (the
+  `action` field's description still says `activate`/`deactivate`,
+  but the page's own "Suspending or Deactivating a Card" worked
+  example still sends `"action": "suspend"`, not `deactivate`).
+  **Card events log**: fetched `developers.korapay.com/docs/card-events`
+  live — still self-contradictory (opens with
+  `{{baseurl}}/api/i/cards/:card_reference/events`, then its own next
+  sentence's worked example uses `/api/v1/cards/:card_reference/events`).
+  Per this file's "don't guess a payload/path shape, confirm or test
+  it" rule, neither is resolvable by more reading — both still need a
+  live sandbox call against Korapay (test keys not available here) or
+  direct Korapay/product-owner confirmation. **Task 14**: re-confirmed
+  this sandbox's network egress still returns `403` for both
+  `api.paystack.co` and `api.korapay.com` — still blocked, unchanged.
+  Per the No-skip-ahead rule, stopping here rather than substituting a
+  different task; nothing else in the board changed since the last
+  session's account of it.
 - 2026-09-10 — Added the "Payment-infrastructure completion gate"
   standing rule (no leaf finished): after correctly following the
   cross-repo section into Mavins-web mid-build, product owner directed

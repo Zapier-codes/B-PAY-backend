@@ -267,17 +267,21 @@
 > deliveries. Full detail in Task 60/b's own section.
 >
 > **Task 60/e is DONE (2026-09-10)** — continuous-failure alerting,
-> `utils/alerts.js`'s channel-agnostic `notifyOps()` (POSTs to a
-> deploy-time `ALERT_WEBHOOK_URL`, always logs regardless), wired via
-> `routes.js`'s new `runWebhookProcessor()` on a consecutive-failure
-> streak (env-overridable threshold, default 5). Full detail in Task
-> 60/e's own section — not repeated here. **Real open item this
-> leaves:** `ALERT_WEBHOOK_URL` isn't set anywhere yet, so alerts are
-> log-only in every environment until whoever owns ops tooling points
-> it at something (Slack/PagerDuty/email-relay endpoint) — not this
-> session's decision to make on its own authority. **Not pushed** —
-> committed locally only, no push credentials this session; see commit
-> `feat(webhooks): Task 60/e — continuous-failure alerting` on branch
+> dual-path: `utils/alerts.js`'s `notifyOps()` fires a generic
+> `ALERT_WEBHOOK_URL` webhook AND Novu (`NOVU_API_KEY`, already a
+> Render secret) concurrently, independently — not a fallback chain,
+> so one channel's outage never silences the other. Wired via
+> `routes.js`'s `runWebhookProcessor()` on a consecutive-failure streak
+> (env-overridable threshold, default 5). Full detail in Task 60/e's
+> own section (including the addendum) — not repeated here. **Real
+> open items this leaves:** `NOVU_WORKFLOW_ID` (the email-template
+> workflow itself, configured in Novu's own dashboard) and a recipient
+> (`NOVU_SUBSCRIBER_ID`/`NOVU_ALERT_EMAIL`) aren't set anywhere yet —
+> not this session's call to make; the real `api.novu.co` trigger call
+> itself was never exercised live (sandbox egress doesn't reach it).
+> **Not pushed** — committed locally only, no push credentials this
+> session; see commit `feat(webhooks): Task 60/e — continuous-failure
+> alerting` (+ its dual-path addendum) on branch
 > `task-60e-webhook-failure-alerting`.
 >
 > **⏸️ Real next task:** **Task 61/d** (reconciliation-job design) now
@@ -326,6 +330,13 @@
 
 ## 📝 Session Log (newest first — one line per session, optional)
 
+- 2026-09-10 — Task 60/e addendum: dual-path alerting — Novu added as
+  a second, independent channel alongside `ALERT_WEBHOOK_URL` (fires
+  concurrently, not a fallback). New env vars `NOVU_API_KEY` (existing
+  Render secret), `NOVU_WORKFLOW_ID`, `NOVU_SUBSCRIBER_ID`/
+  `NOVU_ALERT_EMAIL`. Real `api.novu.co` call not exercised live (no
+  sandbox egress) — request shape checked by eye against Novu's
+  documented contract instead. Still not pushed.
 - 2026-09-10 — Task 60/e done: continuous-failure alerting via
   `utils/alerts.js`'s channel-agnostic `notifyOps()` + a consecutive-
   failure streak check in `routes.js`; migration `0018`. Not pushed
@@ -13873,6 +13884,42 @@ Closes `STRIPE_DISCOVERY.md` §3's gap. Natural parts:
     DB-Ops Handoff Process as every prior Supabase-dependent path in
     this file; `ALERT_WEBHOOK_URL` similarly needs a real endpoint from
     whoever owns that decision before it does anything beyond logging.
+  - **Addendum (2026-09-10, same day): dual-path alerting.** Novu added
+    as a second, independent channel — `deliverViaNovu()` in
+    `utils/alerts.js`, using the account's existing `NOVU_API_KEY`
+    (Render secret) rather than a new one. **Deliberately not a
+    fallback chain** — `notifyOps()` fires the generic webhook and
+    Novu concurrently (`Promise.all`), each independently best-effort;
+    one channel's outage never skips or blocks the other. Novu's real
+    contract, confirmed against docs.novu.co this session (unlike the
+    generic webhook, Novu's endpoint is NOT open — it requires real
+    auth): `POST https://api.novu.co/v1/events/trigger`, `Authorization:
+    ApiKey <NOVU_API_KEY>`, body `{ name: <workflow trigger id>, to:
+    <subscriber>, payload }`. New env vars: `NOVU_WORKFLOW_ID` (the
+    Novu-dashboard-configured workflow's trigger id — the email
+    template itself lives there, not in this code), `NOVU_SUBSCRIBER_ID`
+    (preferred `to`), `NOVU_ALERT_EMAIL` (fallback inline-recipient
+    attempt if no subscriber id is set — flagged as unconfirmed-shape
+    in the file's own header comment, since Novu's docs describe
+    inline-recipient creation inconsistently across versions; a 400
+    here means go create a real subscriber instead). Unconfigured
+    (`NOVU_API_KEY`/`NOVU_WORKFLOW_ID` missing) logs why and skips,
+    same posture as the webhook path.
+    - **Verification:** `node --check` clean. Live HTTP smoke test
+      (throwaway local stub, not committed) re-confirmed the webhook
+      path unchanged and the "Novu unconfigured → skip, log, don't
+      throw" path. The real `api.novu.co` call itself was **not**
+      exercised live — this sandbox's network egress doesn't reach it,
+      and (same limitation Task 60/d's own verification note already
+      hit) `fetch`'s ESM import binding can't be monkeypatched from
+      outside the module to fake that specific call locally either.
+      Instead, the exact request object `deliverViaNovu()` builds
+      (method/URL/headers/body) was reconstructed and printed
+      standalone and checked by eye against Novu's documented
+      contract — matches. **Not run against a real Novu workflow or
+      subscriber** — needs `NOVU_WORKFLOW_ID`/`NOVU_SUBSCRIBER_ID` from
+      whoever sets up that workflow in Novu's dashboard; this is
+      application code only, no Novu-side config included.
   - **Not pushed to `origin/main`** — this session has no push
     credentials for `Zapier-codes/B-Pay-backend`. Committed locally on
     branch `task-60e-webhook-failure-alerting`; see the session's own

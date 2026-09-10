@@ -195,36 +195,56 @@
 > Supabase project — that's the product owner's own DB-Ops step.
 >
 > **Task 61/b is DONE (2026-09-10)** — `recordBalanceTransaction()`
-> built in `utils/supabase.js` as a sibling of `recordTransaction()`
-> (Task 56/d-3-a), same "best-effort, never throws, fire-and-forget"
-> posture, and wired into `POST /pay`, `POST /payout`, `POST
-> /api/vtu/data`, and `POST /api/vtu/airtime` in `routes.js`,
-> alongside each route's existing `recordTransaction()` call (not
-> instead of it). `type` is always `'payment'` or `'payout'` per the
-> `balance_transactions` CHECK constraint's own simplified five-value
-> taxonomy (migration 0014) — VTU's `'vtu_data'`/`'vtu_airtime'`
-> values stay on the `transactions` table only, don't carry across.
-> `business_id` is only ever passed by the two VTU call sites (the
-> only ones with a `businessId` in scope); `transaction_id` is left
-> `null` everywhere — `recordTransaction()`'s own insert discards the
-> row id, so nothing to pass, and migration 0014's own header comment
-> designed `reference` as a non-FK correlation column precisely for
-> this case. Full detail (including why `transaction_id` wasn't
-> wired through instead) is in Task 61/b's own section below. Row
-> shape verified with a throwaway local-HTTP-stub script capturing the
-> actual insert payload for both the with- and without-`business_id`
-> cases — matched expectations exactly — then deleted per convention.
-> `node --check` clean on both touched files.
+> built in `utils/supabase.js`, wired into `POST /pay`, `POST
+> /payout`, `POST /api/vtu/data`, `POST /api/vtu/airtime`. Full detail
+> in Task 61/b's own section below and the Session Log. **Confirmed
+> applied and pushed to `origin/main` this session** (`git fetch`
+> showed `origin/main` had moved to `27e8378`; local checkout reset to
+> match, clean).
 >
-> **⏸️ Real next task: Task 61/c — per-business balance view (available
-> vs. pending, per currency).** Its own stated dependency ("(b) having
-> real rows to read") is now unblocked at the code level; note that no
-> rows will exist for real until migrations `0014`/`0015` are actually
-> applied to the live Supabase project, which is still the product
-> owner's own DB-Ops step, same as every prior migration in this file.
-> Task 60 (webhook event ledger) remains open and un-promoted as the
-> other reasonable starting point, per Task 59/d's own priority note,
-> if a session prefers that instead.
+> **Task 61/c is DONE (2026-09-10)** — `getBusinessBalance(businessId)`
+> built in `utils/supabase.js` as the read/aggregation half of the
+> `balance_transactions` table (same "never throws" posture as every
+> other Supabase helper in that file), plus a thin `GET
+> /api/balance?businessId=...` wrapper in `routes.js` (behind
+> `requireInternalApiKey`, same caller-supplied-`businessId` trust
+> model the VTU routes already established — no real business-login
+> mechanism exists yet, Task 46's own still-open item). Returns
+> `[{ currency, available, pending }, ...]`, one entry per currency the
+> business has any ledger activity in. **Sign convention decided and
+> flagged this leaf, not previously documented anywhere:** every
+> `amount` recorded today is an unsigned magnitude, so this function
+> applies a fixed per-`type` direction (`'payment'` credits;
+> `'payout'`/`'fee'`/`'refund'` debit; `'adjustment'` is treated as
+> already-signed, since it has no fixed direction and no write path
+> yet). `available_on: null` or a past value counts as available now,
+> a future value counts as pending — matches migration 0014's own
+> "`null` = available immediately" note. Deliberately client-side
+> aggregation (fetch + sum in JS), not a SQL view/RPC — a
+> reconciliation-grade aggregation layer is explicitly Task 61/d's own
+> still-blocked scope, not guessed at here. `getBusinessBalance()`
+> returning `null` (vs. a real empty array) surfaces as the route's own
+> `503`, not a misleading empty success. Full detail in Task 61/c's own
+> section below. Verified: `node --check` clean on both touched files;
+> a throwaway local-HTTP-stub script exercised every `type`/
+> availability combination against hand-computed expected totals (all
+> passed) plus the unconfigured-Supabase and zero-rows edge cases
+> (`null` vs. `[]`, both correct) — deleted after use, not committed.
+>
+> **⏸️ Real next task: Task 61/d — reconciliation-job design**, or
+> Task 60 (webhook event ledger, still open and un-promoted). Task
+> 61/d is explicitly **blocked on its own discovery pass** per its own
+> section's text — needs a per-provider check (does each of the ten
+> providers expose a statement/settlement-report endpoint?) that isn't
+> currently known for any provider; do not guess a provider's
+> settlement-report shape when picking this up, confirm directly
+> against that provider's docs first, same standing discipline this
+> file applies everywhere else. Task 61/e (payout-schedule question)
+> is an open product question, not an implementation task — needs
+> direct product-owner confirmation before it's scoped into code, not
+> a session's own call to make. Task 60 remains the one genuinely
+> not-blocked starting point of the three, per Task 59/d's own
+> priority note, if a session prefers that over 61/d's discovery work.
 >
 > **Updating this box:** when you finish your leaf, replace the two
 > paragraphs above with the new next task — don't append a new dated
@@ -240,6 +260,23 @@
 
 ## 📝 Session Log (newest first — one line per session, optional)
 
+- 2026-09-10 — Task 61/c done: `getBusinessBalance()` built in
+  `utils/supabase.js` (client-side aggregation over
+  `balance_transactions`, never-throws posture), plus `GET
+  /api/balance?businessId=...` in `routes.js` behind
+  `requireInternalApiKey`. Decided and flagged the sign convention
+  (payment credits; payout/fee/refund debit; adjustment already-signed)
+  since neither migration documented one. `null` vs. `[]` distinguishes
+  "read failed" from "genuinely no activity yet," surfaced as the
+  route's own 503 vs. a real empty success. Verified via a throwaway
+  stub-HTTP-server script (every type/availability combo, plus the
+  unconfigured and zero-rows edge cases) — deleted after use. `node
+  --check` clean. Confirmed Task 61/b's own patch had landed on
+  `origin/main` first (`git fetch`, reset local to match) before
+  starting this leaf, per the Patch Handoff Convention's rule 6/8.
+  Next: Task 61/d (reconciliation-job design, blocked on its own
+  per-provider discovery pass) or Task 60 (webhook event ledger, open,
+  un-promoted, the one not-blocked option of the two).
 - 2026-09-10 — Task 61/b done: `recordBalanceTransaction()` built in
   `utils/supabase.js` (sibling of `recordTransaction()`, same
   never-throws/fire-and-forget posture) and wired into `POST /pay`,
@@ -13655,7 +13692,7 @@ isn't already split finely enough, and build exactly one part.
 
 ---
 
-## Task 61 — Balance/ledger + reconciliation (Stripe `BalanceTransaction` pattern, `STRIPE_DISCOVERY.md` §6) — parts a/b built [ ] (a/b done; c/d/e not started)
+## Task 61 — Balance/ledger + reconciliation (Stripe `BalanceTransaction` pattern, `STRIPE_DISCOVERY.md` §6) — parts a/b/c built [ ] (a/b/c done; d/e not started)
 
 **Promoted from Task 59/c's proposal to its own top-level task**, same
 convention Task 52 used when it picked up Task 51's decision-record
@@ -13773,12 +13810,69 @@ are. Not run against a live Supabase project — same DB-Ops Handoff
 Process as every prior migration/write path in this file; this leaf
 only adds application code, no new migration.
 
-### c. Per-business balance view (available vs. pending, per currency) [ ] — not started
+### c. Per-business balance view (available vs. pending, per currency) [x] — DONE (2026-09-10)
 
-Depends on (b) having real rows to read. This is the concrete
-prerequisite Task 46's dashboard needs before it can show anything
-real about a business's own funds — flagged as a dependency there,
-not this leaf's own scope to build the dashboard itself.
+Built `getBusinessBalance(businessId)` in `utils/supabase.js` — the
+read/aggregation half of the `balance_transactions` table, same
+"never throws, best-effort" posture as every other Supabase helper in
+that file. Wired into a thin `GET /api/balance?businessId=...` route
+in `routes.js`, behind `requireInternalApiKey`, using the same
+caller-supplied-`businessId` trust model the VTU routes (Task 58)
+already established — no other business-identity mechanism exists in
+this codebase yet (Task 46's own dashboard/business-login design is
+still open).
+
+**Sign convention — decided and flagged this leaf, not previously
+documented anywhere in the schema:** neither `transactions.amount`
+(migration 0001) nor `balance_transactions.amount` (migration 0014)
+states whether a stored amount is a signed delta or an unsigned
+magnitude. Read every current write site in `routes.js` directly
+(not assumed) — every one stores an unsigned magnitude (a ₦500 payout
+is recorded as `amount: 500`, never `-500`). To turn a magnitude into
+a balance-moving direction, this function applies a fixed per-`type`
+rule: `'payment'` credits the balance; `'payout'`, `'fee'`, and
+`'refund'` debit it — ordinary accounting meaning, not invented here.
+`'adjustment'` is the one exception, treated as *already signed* since
+it's a manual correction with no fixed direction and (per Task 61/a's
+own note) no write path exists for it yet either — a future
+adjustment-writer is expected to record its own sign, not rely on this
+function to infer one.
+
+**Available vs. pending split:** `available_on: null` or any value
+`<= now` counts as available; a future `available_on` counts as
+pending — directly matches migration 0014's own "`null` means
+available immediately" design note, no new rule invented.
+
+**Deliberately client-side aggregation** (fetch every
+`balance_transactions` row for the business, sum per currency in JS),
+not a Postgres view/materialized aggregate/RPC. A reconciliation-grade
+aggregation layer is explicitly Task 61/d's own still-blocked scope
+(needs its own per-provider discovery pass first) — building something
+more sophisticated here would be guessing ahead of that discovery,
+not this leaf's job. Fine for the row volumes this table will
+realistically hold before Task 61/d lands.
+
+**`null` vs. `[]` — a deliberate, meaningful distinction, not
+collapsed into one "no data" case.** `getBusinessBalance()` returns
+`null` when Supabase isn't configured or the query itself fails
+("unknown"), and a real empty array `[]` for a business with a working
+connection but zero ledger rows ("genuinely nothing yet") — the route
+surfaces the former as its own `503`, not a misleadingly-successful
+empty response, since a real dashboard built on top of this needs to
+tell the two apart.
+
+**Verification:** `node --check routes.js` and `node --check
+utils/supabase.js` both pass. Two throwaway scripts, both deleted
+after use per this file's own scratch-file convention: (1) a stub
+HTTP server standing in for Supabase's REST endpoint, seeded with one
+row per `type` (`payment`/`payout`/`fee`/`refund`/`adjustment`) across
+two currencies and both an available and a pending row, checked
+against hand-computed expected totals — all four assertions passed;
+(2) confirmed the unconfigured-Supabase case returns `null` and a
+real-but-empty row set returns `[]`, exercising the distinction the
+route depends on. Not run against a live Supabase project — no new
+migration this leaf, same DB-Ops Handoff Process as every prior
+Supabase-dependent write/read path in this file.
 
 ### d. Reconciliation-job design [ ] — not started, blocked on its own discovery pass
 

@@ -205,6 +205,114 @@ export async function recordBalanceTransaction({ business_id, reference, provide
 }
 
 // ==================================================
+// 💰 PER-BUSINESS BALANCE VIEW (Task 61/c)
+// ==================================================
+// The read/aggregation half of the `balance_transactions` table —
+// this is the "concrete prerequisite Task 46's dashboard needs before
+// it can show anything real about a business's own funds" that Task
+// 61/c's own text names, not the dashboard itself (no UI, no new
+// route beyond the thin GET wrapper in routes.js).
+//
+// Same "never throws, best-effort" posture as recordTransaction()/
+// getTransactionByReference() above, for the same reason: a balance
+// read failing must become "unknown," not an unhandled exception a
+// caller has to guard against separately.
+//
+// Deliberately client-side aggregation (fetch every row for this
+// business, sum in JS), not a Postgres view/RPC — this leaf's own
+// scope is "wire the read path," not "design a reconciliation-grade
+// aggregation layer" (that discovery pass is explicitly Task 61/d's
+// job, still blocked). A real per-provider settlement/statement
+// reconciliation could later replace this with something more
+// sophisticated (a SQL view, a materialized aggregate, etc.) once
+// 61/d's own findings exist — not guessed at here. Fine for the data
+// volumes this table will realistically hold before that point.
+//
+// **Sign convention — a design decision made this leaf, flagged
+// rather than silently assumed, since neither `transactions.amount`
+// nor `balance_transactions.amount` (migration 0001/0014) documents
+// one:** every amount recorded by recordTransaction()/
+// recordBalanceTransaction() today is an unsigned magnitude (e.g. a
+// ₦500 payout is stored as `amount: 500`, not `-500`) — confirmed by
+// reading every current call site in routes.js, not assumed. To turn
+// a magnitude into a balance delta, this function applies a fixed
+// per-`type` direction: `'payment'` credits (adds to balance),
+// `'payout'`/`'fee'`/`'refund'` debit (subtract from balance) — the
+// ordinary accounting meaning of each term, not a made-up rule.
+// `'adjustment'` is the one exception: since it's a manual correction
+// with no fixed direction (Task 63/d's still-open unified-refund
+// design aside, no write path exists for it yet either), its stored
+// `amount` is treated as *already signed* — a future adjustment
+// writer is expected to record a negative value for a downward
+// correction, not rely on this function to infer direction. If a
+// real signed-amount convention is ever adopted repo-wide instead
+// (rather than this function's own per-type direction map), this is
+// the one place that assumption would need to change.
+//
+// Returns an array of `{ currency, available, pending }`, one entry
+// per distinct currency this business has ANY ledger activity in — an
+// empty array for a business with a real Supabase connection but zero
+// rows (a legitimate, distinct state from `null`, which means the
+// read itself couldn't be attempted or failed). `available_on: null`
+// or a past `available_on` counts as available now, matching
+// migration 0014's own "`null` means available immediately" note;
+// a future `available_on` counts as pending.
+export async function getBusinessBalance(businessId) {
+  let client;
+  try {
+    client = getSupabaseClient();
+  } catch (err) {
+    log(`getBusinessBalance skipped — Supabase not available: ${err.message}`, 'warn');
+    return null;
+  }
+
+  try {
+    const { data, error } = await client
+      .from('balance_transactions')
+      .select('type, amount, currency, available_on')
+      .eq('business_id', businessId);
+
+    if (error) {
+      log(`getBusinessBalance lookup failed for business '${businessId}': ${error.message}`, 'warn');
+      return null;
+    }
+
+    const now = Date.now();
+    const byCurrency = new Map();
+
+    for (const row of data || []) {
+      if (!byCurrency.has(row.currency)) {
+        byCurrency.set(row.currency, { currency: row.currency, available: 0, pending: 0 });
+      }
+      const bucket = byCurrency.get(row.currency);
+
+      // Supabase/PostgREST returns `numeric` columns as strings to
+      // avoid float precision loss in transit — `Number()` here
+      // matches how every other numeric field already crossing this
+      // boundary in this file is handled (no existing precedent for
+      // anything more precise, e.g. a decimal library, elsewhere in
+      // this repo).
+      const magnitude = Number(row.amount);
+      const signedAmount = ['payout', 'fee', 'refund'].includes(row.type)
+        ? -magnitude
+        : magnitude; // 'payment' and 'adjustment' (already-signed) both fall here
+
+      const isAvailable = !row.available_on || new Date(row.available_on).getTime() <= now;
+      if (isAvailable) {
+        bucket.available += signedAmount;
+      } else {
+        bucket.pending += signedAmount;
+      }
+    }
+
+    return Array.from(byCurrency.values());
+  } catch (err) {
+    log(`getBusinessBalance failed for business '${businessId}': ${err.message}`, 'warn');
+    return null;
+  }
+}
+
+// ==================================================
 // 🔎 TRANSACTION LOOKUP (Task 56/d-4)
 // ==================================================
 // The read half of the `transactions` table (migration 0001) —

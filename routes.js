@@ -4,7 +4,7 @@ import { Juicyway } from './providers/juicyway.js';
 import { Korapay } from './providers/korapay.js';
 import { TelcosOpik, provisionTelcosOpikAccount, resolveTelcosOpikApiKey } from './providers/telcosOpik.js';
 import { log, formatPayload, generateReference, getSupportedCurrencies, isValidCurrencyCode, isValidEmail, providerRequiresEmail, requireInternalApiKey, classifyDomain } from './utils/helpers.js';
-import { recordTransaction, recordBalanceTransaction, getTransactionByReference, getRoutingDefaultProvider, getCapabilityStatus } from './utils/supabase.js';
+import { recordTransaction, recordBalanceTransaction, getBusinessBalance, getTransactionByReference, getRoutingDefaultProvider, getCapabilityStatus } from './utils/supabase.js';
 import { getMissingFields } from './utils/fieldRequirements.js';
 import { resolveCustomer } from './utils/customerVault.js';
 import { handleGatewayEvent } from './webhookGateway.js';
@@ -1324,6 +1324,55 @@ router.get('/vtu/transactions', requireInternalApiKey, async (req, res) => {
     res.status(error.statusCode || 500).json({
       status: 'error',
       message: clientSafeMessage(error, 'Failed to fetch VTU transactions'),
+    });
+  }
+});
+
+// ==================================================
+// 💰 PER-BUSINESS BALANCE VIEW — GET /api/balance?businessId=...
+// (Task 61/c)
+// ==================================================
+// Thin wrapper around getBusinessBalance() (utils/supabase.js) — see
+// that function's own header comment for the sign convention and
+// available-vs-pending split logic; this route does no aggregation of
+// its own. `requireInternalApiKey` + a caller-supplied `businessId`
+// query param, same trust model and same validation shape as the VTU
+// routes above (getVtuBusinessId()) — not reused directly (that
+// helper's own doc comments and naming are VTU-specific), but
+// intentionally the same convention, since no other business-identity
+// mechanism exists yet in this codebase (Task 46's dashboard/business
+// login is still undesigned).
+//
+// Response shape: `{ status: 'success', data: [{ currency, available,
+// pending }, ...] }` — an empty array is a legitimate "no ledger
+// activity yet" response, not an error; `getBusinessBalance()`
+// returning `null` (Supabase unreachable/misconfigured, or a query
+// failure) surfaces as a 503 here rather than a misleading empty-array
+// success, since "unknown" and "genuinely zero" are different things a
+// caller building a dashboard on top of this needs to tell apart.
+router.get('/balance', requireInternalApiKey, async (req, res) => {
+  try {
+    const businessId = req.query.businessId;
+    if (!businessId || typeof businessId !== 'string') {
+      const err = new Error(`'businessId' is required and must be a non-empty string (received: ${JSON.stringify(businessId)})`);
+      err.statusCode = 400;
+      throw err;
+    }
+
+    const balance = await getBusinessBalance(businessId);
+
+    if (balance === null) {
+      const err = new Error('Balance lookup unavailable');
+      err.statusCode = 503;
+      throw err;
+    }
+
+    res.json({ status: 'success', data: balance });
+  } catch (error) {
+    log(`Balance lookup error: ${error.message}`, 'error');
+    res.status(error.statusCode || 500).json({
+      status: 'error',
+      message: clientSafeMessage(error, 'Failed to fetch balance'),
     });
   }
 });

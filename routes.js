@@ -973,8 +973,29 @@ router.post('/pay', requireInternalApiKey, async (req, res) => {
       throw err;
     }
 
+    // Task 23: per "Project owner decisions" -> Decision 1 (as
+    // corrected), this route's intended caller is now the Supabase
+    // Edge Function, which owns reference generation and is expected
+    // to always supply its own `reference` (the de facto idempotency
+    // key -- see Task 12's own comment above). A missing reference
+    // here is no longer the expected/common case it was when the app
+    // called this backend directly, so it's now logged as a warning
+    // (a possible bug signal -- stale Edge Function code, a malformed
+    // call, or a legacy caller) rather than silently accepted. The
+    // fallback itself is deliberately NOT removed: Task 23 explicitly
+    // scopes this as an audit-and-decide task, not an automatic
+    // deletion, and this backend has no persistence layer of its own
+    // to confirm nothing still depends on the fallback -- so a
+    // request without a reference still succeeds, exactly like
+    // before, it's just no longer silent about it.
+    if (!reference) {
+      log(
+        `POST /pay called without a client-supplied reference (provider: '${providerName}') -- falling back to generateReference(). This route's intended caller (the Supabase Edge Function) is expected to always supply its own reference; an internal-API-key-authenticated caller omitting one may indicate stale Edge Function code or a legacy/malformed request, not necessarily a problem.`,
+        'warn'
+      );
+    }
     const ref = reference || generateReference(providerName);
-    
+
     const paymentData = {
       amount,
       currency: resolvedCurrency,

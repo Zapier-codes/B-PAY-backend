@@ -4,6 +4,21 @@
 > task's own section. Nothing else in this file is required reading to
 > start work.**
 >
+> **Task 23 is DONE (2026-09-10)** — `POST /pay` audited end-to-end:
+> caller-supplied `reference` already flowed through unchanged (a); the
+> `generateReference()` fallback is kept (not removed — no persistence
+> layer to confirm nothing depends on it) but now logs a `warn` when hit,
+> since the intended caller (Supabase Edge Function) is expected to
+> always supply its own reference now (b); `requireInternalApiKey` was
+> already wired on this route from an earlier session, so there was no
+> auth gap to flag (c). Full detail in Task 23's own section. **The
+> Korapay card events-log block below (getCardEvents()) and the
+> telcosopik pause are both still genuinely open** — this session
+> deliberately picked Task 23 instead because those two are blocked on
+> external answers (Korapay support; the product owner's own probe),
+> not on anything resolvable from inside this sandbox — see their own
+> notes below, unchanged.
+>
 > **Task 68 is DONE (2026-09-10) as far as this session could take
 > it: `utils/novu.js` built** — a reusable Novu client (subscriber
 > upsert, trigger/bulk-trigger/broadcast, cancel, delete-by-
@@ -8131,7 +8146,7 @@ current 3-repo scope's active work, but it's real, load-bearing
 context the project owner should be aware of if that repo comes up
 again.
 
-### Task 23 — Confirm this backend no longer needs to be the reference source, and that its real caller is the edge function [ ]
+### Task 23 — Confirm this backend no longer needs to be the reference source, and that its real caller is the edge function [x]
 Per "Project owner decisions" → Decision 1 (as corrected): the app
 generates and owns the payment `reference` client-side and writes it to
 Supabase, but this backend's actual caller is the **Supabase Edge
@@ -8151,6 +8166,44 @@ missing, don't fix it in this same task unless it's trivial). Don't
 remove the reference fallback outright without checking whether any
 current caller still depends on it — this is an audit-and-decide task,
 not an automatic deletion.
+
+**What was found / what changed (2026-09-10):** All three parts of the
+audit are now closed.
+
+(a) Confirmed directly by reading `POST /pay` end-to-end in `routes.js`:
+when a caller supplies its own `reference`, it flows straight through —
+`assertValidReferenceFormat()` validates its shape, then
+`const ref = reference || generateReference(providerName)` takes the
+supplied value unchanged. No behavior change was needed here; this
+already worked correctly for a caller that always sends its own
+reference, the common case going forward.
+
+(b) **Decision: keep the fallback, but stop it being silent.** Removing
+it outright was rejected per this task's own instruction — this backend
+still has no persistence layer of its own to confirm nothing depends on
+it, and a defensive default costs nothing when it isn't hit. Instead,
+`POST /pay` now logs a `warn`-level line (naming the resolved provider)
+whenever `reference` is omitted, since an internal-API-key-authenticated
+caller skipping it is no longer the expected path and may signal stale
+Edge Function code rather than a legitimate legacy call. See the new
+comment directly above `const ref = ...` in `routes.js` for the full
+reasoning kept in-line for the next session.
+
+(c) **Not a gap — already done, predates this task.** `POST /pay` is
+already behind `requireInternalApiKey` (added in an earlier session, per
+the comment block immediately above the route handler, which already
+flags that the Edge Function itself still needs updating to actually
+send `X-Internal-Api-Key` — that's Mavins-web-side follow-up, out of
+scope here, not silently dropped). Confirmed via `grep -n
+"router.post('/pay'" routes.js` that the middleware is wired on the live
+route, not just mentioned in a comment. No new "Known issues" bullet
+needed since there's no gap to flag.
+
+**Verified:** `node --check routes.js` and `node --check
+utils/helpers.js` both pass. No provider files touched, no schema
+change, no env var change — this task only edited `routes.js` (one new
+guarded `log(..., 'warn')` call plus its explanatory comment) and this
+file.
 
 ### Task 24 — Mavins-web: implement wallet-crediting + first-time-vs-returning-user logic [ ]
 Per "Project owner decisions" → Decisions 2 and 3 above (owner-provided,

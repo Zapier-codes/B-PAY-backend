@@ -262,6 +262,26 @@ before doing anything else.
   a later migration attaches the same trigger function to a new table
   rather than redefining the logic.
 
+### `webhook_events` (migrations `0016`/`0017`) — Task 60/a's queryable delivery-record table
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `uuid` | primary key |
+| `provider` | `text` | `not null` — no `CHECK` list, same as `balance_transactions.provider` |
+| `provider_event_id` | `text` | nullable — B-Pay's own column name; the actual field each provider's payload uses is still unmapped per provider (Task 60/c, not started) |
+| `payload` | `jsonb` | `not null` — the full raw webhook body |
+| `signature_valid` | `boolean` | `not null` — recorded for every delivery, including failed verification |
+| `status` | `text` | `'received'` \| `'processed'` \| `'failed'`, default `'received'` — a real in-place lifecycle column, unlike `balance_transactions.type` |
+| `received_at` | `timestamptz` | default `now()` |
+| `processed_at` | `timestamptz` | nullable — set once `status` leaves `'received'` |
+| `updated_at` | `timestamptz` | default `now()`, kept current by the shared `set_updated_at()` trigger — this table follows the shared convention (unlike `balance_transactions`) since `status` is a genuine lifecycle |
+
+**Indexes:** `webhook_events_provider_event_idx` on `(provider, provider_event_id)`, for Task 60/b's dedup lookup. No `status`/`received_at` index yet — Task 60/e (alerting) is blocked on a product-owner decision, so its real query shape isn't known.
+
+**Row Level Security:** enabled (migration `0017`). One explicit policy, `webhook_events_service_role_all`, scoped to `service_role` only — same pattern as every other table in this schema.
+
+**Not yet built:** nothing writes to this table yet (Task 60/b, the dedup-check wiring in `webhookGateway.js`, is still open), `provider_event_id` isn't populated for any provider yet (Task 60/c, a per-provider discovery pass, not started), no manual replay route exists (Task 60/d), and Task 60/e (continuous-failure alerting) is blocked on a product-owner decision about what "notify" means here.
+
 ## Not yet in this schema
 
 Task 56/d (a through e) is fully built. Task 57 (a through e,
@@ -292,10 +312,16 @@ anything that writes to it (Task 61/b), any per-business balance view
 reading from it (Task 61/c), and any reconciliation job (Task 61/d) —
 this migration is storage only, same division of labor every prior
 create-table migration in this schema used. Migrations `0005` through
-`0015` are **not yet confirmed live** — same "check before assuming"
+`0017` are **not yet confirmed live** — same "check before assuming"
 caveat this file's own top note already states for every migration
-not explicitly listed as confirmed there. Beyond that, nothing
+not explicitly listed as confirmed there. **Not yet built for
+`webhook_events` (migrations `0016`/`0017`, Task 60/a):** anything
+that writes to it (Task 60/b), any per-provider `provider_event_id`
+mapping (Task 60/c), any manual replay route (Task 60/d), and any
+failure alerting (Task 60/e, blocked on a product-owner decision) —
+this migration is storage only, same division of labor every prior
+create-table migration in this schema used. Beyond that, nothing
 currently queued needs a further migration; the next schema change is
 whatever a future task actually requires (e.g. Task 46's dashboard,
-once its own auth design is decided, or Task 61/b once a session
-picks it up).
+once its own auth design is decided, Task 61/b, or Task 60/b, once a
+session picks one of them up).

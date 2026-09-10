@@ -231,20 +231,34 @@
 > passed) plus the unconfigured-Supabase and zero-rows edge cases
 > (`null` vs. `[]`, both correct) — deleted after use, not committed.
 >
-> **⏸️ Real next task: Task 61/d — reconciliation-job design**, or
-> Task 60 (webhook event ledger, still open and un-promoted). Task
-> 61/d is explicitly **blocked on its own discovery pass** per its own
-> section's text — needs a per-provider check (does each of the ten
-> providers expose a statement/settlement-report endpoint?) that isn't
-> currently known for any provider; do not guess a provider's
-> settlement-report shape when picking this up, confirm directly
-> against that provider's docs first, same standing discipline this
-> file applies everywhere else. Task 61/e (payout-schedule question)
-> is an open product question, not an implementation task — needs
-> direct product-owner confirmation before it's scoped into code, not
-> a session's own call to make. Task 60 remains the one genuinely
-> not-blocked starting point of the three, per Task 59/d's own
-> priority note, if a session prefers that over 61/d's discovery work.
+> **Task 60/a is DONE (2026-09-10)** — `webhook_events` table built:
+> migrations `0016` (table) and `0017` (RLS), `db/SCHEMA.md` updated
+> same session, same pairing convention Task 61/a used for
+> `balance_transactions`. Storage only, per the "one part per session"
+> rule — full detail in Task 60/a's own section and the Session Log.
+> **Not yet applied to the live Supabase project** — product owner's
+> own DB-Ops step.
+>
+> **⏸️ Real next task: Task 60/b — dedup check in `webhookGateway.js`**
+> (look up `(provider, provider_event_id)` before running any handler
+> side effect, short-circuit with `2xx` if already `processed`), **or
+> Task 60/c — per-provider discovery of the real event-id field**
+> (Paystack/Korapay/JuicyWay, plus TelcosOpik once Task 58 step 8's
+> signing-scheme question resolves) — genuinely not yet known for any
+> of the four, do not guess a field name, confirm directly against
+> each provider's own webhook-payload docs first. **Note: Task 60/b
+> depends on Task 60/c's mapping to be practically useful** (the dedup
+> lookup needs `provider_event_id` actually populated per provider), so
+> a session picking this up should likely do 60/c first even though it
+> is lettered after 60/b — flag this explicitly if picking b before c,
+> per this file's own "confirm before building" discipline. Task 60/d
+> (manual replay route) and Task 61/d (reconciliation-job design, still
+> blocked on its own per-provider discovery pass) remain open after
+> that. Task 60/e (continuous-failure alerting) stays blocked on a
+> product-owner decision about what "notify" means here — don't guess a
+> channel. Task 61/e (payout-schedule question) is an open product
+> question, not an implementation task — needs direct product-owner
+> confirmation before it's scoped into code.
 >
 > **Updating this box:** when you finish your leaf, replace the two
 > paragraphs above with the new next task — don't append a new dated
@@ -260,6 +274,15 @@
 
 ## 📝 Session Log (newest first — one line per session, optional)
 
+- 2026-09-10 — Task 60/a done: `webhook_events` table built (migration
+  `0016` table + `0017` RLS, `db/SCHEMA.md` updated same session), same
+  pairing convention Task 61/a used for `balance_transactions`.
+  Storage only, per the "one part per session" rule — nothing wired in
+  `webhookGateway.js` yet. Not applied to the live Supabase project.
+  Next: Task 60/c (per-provider event-id field discovery — Paystack/
+  Korapay/JuicyWay/TelcosOpik) likely before Task 60/b (the dedup
+  check depends on 60/c's mapping to be useful), or Task 60/d (manual
+  replay route).
 - 2026-09-10 — Task 61/c done: `getBusinessBalance()` built in
   `utils/supabase.js` (client-side aggregation over
   `balance_transactions`, never-throws posture), plus `GET
@@ -13448,17 +13471,27 @@ sessions). Each task below states its natural parts so the session
 that picks it up doesn't have to re-derive them, exactly as the
 splitting rule's own "how to split, in practice" section describes.
 
-#### Task 60 — Webhook event ledger, idempotent dedup, and replay
+#### Task 60 — Webhook event ledger, idempotent dedup, and replay [ ] (a done; b/c/d open; e blocked)
 
 Closes `STRIPE_DISCOVERY.md` §3's gap. Natural parts:
-- **a.** New `webhook_events` table (migration): `id`, `provider`,
-  `provider_event_id` (whatever field each provider's own payload
-  uses as its unique event identifier — needs a per-provider discovery
-  pass first, since Paystack/Korapay/JuicyWay/TelcosOpik don't
-  necessarily name this field the same way), `payload` (jsonb),
-  `signature_valid` (bool), `status` (`received`/`processed`/`failed`),
-  `received_at`, `processed_at`. Mirrors Stripe's own
-  "every delivery attempt is a queryable record" posture from §3.
+- **a. DONE (2026-09-10).** `webhook_events` table built: migrations
+  `0016` (table) and `0017` (RLS), `db/SCHEMA.md` updated in the same
+  session — same pairing convention Task 61/a used for
+  `balance_transactions`. `provider_event_id` is B-Pay's own column
+  name only; no provider's real event-id field is mapped to it yet,
+  that's Task 60/c's own still-open job, not guessed at here. Storage
+  only, per the "one part per session" rule — nothing wired in
+  `webhookGateway.js` yet (Task 60/b), no replay route (Task 60/d).
+  Not yet run against the live Supabase project — that's the product
+  owner's own DB-Ops step. Full column-by-column reasoning is in
+  migration `0016`'s own comments, not repeated here.
+  (Original proposal text for part a, kept per this file's own
+  "record what was decided" convention rather than deleted: `id`,
+  `provider`, `provider_event_id`, `payload` (jsonb), `signature_valid`
+  (bool), `status` (`received`/`processed`/`failed`), `received_at`,
+  `processed_at` — matches what migration `0016` actually built,
+  `updated_at` added beyond the original list since `status` is a real
+  in-place lifecycle column, per that migration's own note.)
 - **b.** Dedup check in `webhookGateway.js`: look up
   `(provider, provider_event_id)` before running any handler side
   effect; short-circuit with a `2xx` (matching Stripe's own "return 2xx

@@ -14457,7 +14457,50 @@ itself, only its prerequisite.
   PaymentPoint's marketing copy above, not treated as a **yes** on
   that basis alone.
 
-**Changelog:** 2026-09-10 (this session) — Xixapay and Prestmit
+**Re-attempted this session (2026-09-10, later same day) — Remita and
+PaymentPoint, both still unresolved, new negative evidence gathered
+rather than an unchanged restatement of "still open":**
+- **Remita** — searched directly for a settlement/reconciliation
+  endpoint rather than re-running the same base-URL/auth-ambiguity
+  search Tasks 49/50 already logged. Found and checked every public
+  `RemitaNet`-org SDK/repo this pass turned up (Node.js split-payment/
+  mandate SDK, the Java and Node.js Billing Gateway SDKs, the Python
+  RITS/interbank-transfer SDK, the Inline-checkout JS sample) plus
+  Remita's own `blog.remita.net` integration-guidance post — every one
+  covers collections, mandates, split-payment, or biller payments;
+  **none exposes or documents a settlement/statement/reconciliation-
+  report surface.** No official `developers.remita.net`-style portal
+  (or equivalent) surfaced in search at all — same absence the
+  original base-URL/auth ambiguity already implied, now checked from
+  the reconciliation-specific angle too. Still **not confirmed either
+  way**, same as before — the absence of a discoverable endpoint
+  across every public SDK is stronger negative evidence than last
+  session had, but it is still evidence of "not publicly documented,"
+  not proof no such endpoint exists for onboarded merchants. Needs
+  Remita's own real onboarding material to close, same blocker as
+  ever — not guessed at here.
+- **PaymentPoint** — re-attempted from a different angle (searched
+  for the API/webhook/virtual-account documentation directly, not
+  just the settlement question) rather than re-fetching the same
+  known-client-rendered `paymentpoint.co/documentation` URL a third
+  time. Results returned only unrelated providers (the UK "PayPoint,"
+  Payabli, various others) — **no PaymentPoint (the Nigerian
+  `paymentpoint.co`) developer-docs content surfaced at all this
+  pass**, not even the client-rendered shell the prior two sessions
+  at least reached. Treat as **still unreachable via search/fetch**,
+  not as new evidence either way on the underlying settlement
+  question. Same resolution as before: needs a signed-in portal
+  session or a directly-supplied doc URL from someone with account
+  access.
+
+**Changelog:** 2026-09-10 (this session, later pass) — Remita and
+PaymentPoint both re-attempted from fresh angles; both remain
+unresolved, with Remita's negative evidence now stronger (checked
+every public SDK, not just the base-URL ambiguity) and PaymentPoint's
+unchanged (still no reachable doc content). No providers newly
+resolved this pass. Reconciliation-job design itself still not
+started.
+2026-09-10 (this session, earlier pass) — Xixapay and Prestmit
 resolved to **confirmed no** via each provider's own primary doc
 index; PaymentPoint re-attempted, still unreachable (client-rendered
 docs page, no server-side content); `telcos.opik.net` still

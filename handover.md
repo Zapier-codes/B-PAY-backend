@@ -14003,12 +14003,9 @@ Closes §4. Natural parts:
   (`type`/`code`/`decline_code`/etc., verified live against
   `docs.stripe.com/api/errors`), not the collapsed 4-field version
   this bullet originally described.
-- **b.** Per-provider mapping table — what does each of the ten
-  providers actually return on failure today? Much of this is already
-  scattered across this file's own past task write-ups (Task 45c's
-  JuicyWay fix, Korapay's various error-shape notes); this leaf's job
-  is consolidating what's already known plus filling the providers not
-  yet covered, not re-discovering everything from zero.
+- **b. Consolidated this session (2026-09-10) — see full write-up
+  below this list.** Per-provider mapping table — what does each of
+  the ten providers actually return on failure today?
 - **c.** Wire the shape into `handleApiCall()`/`providerError()` in
   `utils/helpers.js` — the existing shared error-handling
   choke-point every provider file already routes through, so this is
@@ -14223,7 +14220,88 @@ proposal being confirmed), and no per-provider mapping (Task 62/b) —
 this leaf is the shape only, same discipline as Task 61/d's own
 design-not-code posture two tasks ago.
 
+**Task 62/b — per-provider mapping, consolidated this session
+(2026-09-10), no code changed.** Per this leaf's own text,
+consolidating what's already known/checked, not re-discovering from
+zero. Split into two real groups, since they're in genuinely different
+states: the 5 providers with an actual `providers/*.js` file today,
+and the 5 that are doc-only (Xixapay/PaymentPoint/Remita/Prestmit/
+DodoPayments — none of these has a provider file yet, confirmed by
+`ls providers/`).
+
+**The 5 built providers — read directly from each file's own current
+`throw providerError(...)` call sites this session, not assumed:**
+- **Korapay, Paystack, Flutterwave, TelcosOpik — all four read only a
+  flat `responseData.message` string.** None of these four providers'
+  files extracts any `code`/`type`/`status`-taxonomy field from the
+  provider's response at all today — every failure becomes
+  `providerError(responseData.message || '<generic fallback>')`, a
+  bare string with no structure. **This is the real starting point for
+  Task 62/c/e: today, 100% of B-Pay's live error handling is
+  message-only** — the new `type`/`code` shape isn't replacing a
+  competing existing mechanism, it's filling a total absence.
+- **JuicyWay is the one exception, and a real, already-confirmed
+  finding (Task 45c):** JuicyWay's real error envelope is `{ error: {
+  code, message, type, details } }` — confirmed against
+  `docs.juicyway.com`, not guessed. **The repo's own code today reads
+  `responseData.error?.message` and discards `.error?.code` and
+  `.error?.type` entirely, even though both are sitting right there in
+  every response already being fetched.** This is the cleanest, lowest-
+  risk starting point for Task 62/e's future per-provider retrofit —
+  JuicyWay needs no new provider-side research to populate `code`/
+  `type`, just reading two fields the code already has in hand.
+
+**The 5 doc-only providers — no code to read, so this is what their
+existing discovery passes (elsewhere in this file) already found
+about error shape specifically, not a new research pass:**
+- **Xixapay** — real documented taxonomy (`documentation.xixapay.com`,
+  cited above at Task 61/d's own discovery pass): standard HTTP
+  statuses paired with **stable snake_case codes** — `bad_request`,
+  `unauthorized`, `forbidden`, `not_found`, `unprocessable_entity`,
+  `too_many_requests`, `internal_server_error`, `bad_gateway`,
+  `service_unavailable`. **Maps cleanly onto the new `type` enum**:
+  `unauthorized`→`authentication_error`, `forbidden`→
+  `permission_error`, `too_many_requests`→`rate_limit_error`,
+  `bad_request`/`unprocessable_entity`→`invalid_request_error`,
+  `internal_server_error`/`bad_gateway`/`service_unavailable`→
+  `api_error`. No card-level decline codes documented (Xixapay's own
+  card-issuance surface, if it has one, wasn't covered by this
+  mapping — Task 53's own scope, not this leaf's).
+- **PaymentPoint** — per the `a-8` discovery pass (cited above): a
+  standard HTTP-status table only, **no machine-readable code per
+  error at all** — just status + human-readable meaning. Maps to
+  `type` via HTTP status alone (same rule as Xixapay above, just with
+  `code` staying `null` for every PaymentPoint error, since none
+  exists to carry over). One specific, already-confirmed detail worth
+  keeping attached to this mapping: PaymentPoint's own `409` is
+  specifically documented as "using the same idempotent key for a
+  previous request" — a real, confirmed `idempotency_error` case, not
+  a generic conflict.
+- **Prestmit, DodoPayments, Remita — not cross-checked for error
+  taxonomy specifically this pass, flagged honestly rather than
+  guessed.** Each has its own discovery pass elsewhere in this file
+  (Prestmit's `documentation.prestmit.io` audit, DodoPayments' various
+  citations, Remita's Task 49/50/61-d material), but none of those
+  passes was conducted with this leaf's specific question in mind
+  ("what's the failure-response shape") — Prestmit and Remita's
+  passes were focused on product/settlement scope, DodoPayments' on
+  settlement/payout structure. A future session should re-check each
+  provider's own Errors/Error-Codes page specifically before
+  populating this row, not infer a shape from an unrelated page's
+  passing mentions.
+
+**Verification:** every claim about the 5 built providers' current
+behavior was read directly from `providers/*.js` source this session
+(`grep -n "throw providerError|responseData\." providers/*.js`), not
+recalled — exact line numbers available in each file if a future
+session wants to jump straight to the call sites. No code changed;
+this leaf is consolidation only, per its own text.
+
+---
+
 #### Task 63 — Cross-provider automatic fallback/retry + performance tracking + unified refund path
+
+
 
 Closes §12 — the most direct application of `STRIPE_DISCOVERY.md`'s
 own finding that Task 51's routing model is the right shape but

@@ -13995,10 +13995,14 @@ Closes §6. Natural parts:
 #### Task 62 — Cross-provider decline/error taxonomy
 
 Closes §4. Natural parts:
-- **a. Design proposal written this session (2026-09-10) — decision-
-  record only, no code, per this leaf's own text: "propose the
-  collapsed shape for product-owner confirmation before building."**
-  See the full proposal immediately below this list.
+- **a. Design proposal written this session (2026-09-10), then
+  rewritten same session per direct product-owner instruction ("do it
+  exactly how Stripe would have done it") — decision-record only, no
+  code.** See the full proposal immediately below this list; the
+  shape now literally mirrors Stripe's own real error object
+  (`type`/`code`/`decline_code`/etc., verified live against
+  `docs.stripe.com/api/errors`), not the collapsed 4-field version
+  this bullet originally described.
 - **b.** Per-provider mapping table — what does each of the ten
   providers actually return on failure today? Much of this is already
   scattered across this file's own past task write-ups (Task 45c's
@@ -14022,99 +14026,202 @@ Closes §4. Natural parts:
   provider group, not force all ten into parts a–e of this single
   leaf).
 
-**Task 62/a — the actual proposal, written this session (2026-09-10),
-decision-record only, no code changed.** Read `utils/helpers.js`'s
-existing `ApiError`/`providerError()`/`handleApiCall()` first (Task
-13) before evaluating this — today's real shape is `{ provider,
-statusCode, message, originalError }` plus a binary
-`err.isProviderMessage` flag (safe-to-surface or not), nothing
-resembling `code`/`category`/`retryable` exists anywhere in this
-codebase yet. This proposal is additive to that, not a rewrite —
-`ApiError` itself doesn't need to change shape, it needs three new
-fields.
+**Task 62/a — rewritten this session (2026-09-10), per direct
+product-owner instruction: "do it exactly how Stripe would have done
+it."** This explicitly overrides both this leaf's own earlier
+same-session proposal (a collapsed `{ code, category, retryable,
+message }` shape) and the standing "a full Stripe replica is
+over-scoped" caution this file's own Stripe-as-Reference-Model
+Convention states — recorded here as an override by direct
+instruction, the same standing weight that convention's own text
+already gives a product-owner call, not a silent reversal. Read
+`utils/helpers.js`'s existing `ApiError`/`providerError()`/
+`handleApiCall()` first (Task 13) before evaluating this — today's
+real shape is `{ provider, statusCode, message, originalError }` plus
+a binary `err.isProviderMessage` flag; this proposal replaces that
+shape's error-detail fields, not `ApiError`'s constructor signature
+itself (provider/statusCode stay).
 
-**Proposed shape:** `{ code, category, retryable, message }`, attached
-to the existing `ApiError` instance (`err.code`, `err.category`,
-`err.retryable`), not a replacement object — `providerError()` gains
-three new optional parameters (defaulting to safe fallbacks below),
-existing call sites that don't pass them keep working unchanged.
+**Verified directly against `docs.stripe.com/api/errors` this session
+(current version, not recalled from training) before writing this —
+per the Stripe-as-Reference-Model Convention's own step 1, "research
+how Stripe solves that exact problem," not assume the shape from
+memory.** Stripe's real error object: `{ type, code, decline_code,
+message, param, payment_intent, payment_method, payment_method_type,
+charge, setup_intent, source, doc_url, request_log_url }`. The `type`
+field itself, per Stripe's own current API reference, is one of only
+four raw values (`api_error`, `card_error`, `idempotency_error`,
+`invalid_request_error`) — but Stripe's own SDKs (Ruby/Python/Java/
+Elixir error-handling classes, independently confirmed across
+several) recognize a **broader** conceptual type set client-side:
+`authentication_error`, `rate_limit_error`, `permission_error`, and
+`api_connection_error` are real Stripe error categories, just
+surfaced as distinct exception classes (keyed off HTTP status —
+401/429/403/network-failure respectively) rather than as literal
+values of the raw JSON `type` field. **Proposing the fuller 8-value
+set for B-Pay**, not the narrower 4 — B-Pay's own `handleApiCall()`
+already needs to distinguish exactly those extra cases (a bad/expired
+provider API key vs. a genuine card decline vs. a provider's own 429)
+and Stripe's own broader taxonomy already names them; narrowing to
+Stripe's raw-JSON-only 4 would throw away a real distinction Stripe
+itself makes, just one layer further down its own stack than the
+literal wire format.
 
-- **`code`** — a stable, machine-readable, provider-*agnostic* string
-  where the underlying failure has an obvious shared meaning across
-  providers (`insufficient_funds`, `invalid_account`,
-  `authentication_failed`, `rate_limited`, `provider_unavailable`),
-  falling back to `provider_error` when a provider's own failure
-  doesn't cleanly map to a shared bucket. **Not proposed as an
-  exhaustive enum here** — Task 62/b's own per-provider mapping pass
-  is what actually populates the real vocabulary; inventing a fixed
-  list now, before seeing what all ten providers actually return,
-  risks the same "guessed enum, no real example" caveat already
-  flagged elsewhere in this file (Task 61/d-2's `discrepancy_type`,
-  above).
-- **`category`** — a small, fixed, closed set (unlike `code`):
-  `'validation'` (bad input — bad account number, malformed request),
-  `'authentication'` (bad/expired/missing credentials),
-  `'insufficient_funds'` (the one decline reason common and important
-  enough across every provider this file has audited to earn its own
-  category rather than living inside `'declined'`),
-  `'declined'` (any other provider-side refusal),
-  `'rate_limit'`, `'provider_unavailable'` (5xx/timeout/network-level —
-  maps to today's existing "internal/operational failure" bucket in
-  `handleApiCall()`), `'unknown'` (fallback, should shrink over time
-  as Task 62/b/e's real mappings land, never removed entirely since a
-  genuinely novel failure shape will always be possible). **This is
-  the layer Task 63's future automatic-fallback logic should actually
-  branch on** — `retryable` alone tells a caller *whether* to retry;
-  `category` tells them *what kind* of thing happened, useful for
-  logging/alerting (Task 60/e's `notifyOps()` is an obvious future
-  consumer: a spike in `authentication` errors for one provider means
-  something different than a spike in `insufficient_funds`).
-- **`retryable`** — boolean, the one field with a direct, immediate
-  consumer already built: Task 63's not-yet-started automatic-
-  fallback logic needs exactly this to decide "try the next provider
-  in the fallback chain" vs. "surface this failure, retrying won't
-  help" (an `insufficient_funds` decline on a customer's card
-  shouldn't trigger a same-request fallback to a different provider —
-  the customer's card is still short of funds regardless of which
-  provider is asked; a `provider_unavailable` 503 should). Default
-  mapping by category, overridable per-code if a specific one needs
-  it: `validation`/`authentication`/`insufficient_funds`/`declined` →
-  `false`; `rate_limit`/`provider_unavailable`/`unknown` → `true`.
-- **`message`** — unchanged in spirit from today's existing
-  `isProviderMessage`-flagged safe-to-surface text; this proposal
-  doesn't touch that logic, just sits alongside it. `handleApiCall()`
-  keeps deciding what's safe to show a caller exactly as it does today.
+**Proposed `type` enum (mirrors Stripe's real 8, not renamed):**
+`api_error` (Stripe: "any other type of problem... extremely
+uncommon" — B-Pay: an unmapped/unrecognized provider failure shape),
+`card_error` (a card was declined for a reason the provider actually
+communicates), `idempotency_error` (a reused idempotency
+key/reference against different parameters — B-Pay's own
+`generateReference()` convention makes this meaningful the same way
+it is for Stripe), `invalid_request_error` (bad/missing parameters —
+B-Pay's own existing pre-flight validation failures belong here),
+`authentication_error` (bad/expired/missing provider API key —
+distinct from a card_error even though both can surface as a 401 from
+some of B-Pay's ten providers), `rate_limit_error`,
+`permission_error` (a valid key without permission for the specific
+action — e.g. a provider sandbox key hitting a live-only endpoint),
+`api_connection_error` (network failure/timeout talking to the
+provider — today's `fetch()`-level catch-all in `handleApiCall()`).
+**Not carrying over `signature_verification_error`** — that's a
+Stripe webhook-construction-library concept; B-Pay's webhook
+signature failures already have their own separate handling path
+(Tasks 3/4/5's `webhookHandlers`, Task 60's `webhook_events` table)
+and don't flow through `handleApiCall()`/`ApiError` at all, so folding
+it into this enum would be adding a Stripe field this specific
+call-site doesn't need — the one place this proposal still declines
+to import a Stripe field wholesale, flagged rather than silently
+matched 1:1.
 
-**Why collapsed to four fields, not Stripe's real three-layer split
-(`type`/`code`/`decline_code`) — explicit reasoning, not just
-asserted:** Stripe's own three layers exist because Stripe
-distinguishes *API-level* errors (bad request shape) from
-*card-network*-level decline codes (`insufficient_funds`,
-`stolen_card`, etc.) from a *human-readable* outcome — a distinction
-that matters at Stripe's scale across card networks with their own
-standardized decline-code vocabularies (ISO 8583 response codes,
-etc.). B-Pay's ten providers are a much shallower, more heterogeneous
-mix (card processors, virtual-account/bank-transfer rails, airtime/
-data vending) with no shared underlying network standard to layer
-against — collapsing to one flat `category` (closed, small) +
-`code` (open, provider-sourced-but-normalized-where-possible) captures
-the same practical distinction (broad bucket vs. specific reason)
-without building infrastructure for a card-network layer this
-product's own rail mix doesn't actually have. Matches this file's own
-standing "pattern, not feature import" rule for the Stripe-Reference
-Convention generally, not a new principle invented for this leaf.
+**`code` — mirrors Stripe's own real vocabulary where B-Pay's failure
+is the same real-world condition, extends it where B-Pay's own rails
+have no Stripe equivalent.** Stripe's own documented error codes
+(`stripe.com/docs/error-codes`) are almost entirely card-specific
+(`insufficient_funds`, `expired_card`, `incorrect_cvc`,
+`processing_error`, `card_declined`, etc.) because Stripe is
+overwhelmingly a card processor. B-Pay's ten providers are a wider mix
+— virtual accounts, bank transfers, airtime/data vending, gift-card
+off-ramps — most of which have no card-network equivalent at all.
+**Proposed rule:** reuse Stripe's literal code string whenever a
+provider's own failure is genuinely the same condition Stripe names
+(`insufficient_funds`, `expired_card`, `incorrect_cvc` all transfer
+directly for B-Pay's own card-capable providers — Korapay's card
+issuance line, Task 53); mint a new B-Pay-specific code, in the same
+snake_case style, only for conditions Stripe's own card-only
+vocabulary genuinely has nothing for (e.g. `invalid_account_number`
+for a bank-transfer-rail failure, `vending_line_unavailable` for a VTU
+failure) — not inventing a parallel vocabulary where Stripe's real one
+already fits, per the spirit of "exactly how Stripe would have done
+it" applied to a wider rail mix than Stripe itself covers. **The
+complete list is still Task 62/b's job** (this leaf proposes the rule
+for deriving codes, not the full enumerated set — that needs the real
+per-provider failure examples Task 62/b's own mapping pass collects,
+same reasoning as the original proposal, just now anchored to
+Stripe's real vocabulary as the reuse-first source instead of
+inventing from zero).
+
+**`decline_code` — kept, with an honest caveat about how often it'll
+actually be populated.** Stripe's own `decline_code` exists because
+card networks return a genuine two-tier structure (Stripe's own
+`code: card_declined` plus a separate issuer-supplied
+`decline_code: insufficient_funds`/`generic_decline`/etc.) — a real
+network-level signal Stripe has access to that most of B-Pay's own
+providers, per this file's own research across Tasks 45c/49/50/61/d,
+have not been confirmed to expose (most return one flat
+message/status, not a two-tier code+network-reason split). Field kept
+in the shape for the providers that do distinguish this (Task 62/b
+should check for it explicitly per provider, not assume it's always
+`null`), expected to be `null` far more often for B-Pay than it would
+be for Stripe itself — flagged now so a future session doesn't treat
+a mostly-`null` field as a bug.
+
+**`param`, `message` — carried over as-is, same meaning as Stripe's
+own fields**, no B-Pay-specific reinterpretation needed; `message`
+absorbs today's existing `isProviderMessage`-flagged safe-to-surface
+text unchanged.
+
+**`payment_intent`/`charge`/`payment_method`/`setup_intent` — mirrored
+as B-Pay's own equivalent object references, not Stripe's literal
+field names.** Stripe links an error back to its own object model;
+B-Pay's parallel object model, per Task 56's canonical envelope and
+Task 61's ledger, is `transactions`/`balance_transactions` — propose
+a single `transaction_id` field (nullable, same tolerance migration
+`0014` already built into `balance_transactions.transaction_id` for
+exactly this "not every call site has one" reason) rather than four
+separate Stripe-named slots B-Pay has no matching object types for.
+This is the one deliberate **pattern-not-literal-field** mapping in
+this proposal — carrying over four empty Stripe-specific fields
+(`payment_intent`, `setup_intent`, etc.) that B-Pay's own data model
+has no referent for would be importing Stripe's object graph, not its
+error-shape pattern, which is the actual distinction the Stripe-as-
+Reference-Model Convention's own text draws even under this session's
+"do it exactly" instruction.
+
+**`doc_url` — kept, points at a real future target, not a stub.**
+Stripe links each error to its own public error-codes page; B-Pay's
+own parallel is Task 62/d's still-open "document the new shape in
+this repo's own API-facing docs" leaf — once that page exists,
+`doc_url` should point at the specific `code`'s anchor on it. Until
+then this field is legitimately `null` for every error, an honest
+gap tied to a named, already-scoped future leaf, not a permanently
+unfillable field.
+
+**`request_log_url` — NOT carried over, flagged as a real gap rather
+than silently dropped.** Stripe's own dashboard gives every request a
+browsable log entry; B-Pay has no equivalent dashboard or per-request
+log storage today (Task 46's dashboard design is still fully open,
+per this file's own standing note). Including this field now would be
+shipping a permanently-`null`/always-absent property with nothing
+behind it — worse than omitting it, since a caller might build logic
+expecting it to sometimes resolve. Revisit if/when Task 46 ships.
+
+**Retryability — corrected from this leaf's own earlier proposal,
+not carried over as a stored field at all.** Stripe's real error
+object has **no `retryable` field** — Stripe derives retry guidance
+from `type`/HTTP status instead (its own documented status-code table:
+5xx and 429 are retry-worthy, with backoff; 4xx card/validation
+errors are not, since retrying an `insufficient_funds` decline against
+the same card can't succeed). **Proposing the same derivation, not a
+stored field**: a small `isRetryable(type)` helper (`api_error`,
+`api_connection_error`, `rate_limit_error` → `true`; everything else
+→ `false`), consumed by Task 63's future automatic-fallback logic at
+the point of use, rather than persisting a boolean that's really just
+a lookup on `type` anyway. This is a genuine, flagged correction to
+this leaf's own earlier same-session proposal (which had `retryable`
+as a stored field) — worth being explicit that this changed, not
+quietly overwriting it without saying so.
+
+**HTTP status alignment — proposed, not yet applied.** Stripe's own
+status-code table (`200`/`400`/`401`/`402`/`403`/`404`/`409`/`424`/
+`429`/`500`-`504`, each with a specific documented meaning) is more
+complete than `ApiError.statusCode`'s current ad-hoc usage
+(`err.statusCode || 500`, no defined mapping from `type` to a specific
+code). Propose: `authentication_error` → `401`, `permission_error` →
+`403`, `invalid_request_error` → `400`, `idempotency_error` → `409`,
+`rate_limit_error` → `429`, `card_error` → `402` (Stripe's own choice
+for "parameters were valid but the request failed" — fits a decline
+better than a generic `400`), `api_error`/`api_connection_error` →
+`502` (a failure in a dependency external to B-Pay, matching Stripe's
+own `424`/`5xx` framing more closely than a bare `500` would, though
+propose `502` specifically over Stripe's own `424` since B-Pay's own
+`handleApiCall()` already defaults to `500`-class codes elsewhere —
+picking `502` keeps this within B-Pay's own existing status-code
+family rather than introducing a status code this repo has never
+used before, one place this proposal adapts Stripe's specific choice
+to fit B-Pay's own existing conventions rather than importing it
+verbatim).
 
 **Not decided here, flagged for whoever picks up (b):** the complete
-`code` vocabulary (deliberately left open above), and whether
-`category: 'insufficient_funds'` should also imply `code:
-'insufficient_funds'` always (probably yes, but not confirmed against
-a real provider example yet — Task 62/b's job, not this one's).
+per-provider `code` vocabulary (rule proposed above, full list still
+needs real provider examples), and whether any of B-Pay's ten
+providers actually expose a genuine `decline_code`-shaped two-tier
+signal (needs checking per provider, not assumed either way).
 
 **Not proposed here, deliberately:** any code touching
-`utils/helpers.js` (that's Task 62/c's own scope, contingent on this
-proposal being confirmed first), and no per-provider mapping (Task
-62/b) — this leaf is the shape only, same discipline as Task 61/d's
-own design-not-code posture two tasks ago.
+`utils/helpers.js` (Task 62/c's own scope, contingent on this
+proposal being confirmed), and no per-provider mapping (Task 62/b) —
+this leaf is the shape only, same discipline as Task 61/d's own
+design-not-code posture two tasks ago.
 
 #### Task 63 — Cross-provider automatic fallback/retry + performance tracking + unified refund path
 

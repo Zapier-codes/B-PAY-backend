@@ -19848,3 +19848,38 @@ cd ~/B-PAY-backend
 git am ~/storage/downloads/<patch-file-name>
 git push
 ```
+
+### Task 73/a — Finding #15 (candidate fix, NOT verified): `&conn` -> `&*conn` across all 23 `_async(...)` call sites in `pg_lock.rs`/`pg_kv_store.rs`/`pg_pub_sub.rs`, targeting the E0277 finding above (2026-09-11, same session, continued)
+
+**Refined the hypothesis from the previous entry into something concrete enough to actually try, by reading the exact call sites rather than reasoning about the crate in the abstract:**
+
+Every one of the 23 real `_async(...)` calls across the three files follows the identical shape:
+```rust
+let conn = self.pool.get().await.change_context(...)?;   // bb8::PooledConnection<'_, async_bb8_diesel::ConnectionManager<PgConnection>>
+...
+.load_async(&conn)      // or .execute_async(&conn) / (&self.conn) in pg_lock.rs's PgLock struct
+```
+`self.pool.get()` returns the *raw* `bb8::PooledConnection`, and every call site passes `&conn` (a reference to that raw type) straight into `load_async`/`execute_async` -- both of which require `C: async_bb8_diesel::AsyncConnection`, a trait implemented for the crate's own `Connection<C>` wrapper, not for `bb8::PooledConnection` itself (per the previous entry's docs.rs citation). `bb8::PooledConnection<M>` implements `Deref<Target = M::Connection>` (bb8's standard pattern) -- so the type actually needed is one deref away, not absent. Generic trait-bound inference from a reference argument does not apply `Deref` coercion the way a call with a known concrete expected type would, which is exactly the shape of error `E0277` produces (a bound-not-satisfied error on the un-dereffed type) rather than `E0599` (method not found via failed autoderef method resolution) -- consistent with what the log actually shows.
+
+**Candidate fix applied this pass, mechanical and uniform, no logic changed:** every `.load_async(&conn)` / `.execute_async(&conn)` / `.execute_async(&self.conn)` became `.load_async(&*conn)` / `.execute_async(&*conn)` / `.execute_async(&*self.conn)` -- 5 sites in `pg_lock.rs`, 16 in `pg_kv_store.rs`, 2 in `pg_pub_sub.rs` (23 total, matching the ~20-repeats-of-one-error shape the raw log showed). Every occurrence of `&conn`/`&self.conn` in all three files was in exactly this argument position (checked via `grep -n "&conn\b\|&self\.conn\b"` first, confirmed no other usage exists that this blanket substitution could break) -- not a partial/best-effort pass.
+
+**Explicitly NOT claimed:** that this is correct. It is a plausible, evidence-backed hypothesis mechanically applied, and nothing more, until a real `cargo check -p storage_impl` run says otherwise -- per the standing decision (search "GitHub Actions is the sole source of truth," this file) that a sandbox session's own read is never "verified." If `Deref::Target` turns out not to be `async_bb8_diesel::Connection<PgConnection>`, or `AsyncConnection` isn't implemented for that either, this fix will fail the same CI job with a different error -- that would itself be real, useful information, not a wasted attempt.
+
+**Exact command to check whether this landed correctly, once pushed -- the single most useful thing the next session can run:**
+```
+gh run list --repo Zapier-codes/B-Pay-backend --branch main --limit 3 --json databaseId,status,conclusion,displayTitle,event,createdAt
+# once the newest push's run shows status: completed:
+gh api --allow-escape-sequences repos/Zapier-codes/B-Pay-backend/actions/jobs/<storage-impl-job-id>/logs > storage_impl.log && grep -n "^error" storage_impl.log
+```
+An empty `grep` result (no `error` lines) is what success looks like -- confirm by checking `conclusion: "success"` on the `storage_impl` job via the `--json status,conclusion,jobs` query pattern from the previous entry, not just the absence of grep output alone (a job can fail on a later step, e.g. `cargo clippy`, with no `error[E...]`-prefixed line).
+
+**Not done, still open, unchanged by this entry:** `wasm_check.log`/`spell_check.log` from run `34637047745` still unread; `check-msrv`'s status from that same run still unknown; wiring any of Findings #6-#15 into a real call site (`RedisStore`/`blacklist.rs`/etc.) still not started, independent of whether this fix is correct.
+
+**Per the Patch Handoff Convention: three `.rs` files touched (`pg_lock.rs`, `pg_kv_store.rs`, `pg_pub_sub.rs`), plus this `handover.md` entry. Not compiled -- candidate fix only, real verification is CI's job now, per this file's own standing decision. Base confirmed against real `origin/main` (`8fb1c08ce`) via `git fetch origin` immediately before this entry (rule 8) -- no drift.**
+
+**Exact command(s) for the product owner, per rule 7 — Patch Handoff only this pass:**
+```
+cd ~/B-PAY-backend
+git am ~/storage/downloads/<patch-file-name>
+git push
+```

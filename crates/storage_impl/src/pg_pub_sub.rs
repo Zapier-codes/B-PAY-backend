@@ -63,7 +63,7 @@ pub async fn publish(
         sql_query("INSERT INTO pg_pubsub_payload (channel, payload) VALUES ($1, $2) RETURNING id")
             .bind::<Text, _>(channel)
             .bind::<diesel::sql_types::Binary, _>(payload.to_vec())
-            .load_async(&conn)
+            .load_async(&*conn)
             .await
             .map_err(StorageError::from)?;
 
@@ -79,7 +79,7 @@ pub async fn publish(
     sql_query("SELECT pg_notify($1, $2)")
         .bind::<Text, _>(channel)
         .bind::<Text, _>(id.to_string())
-        .execute_async(&conn)
+        .execute_async(&*conn)
         .await
         .map_err(StorageError::from)?;
 

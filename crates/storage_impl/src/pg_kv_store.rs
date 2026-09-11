@@ -197,7 +197,7 @@ impl PgKvStore {
         .bind::<Text, _>(key)
         .bind::<diesel::sql_types::Binary, _>(bytes)
         .bind::<diesel::sql_types::Timestamp, _>(expires_at)
-        .load_async(&conn)
+        .load_async(&*conn)
         .await
         .map_err(StorageError::from)?;
 
@@ -227,7 +227,7 @@ impl PgKvStore {
              AND (expires_at IS NULL OR expires_at > (now() AT TIME ZONE 'utc'))",
         )
         .bind::<Text, _>(key)
-        .load_async(&conn)
+        .load_async(&*conn)
         .await
         .map_err(StorageError::from)?;
 
@@ -268,7 +268,7 @@ impl PgKvStore {
         .bind::<Text, _>(field)
         .bind::<diesel::sql_types::Binary, _>(bytes)
         .bind::<diesel::sql_types::Timestamp, _>(expires_at)
-        .execute_async(&conn)
+        .execute_async(&*conn)
         .await
         .map_err(StorageError::from)?;
 
@@ -294,7 +294,7 @@ impl PgKvStore {
         )
         .bind::<Text, _>(key)
         .bind::<Text, _>(field)
-        .load_async(&conn)
+        .load_async(&*conn)
         .await
         .map_err(StorageError::from)?;
 
@@ -332,7 +332,7 @@ impl PgKvStore {
         .bind::<Text, _>(field)
         .bind::<diesel::sql_types::Binary, _>(bytes)
         .bind::<diesel::sql_types::Timestamp, _>(expires_at)
-        .load_async(&conn)
+        .load_async(&*conn)
         .await
         .map_err(StorageError::from)?;
 
@@ -365,7 +365,7 @@ impl PgKvStore {
         )
         .bind::<Text, _>(key)
         .bind::<Text, _>(sql_pattern)
-        .load_async(&conn)
+        .load_async(&*conn)
         .await
         .map_err(StorageError::from)?;
 
@@ -424,7 +424,7 @@ impl PgKvStore {
         .bind::<Text, _>(key)
         .bind::<diesel::sql_types::Binary, _>(bytes)
         .bind::<diesel::sql_types::Timestamp, _>(expires_at)
-        .load_async(&conn)
+        .load_async(&*conn)
         .await
         .map_err(StorageError::from)?;
 
@@ -474,7 +474,7 @@ impl PgKvStore {
         .bind::<Text, _>(key)
         .bind::<diesel::sql_types::Binary, _>(bytes)
         .bind::<diesel::sql_types::Timestamp, _>(expires_at)
-        .execute_async(&conn)
+        .execute_async(&*conn)
         .await
         .map_err(StorageError::from)?;
 
@@ -533,7 +533,7 @@ impl PgKvStore {
         .bind::<Text, _>(key)
         .bind::<diesel::sql_types::Binary, _>(bytes)
         .bind::<diesel::sql_types::Timestamp, _>(expires_at)
-        .execute_async(&conn)
+        .execute_async(&*conn)
         .await
         .map_err(StorageError::from)?;
 
@@ -569,7 +569,7 @@ impl PgKvStore {
         .bind::<Text, _>(key)
         .bind::<diesel::sql_types::Binary, _>(bytes)
         .bind::<diesel::sql_types::Timestamp, _>(fallback_expires_at)
-        .execute_async(&conn)
+        .execute_async(&*conn)
         .await
         .map_err(StorageError::from)?;
 
@@ -608,7 +608,7 @@ impl PgKvStore {
              AND (expires_at IS NULL OR expires_at > (now() AT TIME ZONE 'utc'))",
         )
         .bind::<Text, _>(key)
-        .load_async(&conn)
+        .load_async(&*conn)
         .await
         .map_err(StorageError::from)?;
 
@@ -647,7 +647,7 @@ impl PgKvStore {
 
         sql_query("DELETE FROM pg_kv_cache WHERE cache_key = $1 AND field = ''")
             .bind::<Text, _>(key)
-            .execute_async(&conn)
+            .execute_async(&*conn)
             .await
             .map_err(StorageError::from)?;
 
@@ -669,7 +669,7 @@ impl PgKvStore {
         sql_query("DELETE FROM pg_kv_cache WHERE cache_key = $1 AND field = $2")
             .bind::<Text, _>(key)
             .bind::<Text, _>(field)
-            .execute_async(&conn)
+            .execute_async(&*conn)
             .await
             .map_err(StorageError::from)?;
 
@@ -721,7 +721,7 @@ impl PgKvStore {
         .bind::<diesel::sql_types::Array<Text>, _>(field_names)
         .bind::<diesel::sql_types::Array<diesel::sql_types::Binary>, _>(field_values)
         .bind::<diesel::sql_types::Timestamp, _>(expires_at)
-        .execute_async(&conn)
+        .execute_async(&*conn)
         .await
         .map_err(StorageError::from)?;
 
@@ -811,7 +811,7 @@ impl PgKvStore {
         .bind::<diesel::sql_types::Binary, _>(initial_value)
         .bind::<diesel::sql_types::Nullable<diesel::sql_types::Timestamp>, _>(initial_expires_at)
         .bind::<diesel::sql_types::BigInt, _>(increment)
-        .load_async(&conn)
+        .load_async(&*conn)
         .await
         .map_err(StorageError::from)?;
 
@@ -864,7 +864,7 @@ impl PgKvStore {
              AND (expires_at IS NULL OR expires_at > (now() AT TIME ZONE 'utc'))",
         )
         .bind::<Text, _>(key)
-        .load_async(&conn)
+        .load_async(&*conn)
         .await
         .map_err(StorageError::from)?;
 

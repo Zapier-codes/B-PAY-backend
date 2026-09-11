@@ -240,7 +240,7 @@ impl<'a> PgLock<'a> {
             let rows: Vec<AcquiredRow> =
                 sql_query("SELECT pg_try_advisory_lock($1) AS pg_try_advisory_lock")
                     .bind::<BigInt, _>(numeric_key)
-                    .load_async(&conn)
+                    .load_async(&*conn)
                     .await
                     .map_err(StorageError::from)?;
 
@@ -265,7 +265,7 @@ impl<'a> PgLock<'a> {
             for key_to_release in acquired_keys.iter().rev() {
                 if let Err(error) = sql_query("SELECT pg_advisory_unlock($1)")
                     .bind::<BigInt, _>(*key_to_release)
-                    .execute_async(&conn)
+                    .execute_async(&*conn)
                     .await
                 {
                     router_env::logger::warn!(
@@ -295,7 +295,7 @@ impl<'a> PgLock<'a> {
         let idle_timeout_sql =
             format!("SET idle_session_timeout = '{resolved_idle_timeout_secs}s'");
         sql_query(idle_timeout_sql)
-            .execute_async(&conn)
+            .execute_async(&*conn)
             .await
             .map_err(StorageError::from)?;
 
@@ -309,7 +309,7 @@ impl<'a> PgLock<'a> {
         for key in &self.keys {
             sql_query("SELECT pg_advisory_unlock($1)")
                 .bind::<BigInt, _>(*key)
-                .execute_async(&self.conn)
+                .execute_async(&*self.conn)
                 .await
                 .map_err(StorageError::from)?;
         }
@@ -322,7 +322,7 @@ impl<'a> PgLock<'a> {
         // safe) idle timeout it shouldn't — not worth failing an otherwise-
         // successful release over.
         if let Err(error) = sql_query("RESET idle_session_timeout")
-            .execute_async(&self.conn)
+            .execute_async(&*self.conn)
             .await
         {
             // Matches this crate's existing structured-logging convention

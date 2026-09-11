@@ -13,40 +13,41 @@
    older, something's wrong with the clone — don't proceed on stale
    code.
 
-2. **Try the Rust toolchain — expect it to fail, but try it anyway
-   (network policy can differ per sandbox instance, so don't assume
-   last session's block still applies without checking):**
-   ```
-   apt-get update -qq
-   apt-get install -y rustc cargo
-   rustc --version
-   ```
-   **Confirmed twice now (2026-09-11 sessions): apt's only candidate is
-   `1.75.0`.** This workspace pins `package.rust-version = "1.85.0"` in
-   the root `Cargo.toml`. If `rustc --version` shows anything below
-   `1.85.0`, don't stop here — go to step 3.
+2. **Toolchain check — RETIRED as a per-session step, effective
+   2026-09-11 (product-owner instruction, after three independent
+   sessions on 2026-09-11 alone reproduced the identical result). Do
+   NOT re-run `apt-get install -y rustc cargo` or the `curl` probes
+   below as a routine step anymore — go straight to step 3's work
+   list.**
 
-3. **If step 2 gave you < 1.85.0, try getting a newer toolchain
-   directly — expect this to also fail, but confirm it for *your*
-   sandbox rather than trusting the note below blind:**
-   ```
-   curl -sI https://sh.rustup.rs
-   curl -sI https://static.rust-lang.org/dist/channel-rust-stable.toml
-   ```
-   **Confirmed this session: both return `HTTP 403`,
-   `x-deny-reason: host_not_allowed`, on this sandbox's network
-   allowlist** (which permits `crates.io`/`index.crates.io`/
-   `static.crates.io` — package *sources*, not toolchain installers —
-   see the repo's network policy for the exact allowed-domain list). If
-   your sandbox's allowlist is different and one of these actually
-   resolves, you have a real toolchain path nobody has had before —
-   install it, then treat `cargo check -p storage_impl` (never
-   successfully run against this workspace as of this writing) as your
-   actual first move, and update this checklist with what you find.
+   **What's on record, for reference, not for re-verification:**
+   - `apt-get install -y rustc cargo` → candidate is `1.75.0` (exact:
+     `1.75.0+dfsg0ubuntu1-0ubuntu7.4`), against this workspace's pinned
+     `package.rust-version = "1.85.0"` in the root `Cargo.toml`.
+   - `curl -sI https://sh.rustup.rs` and `curl -sI
+     https://static.rust-lang.org/dist/channel-rust-stable.toml` →
+     both `HTTP 403`, `x-deny-reason: host_not_allowed`, on the
+     sandbox network allowlist (which permits `crates.io`/
+     `index.crates.io`/`static.crates.io` — package *sources*, not
+     toolchain installers).
+   - Reproduced this way, independently, across at least three
+     separate 2026-09-11 sessions, with identical output every time.
+     That's enough repetition of a check that costs a live `apt-get
+     update` + package install each time for no new information — the
+     product owner's call to stop paying that cost every session, not
+     a claim that the sandbox is physically incapable of ever
+     differing.
+   - **If this ever turns out to be wrong** — a session finds `rustc`
+     ≥ 1.85 actually available, or the `curl` probes actually resolve
+     — that's real news and this section gets corrected plainly (per
+     this file's own standing practice: recorded as a correction, not
+     silently fixed), same as the pointer-box correction elsewhere in
+     this file. Absent that, treat the toolchain as unavailable
+     without spending a session re-confirming it.
 
-4. **If you're still stuck on 1.75.0 (the expected outcome as of this
-   writing), don't waste a session re-diagnosing the same wall a fifth
-   time.** Two concrete, already-reproduced errors are on file if you
+3. **Given the retired toolchain (step 2), don't waste a session
+   re-diagnosing the same wall yet again.** Two concrete,
+   already-reproduced errors are on file if you
    want to double-check without redoing the legwork:
    - `cargo check` against the committed `Cargo.lock` fails immediately:
      `lock file version 4 requires -Znext-lockfile-bump`.
@@ -57,7 +58,7 @@
    Full detail: search "Task 73/a — pg_kv_store.rs LIKE-escape fix" and
    "Task 73/a — pg_cron sweep jobs" sections, end of file.
 
-5. **What to actually work on immediately, given no working `rustc`:**
+4. **What to actually work on immediately, given no working `rustc`:**
    Don't write new Rust you can't compile-check — every uncompiled
    `.rs` change so far has had to be flagged as reviewed-by-reading
    only, and that debt shouldn't grow further without a real reason.
@@ -73,9 +74,10 @@
      `pg_cron` sweep jobs (e.g. investigate whether
      `pg_pubsub_payload`'s subscriber side needs its own DB-level
      support before `pg_pub_sub.rs`'s Rust half can be finished).
-   - **If a working `rustc` ≥ 1.85 does turn out to be available this
-     session** (step 3 above), the single highest-value next move is
-     `cargo check -p storage_impl` — that command has never once
+   - **If a working `rustc` ≥ 1.85 does turn out to be available**
+     (step 2's "if this ever turns out to be wrong" clause), the
+     single highest-value next move is `cargo check -p storage_impl`
+     — that command has never once
      succeeded or even run to completion against this workspace. Its
      output should go straight into this file, replacing the "still not
      compiled" language throughout the Task 73/a sections with whatever
@@ -86,7 +88,7 @@
    both are explicit prerequisites already on record, not new ones
    invented here.
 
-6. **Before handing anything over: `git fetch origin` and diff against
+5. **Before handing anything over: `git fetch origin` and diff against
    your local base, per rule 8 of the Patch Handoff Convention below —
    don't build a patch on a base that's already moved.** And per rule
    4: **never `git push` to `main` yourself, and never commit/merge
@@ -110,8 +112,40 @@
 > not silently fixed, per this file's own standing practice.** Real
 > current state, newest first:
 >
-> **✅ Task 73/b — pub/sub call-site audit, FIRST PASS (2026-09-11,
-> newest) — all 15 reproducible call sites read; the standing
+> **✅ CI — `ci.yml`'s `storage-impl` job got its first real completed
+> run (2026-09-11, newest) — CONFIRMS the run happened; does NOT yet
+> reveal the compile error.** `cargo check -p storage_impl` on a
+> GitHub-hosted runner (real internet, real pinned Rust 1.85.0) ran to
+> completion for the first time ever against this workspace, on push
+> `fdf15dcd8` — and it's a real `failure` (exit code 101), not a queued/
+> cancelled non-result like every run before it. **The actual compiler
+> error text is still not in hand**: the unauthenticated GitHub API can
+> see the run/job/step statuses fine (`core` rate limit, not the
+> blocker), but the job-log download endpoint
+> (`GET .../actions/jobs/{id}/logs`) returned `403 Must have admin
+> rights to Repository` — a real auth wall, not a rate limit, and not
+> bypassable from an unauthenticated sandbox call regardless of which
+> host allowlist applies (this is a token-scope requirement, not a
+> network policy one, so it's a different kind of wall than the
+> toolchain 403s above). Check-run annotations gave 3 items, none of
+> them the compiler error itself (a Node 20 deprecation warning, an
+> sccache stats notice, and the generic "exit code 101" failure
+> annotation) — GitHub doesn't surface `error[...]`-level detail through
+> annotations unless the workflow explicitly emits problem-matcher
+> output, which this job doesn't. **This is a genuinely new fact, not a
+> repeat of the old "still unconfirmed" line — record it as such, don't
+> collapse it back into the old wording.**
+>
+> **Same job also surfaced two other real findings, not asked for but
+> real:** `check-msrv` failed too (`Cargo hack (canonical push only)`
+> step, exit non-zero after ~7 minutes) — a separate, unexamined
+> failure, not yet triaged. `Check wasm build`, `Spell check`, and
+> `Check formatting` also failed on this same push — again unexamined;
+> don't assume any of these share a root cause with the
+> `storage_impl` failure without actually checking.
+>
+> **✅ Task 73/b — pub/sub call-site audit, FIRST PASS (2026-09-11) —
+> all 15 reproducible call sites read; the standing
 > "per-subscriber vs. shared cursor" open question (Finding #5) is
 > resolved for this whole category: it's local in-memory-cache
 > invalidation broadcast, self-healing via each cache's own TTL, no
@@ -132,11 +166,18 @@
 > **✅ euclid_wasm `wasm-check` CI fix — landed separately, unrelated to
 > the Postgres-locking thread**, see its own entry.
 >
-> **Still open, unchanged by any of the above:** `rust-check.yml`'s
-> first real Actions run still unconfirmed by any session; the 15-vs-18
-> pub/sub count discrepancy (named above); wiring any fixed finding
-> into a real call site (blocked on the toolchain, same as everything
-> else `.rs`-shaped in this file).
+> **Still open:** the `storage_impl` compile error's actual text — a
+> session with an authenticated token (product owner's own `gh`/PAT,
+> not this sandbox) needs to pull it via `gh run view 34621375723
+> --repo Zapier-codes/B-Pay-backend --log-failed` or `gh api
+> repos/Zapier-codes/B-Pay-backend/actions/jobs/103335923019/logs`,
+> then a session fixes whatever it says — this is now a concrete,
+> unblocked next step, not a standing wall; `check-msrv`/wasm/spell/
+> formatting failures on the same run, untriaged; the 15-vs-18 pub/sub
+> count discrepancy (named above); wiring any fixed finding into a
+> real call site (still blocked on the local sandbox toolchain, same
+> as everything else `.rs`-shaped in this file — CI having real
+> internet doesn't give the sandbox a compiler).
 >
 > **✅ AUDIT CONTINUED, NINTH PASS (2026-09-11, stale as of the
 > correction above — kept for history, no longer the current pointer)
@@ -19105,3 +19146,119 @@ unconfirmed.
 touched — this was a read-only audit pass, consistent with every prior
 audit-only entry in this file. Base confirmed against real
 `origin/main` (`67dbfc344`) immediately before this entry (rule 8).**
+
+### CI — `storage-impl` job's first real completed run confirmed (real `failure`, not queued/cancelled); actual compiler error still blocked behind a GitHub log-download auth wall, not the network allowlist (2026-09-11, new session)
+
+**Toolchain wall re-confirmed unchanged before touching anything:**
+`apt-get install -y rustc cargo` still lands `1.75.0` against the pinned
+`1.85.0`; `curl -sI https://sh.rustup.rs` / `curl -sI
+https://static.rust-lang.org/dist/channel-rust-stable.toml` still both
+`403 host_not_allowed`. Per the product owner's own 2026-09-11
+instruction, this is no longer re-run as a routine step every session
+(see the New-Clone Checklist, step 2) — reported here once, for the
+record, not as new diagnosis.
+
+**What actually changed this session: queried the GitHub Actions API
+directly (`api.github.com`, which is on this sandbox's allowlist, unlike
+the toolchain-installer hosts) instead of assuming the old "403
+rate-limited" note from prior sessions still applied.** `GET
+/repos/Zapier-codes/B-Pay-backend/actions/workflows/ci.yml/runs` came
+back `200`, not `403` — the prior "rate limit exhausted" framing (seventh
+pass, line ~18307-18311 of this file as of before this edit) was real for
+that session's own request but was never a permanent wall; this session's
+first call to the same endpoint succeeded outright. **7 total runs on
+record.** Runs 1-6 (pushes `b37f3db35` through `67dbfc344`) are all
+`completed`/`cancelled` — GitHub's default concurrency behavior cancelling
+an in-progress run when a newer push supersedes it, which is exactly what
+happens when a session pushes several handover-only commits in quick
+succession. Run 7, on the current `origin/main` head (`fdf15dcd8`), is the
+first one that wasn't immediately superseded by a newer push, and **its
+`storage-impl` job (`cargo check -p storage_impl (pinned 1.85.0)`) ran to
+full completion: `status: completed`, `conclusion: failure`.**
+
+**This is the actual first real Actions run, confirmed — the "still
+unconfirmed" line that's been repeated in this file's "Not done, still
+open" section across roughly a dozen prior passes is now stale and has
+been corrected in the NEXT TASK pointer box above, not silently
+carried forward.**
+
+**What this does NOT yet tell us: the actual compiler error.** Tried
+three ways to get it without an authenticated token:
+1. `GET /repos/.../actions/jobs/{id}/logs` (the real log archive) →
+   `403 {"message": "Must have admin rights to Repository."}`. Confirmed
+   this is a genuine GitHub auth-scope requirement (job-log downloads can
+   contain secrets, so GitHub gates them behind repo-level auth even on
+   public repos), not a rate limit — `GET /rate_limit` immediately after
+   showed 29/60 `core` requests still remaining, so the 403 isn't
+   quota exhaustion.
+2. `GET /repos/.../check-runs/{id}/annotations` → 3 annotations, none of
+   them compiler output: a Node 20 deprecation notice, an sccache stats
+   line (`97% hit rate, 758 hits, 18 misses, 2 errors`), and a generic
+   `"Process completed with exit code 101."` failure annotation. GitHub
+   only surfaces `error[...]`-level annotations when a workflow emits
+   problem-matcher-formatted output; this job's plain `cargo check`
+   step doesn't, so there's nothing more granular to read here.
+3. Fetching the job's `html_url` page directly — not attempted beyond a
+   first try; GitHub's Actions log UI is JS-rendered and wouldn't yield
+   the log text through a plain page fetch even if reachable.
+
+**Two other real, unexamined failures on the same run, worth flagging
+rather than assuming they're related:** `check-msrv` (`Check compilation
+on MSRV toolchain (ubuntu-latest)`) also failed, in its `Cargo hack
+(canonical push only)` step, after running ~7 minutes — a real MSRV
+compile/feature-matrix problem, completely separate from `storage_impl`
+and not investigated this pass. `Check wasm build`, `Spell check`, and
+`Check formatting` also show `conclusion: failure` on this same run —
+also not investigated. Don't fold any of these into the `storage_impl`
+finding without actually checking each one; they may be pre-existing and
+unrelated (e.g. `Check formatting`'s failure could easily be this
+session's own `handover.md`-only diff triggering a step that also touches
+Rust formatting checks, or could be entirely pre-existing on `main`
+already — not determined either way this pass).
+
+**Concrete unblocked next step, now that the run itself is confirmed:**
+someone with real repo auth — the product owner's own `gh` login or PAT,
+not this sandbox — pulls the actual log. Two equivalent ways:
+```
+gh run view 34621375723 --repo Zapier-codes/B-Pay-backend --log-failed
+```
+or, to target the `storage_impl` job specifically:
+```
+gh api repos/Zapier-codes/B-Pay-backend/actions/jobs/103335923019/logs
+```
+Once the real `error[...]` text is in hand, a session fixes whatever
+`pg_lock.rs`/`pg_kv_store.rs`/`pg_pub_sub.rs` code it points at and lets
+the next CI run (not the local sandbox, which still has no working
+`rustc`) be the actual compile signal — exactly the design intent stated
+in `ci.yml`'s own comments when the workflow was first added.
+
+**Not done, still open:** the `storage_impl` compiler error's actual
+text (blocked on product-owner auth, not on this session); `check-msrv`/
+wasm/spell/formatting failures on the same run, all untriaged; the
+15-vs-18 pub/sub count discrepancy (unchanged, prior entry); wiring any
+fixed finding into a real call site (still blocked on the local sandbox
+toolchain — CI having real internet access doesn't give the sandbox
+itself a compiler).
+
+**Per the Patch Handoff Convention: `handover.md` only, no `.rs` file
+touched — this was a read-only CI-status investigation, no code changed.
+Base confirmed against real `origin/main` (`fdf15dcd8`) via `git fetch
+origin` immediately before this entry (rule 8) — no drift, the branch
+this entry sits on was cut from that exact commit.**
+
+**Exact command(s) for the product owner, per rule 7 — two separate
+handoffs this pass, both owed:**
+
+Patch Handoff (lands this `handover.md` update):
+```
+cd ~/B-PAY-backend
+git am ~/storage/downloads/<patch-file-name>
+git push
+```
+
+Log-pull (not a repo-file handoff — a live authenticated API call only
+the product owner's own credentials can make; run from wherever `gh` is
+already authenticated, e.g. the Termux device):
+```
+gh run view 34621375723 --repo Zapier-codes/B-Pay-backend --log-failed
+```

@@ -1,0 +1,234 @@
+/* eslint-disable no-console */
+const config_fields = [
+  "CONNECTOR_CREDENTIAL",
+  "DELAY",
+  "TRIGGER_SKIP",
+  "LOCAL_VAULT_REQUIRED",
+  "skipPaymentMethodStatusAssertion",
+  "POLL_BEFORE",
+  "POLL_AFTER",
+];
+
+const DEFAULT_CONNECTOR = "connector_1";
+const CONNECTOR_CREDENTIAL_PATTERN = /^connector_([1-9]\d*)$/;
+
+function getConnectorCredentialIndex(connectorType) {
+  const match = CONNECTOR_CREDENTIAL_PATTERN.exec(connectorType || "");
+  return match ? Number(match[1]) : null;
+}
+
+// Helper function for type and range validation
+function validateType(value, type) {
+  if (typeof value !== type) {
+    console.error(
+      `Expected value to be of type ${type}, but got ${typeof value}.`
+    );
+    return false;
+  }
+  return true;
+}
+
+// Helper function to validate specific config keys based on schema rules
+function validateConfigValue(key, value) {
+  if (config_fields.includes(key)) {
+    switch (key) {
+      case "DELAY":
+        if (typeof value !== "object" || value === null) {
+          console.error("DELAY must be an object.");
+          return false;
+        }
+        if (!validateType(value.STATUS, "boolean")) return false;
+        if (
+          !value.STATUS ||
+          typeof value.TIMEOUT !== "number" ||
+          value.TIMEOUT < 0 ||
+          value.TIMEOUT > 30000
+        ) {
+          console.error(
+            "DELAY.TIMEOUT must be an integer between 0 and 30000 and DELAY.STATUS must be enabled."
+          );
+          return false;
+        }
+        break;
+
+      case "CONNECTOR_CREDENTIAL":
+        if (typeof value !== "object" || value === null) {
+          console.error("CONNECTOR_CREDENTIAL must be an object.");
+          return false;
+        }
+        // Validate nextConnector and multipleConnectors if present
+        if (
+          value?.nextConnector !== undefined &&
+          typeof value.nextConnector !== "boolean"
+        ) {
+          console.error("nextConnector must be a boolean");
+          return false;
+        }
+
+        if (
+          value?.multipleConnectors &&
+          typeof value.multipleConnectors.status !== "boolean"
+        ) {
+          console.error("multipleConnectors.status must be a boolean");
+          return false;
+        }
+
+        // Validate structure
+        if (!getConnectorCredentialIndex(value.value)) {
+          console.error(
+            `Config ${key}.value must use the connector_<positive-number> format.`
+          );
+          return false;
+        }
+        break;
+
+      case "TRIGGER_SKIP":
+      case "LOCAL_VAULT_REQUIRED":
+      case "DELAY.STATUS":
+      case "skipPaymentMethodStatusAssertion":
+      case "POLL_BEFORE":
+      case "POLL_AFTER":
+        if (!validateType(value, "boolean")) return false;
+        break;
+
+      default:
+        console.error(`Config key ${key} is invalid.`);
+        return false;
+    }
+  } else {
+    console.error(`Config key ${key} is invalid.`);
+  }
+  return true;
+}
+
+// Function to validate the config object
+export function validateConfig(configObject) {
+  // Configs object is an optional field in Connector Configs
+  // If passed, it must be a valid Object
+  if (typeof configObject === "undefined") {
+    return null;
+  } else if (typeof configObject !== "object" || configObject === null) {
+    console.error(`Provided config is invalid:\n${configObject}`);
+    return null;
+  }
+
+  for (const key in configObject) {
+    if (Object.prototype.hasOwnProperty.call(configObject, key)) {
+      const value = configObject[key];
+      if (!validateConfigValue(key, value)) {
+        return null; // Return null if any validation fails
+      }
+    }
+  }
+
+  return configObject;
+}
+
+export function getProfileAndConnectorId(connectorType) {
+  const connectorIndex = getConnectorCredentialIndex(connectorType);
+
+  if (!connectorIndex || connectorIndex === 1) {
+    return {
+      profileId: "profile",
+      connectorId: "merchantConnector",
+    };
+  }
+
+  return {
+    profileId: `profile${connectorIndex - 1}`,
+    connectorId: `merchantConnector${connectorIndex - 1}`,
+  };
+}
+
+function getSpecName() {
+  return Cypress.spec.name.toLowerCase() === "__all"
+    ? String(
+        Cypress.mocha.getRunner().suite.ctx.test.invocationDetails.relativeFile
+      )
+        .split("/")
+        .pop()
+        .toLowerCase()
+    : Cypress.spec.name.toLowerCase();
+}
+
+function matchesSpecName(specName) {
+  if (!specName || !Array.isArray(specName) || specName.length === 0) {
+    return false;
+  }
+
+  const currentSpec = getSpecName();
+  return specName.some(
+    (name) => name && currentSpec.includes(name.toLowerCase())
+  );
+}
+
+export function determineConnectorConfig(config) {
+  const connectorCredential = config?.CONNECTOR_CREDENTIAL;
+  const multipleConnectors = config?.multipleConnectors;
+
+  // If CONNECTOR_CREDENTIAL doesn't exist or value is null, return default
+  if (!connectorCredential || connectorCredential.value === null) {
+    return DEFAULT_CONNECTOR;
+  }
+
+  // Handle nextConnector cases
+  if (
+    Object.prototype.hasOwnProperty.call(connectorCredential, "nextConnector")
+  ) {
+    if (connectorCredential.nextConnector === true) {
+      // Check multipleConnectors conditions if available
+      if (
+        multipleConnectors?.status === true &&
+        multipleConnectors?.count > 1
+      ) {
+        return connectorCredential.value || "connector_2";
+      }
+      return DEFAULT_CONNECTOR;
+    }
+    return DEFAULT_CONNECTOR;
+  }
+
+  // Handle specName cases
+  if (Object.prototype.hasOwnProperty.call(connectorCredential, "specName")) {
+    return matchesSpecName(connectorCredential.specName)
+      ? connectorCredential.value
+      : DEFAULT_CONNECTOR;
+  }
+
+  // Return value if it's the only property
+  return connectorCredential.value;
+}
+
+export function execConfig(configs) {
+  if (configs?.DELAY?.STATUS && String(Cypress.env("MOCK_SERVER")) !== "true") {
+    // Chunk the cooldown into 5s increments (instead of one silent block)
+    // so progress is visible in the test log. Total wait time is unchanged.
+    const POLL_INTERVAL = 5000;
+    const totalTimeout = configs.DELAY.TIMEOUT;
+    const fullIntervals = Math.floor(totalTimeout / POLL_INTERVAL);
+    const remainder = totalTimeout % POLL_INTERVAL;
+
+    for (let i = 0; i < fullIntervals; i++) {
+      cy.wait(POLL_INTERVAL);
+      cy.task(
+        "cli_log",
+        `DELAY: waited ${(i + 1) * POLL_INTERVAL}ms of ${totalTimeout}ms`
+      );
+    }
+    if (remainder > 0) {
+      cy.wait(remainder);
+      cy.task(
+        "cli_log",
+        `DELAY: waited ${totalTimeout}ms of ${totalTimeout}ms`
+      );
+    }
+  }
+
+  const connectorType = determineConnectorConfig(configs);
+  const { profileId, connectorId } = getProfileAndConnectorId(connectorType);
+
+  return {
+    profilePrefix: profileId,
+    merchantConnectorPrefix: connectorId,
+  };
+}

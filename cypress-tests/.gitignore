@@ -1,0 +1,15 @@
+# Mac OS files
+.DS_Store
+
+# Output files
+reports/
+screenshots/
+videos/
+
+creds.json
+cypress.env.json
+run_all.sh
+run-givepayments-ucs.sh
+
+# Cypress Dashboard build
+**/dist

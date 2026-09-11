@@ -4,6 +4,50 @@
 > task's own section. Nothing else in this file is required reading to
 > start work.**
 >
+> **Real sequencing decision (2026-09-11, latest) — search "Task 73 —
+> update ... backend infra ... is the confirmed first slice," end of
+> file.** Within Task 73's already-confirmed full scope, backend
+> data/infra wiring — Postgres-native Redis replacement, Postgres-native
+> Kafka/ClickHouse replacement, Supabase Edge Functions — is the
+> confirmed **first** piece to build. Connector-crate work (all 9
+> providers), the `webhookGateway.js` cutover, and all of Task 74's
+> `control-center`/API-docs work are explicitly paused behind it, not
+> just lower priority in spirit — read that section before picking up
+> any Task 73/74 work.
+>
+> **Real next task, unambiguous (2026-09-11, latest) — search "Task 73
+> — sub-task allocation begins," end of file.** Backend-infra work has
+> actually started: Task 73/a is scoped — build a Postgres-backed
+> replacement for `crates/storage_impl/src/redis.rs` and its three
+> submodules (`redis/cache.rs`, `redis/kv_store.rs`, `redis/pub_sub.rs`),
+> matching `RedisStore`'s existing shape, since nearly all 63 real
+> Redis call sites in `crates/router/src` go through that one
+> abstraction rather than a raw client. No code written yet — that's
+> what the next session picks up. Read that section for the full file
+> counts, category breakdown, and why this is the correct first leaf.
+>
+> **`combined-base` stays pushed to `origin` — deliberate, not an
+> oversight (2026-09-11).** Product owner confirmed the repo growing
+> larger from the `hyperswitch` fork's full history is an accepted cost
+> of building this infrastructure; this session's own recommendation to
+> move it to a release asset or sibling repo was heard and overridden.
+> Search "Task 75 — update ... combined-base stays as a pushed branch"
+> for the full record. The reference-only-checkout / patches-target-main
+> rule from the entry above is unchanged.
+>
+> **Standing procedure (2026-09-11) — Task 75 (search "Task 75 —", end
+> of file) documents the confirmed, working command sequence for
+> building/consuming the `combined-base` bundle (`hyperswitch` fork +
+> `legacy-node`) needed to actually start Task 73's port-over work, PLUS
+> a mandatory correction: `combined-base` is a read/reference checkout
+> only — every patch, every `git am`, always targets `main`. Read both
+> Task 75 entries once before your first `git fetch` of that bundle or
+> your first `git am` in this repo — between them they save
+> re-diagnosing a `did not send all necessary objects` failure that
+> looks like bundle corruption but isn't, and a `does not exist in
+> index` failure that looks like a patch problem but is actually just
+> being on the wrong branch.**
+>
 > **Task 74 (2026-09-11, new, supersedes Task 73 point 4 only) — is now
 > the SOLE ACTIVE PRIORITY, layered on top of Task 73, which otherwise
 > stands unchanged.** Product-owner decision, this session: `control-
@@ -16325,3 +16369,290 @@ git push
 ```
 No `db/migrations/` changes in this session's diff, so no DB-Ops
 Handoff block is owed alongside it.
+
+## Task 75 — Standing procedure: building/consuming the `combined-base` bundle (`hyperswitch` fork + `legacy-node`) for Task 73/74 work [x]
+
+**What `combined-base` is, confirmed this session (not previously
+documented anywhere in this file):** a branch, currently distributed
+as a `git bundle` (`bpay-hyperswitch-combined.bundle`), that checks
+out the full `Zapier-codes/hyperswitch` Rust fork tree with this
+repo's old Node code sitting alongside it under a `legacy-node/`
+folder — the working base for Task 73's port-over work (Rust fork is
+the new code; `legacy-node/` is the old implementation to port
+*from*, kept for reference rather than deleted). This is infrastructure
+plumbing, not a product decision — recorded here purely so future
+sessions don't have to re-diagnose the same failure from scratch.
+
+**The failure mode, confirmed by direct diagnosis this session:**
+fetching the bundle via
+`git fetch <bundle-path> combined-base:combined-base` fails with
+`error: Could not read 32b14ad1cfed08734c13b4b1d4550d3f402af252` /
+`fatal: revision walk setup failed` / `did not send all necessary
+objects`. **This is not a corrupt bundle and not a wrong-command
+problem** — `git index-pack`/`git verify-pack` both confirm the pack
+data itself is internally consistent (~9,876 objects, checksums fine).
+The real cause: `combined-base`'s history was built by combining commits
+from two different repos (`B-Pay-backend` + the `hyperswitch` fork),
+and one early commit (`15c4865d9...`) has a parent
+(`32b14ad1c...`) that lives in the `hyperswitch` fork's own commit
+history — a history the bundle-consuming checkout never had fetched
+locally, so `git`'s connectivity check for the bundle correctly refuses
+to complete it. Confirmed directly: `git cat-file -t
+32b14ad1cfed08734c13b4b1d4550d3f402af252` fails in a plain
+`B-Pay-backend` checkout that has never fetched the `hyperswitch`
+remote, and succeeds immediately once that remote is added and fetched.
+
+**Confirmed fix — no bundle rebuild needed.** A bundle only needs to
+ship objects the receiving repo doesn't already have; once the
+receiving checkout's own object store already contains the one commit
+the bundle relies on, the same original fetch command succeeds
+end-to-end and produces the full 8,064-commit `combined-base` history.
+**Standing procedure, any checkout, any session, going forward:**
+```
+git remote add hyperswitch https://github.com/Zapier-codes/hyperswitch.git
+git fetch hyperswitch
+git fetch <path-to-bpay-hyperswitch-combined.bundle> combined-base:combined-base
+git checkout combined-base
+```
+(`git remote add hyperswitch ...` will error `remote hyperswitch already
+exists` on a checkout that's done this before — harmless, ignore it and
+continue; `git fetch hyperswitch` still needs to run every time to make
+sure the local object store is current.) Verified this session, both in
+a fresh sandbox clone and directly on the product owner's own Termux
+`~/B-PAY-backend` checkout: `combined-base` checks out cleanly, 14,028
+files, `legacy-node/` present alongside the full Rust fork tree.
+
+**Not this task's scope, not done here:** no comparison of
+`legacy-node/routes.js` against the fork's existing route structure, no
+sub-task allocation for the actual Task 73 port-over work itself — this
+entry only closes the "how do we even get a working `combined-base`
+checkout" gap so that work can start. `git bundle verify` (run from
+inside any git repo, not necessarily this one — it errors `need a
+repository to verify a bundle` if run from outside one, a separate,
+much smaller gotcha hit earlier this session) only confirms the bundle
+file's own pack integrity, not full-history connectivity against a
+given checkout's current object store — worth remembering next time a
+bundle silently doesn't fully apply despite passing `verify`.
+
+**Per the Patch Handoff Convention, a patch file covering this
+`handover.md` update is generated and handed over this session — this
+is a documentation-only change, no `db/migrations/` touched, so no
+DB-Ops Handoff block is owed alongside it.** Patch Handoff block for
+this repo (unchanged):
+```
+cd ~/B-PAY-backend
+git am ~/storage/downloads/<patch-file-name>
+git push
+```
+
+### Task 75 — update (2026-09-11, same day, after this task's own first patch failed to apply): `combined-base` is reference/working-tree only — every patch always targets `main`, confirmed the hard way
+
+**What actually happened:** the product owner's own `~/B-PAY-backend`
+checkout was still sitting on the `combined-base` branch (left there
+after following this task's own checkout instructions above) when the
+`git am` for this task's own patch was run, and it failed:
+`error: handover.md: does not exist in index`. **Root cause, confirmed
+by direct diagnosis, not assumed:** `handover.md` lives at the repo
+root on `main`, but on `combined-base` it's a different file at a
+different path — `legacy-node/handover.md` — because `combined-base`'s
+root is the `hyperswitch` fork's own tree (per Task 75's main entry
+above), with this repo's old content nested one level down under
+`legacy-node/`. A patch built against `main`'s tree can never apply
+while checked out on `combined-base`, for any file in this repo —
+that's not a bug to fix, it's a structural fact about what
+`combined-base` actually contains.
+
+**Standing rule, effective immediately, no exceptions: `combined-base`
+is a read/reference checkout only.** It exists so a session can look at
+the `hyperswitch` fork tree and `legacy-node/` (the old implementation
+being ported from) side by side while scoping Task 73's actual
+port-over work. **No patch is ever generated against `combined-base`,
+and no `git am` is ever run while `combined-base` is the checked-out
+branch.** Every fix, every `handover.md` update, every piece of actual
+shipped code for this repo — for Task 73's rewrite included — lands on
+`main`, the same single target this repo's Patch Handoff Convention has
+always used. Before running any `git am` from this point forward:
+```
+cd ~/B-PAY-backend
+git checkout main
+git am ~/storage/downloads/<patch-file-name>
+git push
+```
+If a session ever needs to reference something from `combined-base`
+while preparing a patch, it reads from that checkout but still builds
+and hands over the patch against `main`'s own tree — never against
+`combined-base`'s.
+
+### Task 73 — update (2026-09-11, same day, direct product-owner instruction): backend infra (Postgres/Redis-replacement/Kafka-replacement/Supabase Edge Functions) is the confirmed first slice of Task 73 — every other Task 73 track waits
+
+**Confirmed sequencing decision, not a scope change** — Task 73's full
+scope (Rust rewrite, 9 provider connector crates, Render hosting, all 5
+previously-closed open questions) is unchanged; what's new is the
+*order* work happens in once sub-task allocation starts. **Backend
+data/infra wiring goes first, everything else waits:** finishing the
+Postgres-native replacement for Redis (locking/caching, the 86-file
+scope already flagged under Task 73's point 2 above) and for
+Kafka/ClickHouse (materialized views + `pg_cron` + Supabase Edge
+Functions, the 32-file scope under point 3), plus the underlying
+Postgres/Supabase connection wiring itself, is the confirmed **first**
+piece of Task 73 to build and land. **Everything else in Task 73/74's
+scope is explicitly paused behind this, not just de-prioritized in
+spirit:** the 4 not-yet-coded connector crates (DodoPayments, Remita,
+Xixapay, PaymentPoint), porting the 5 already-coded providers forward
+as connector crates, the `webhookGateway.js` cutover plan, and all of
+Task 74's `control-center`/API-docs work — none of that starts until
+the backend side (Postgres + Redis-replacement + Kafka-replacement +
+Edge Functions) is fully wired and working end-to-end. **Whoever splits
+Task 73 into sub-tasks next** (still deliberately not done, per Task
+73's own prior notes) needs to reflect this ordering directly in
+however the six-level Task Numbering & Workflow Convention split is
+cut — the backend-infra piece is leaf `a` (or otherwise first in
+sequence) by direct instruction, not a default this file is assuming
+on its own.
+
+**Not done this session:** no actual sub-task split, no code — this is
+a sequencing decision recorded for whoever picks up Task 73's real
+build work next, same "decision on record, not yet allocated" pattern
+already used for Task 73/74's other open items.
+
+**Per the Patch Handoff Convention, this update and Task 75's
+combined-base/main clarification above are folded into the same patch
+as this session's other `handover.md` change, per rule 6 (combine,
+don't stack while a prior patch is unapplied) — the prior Task 75
+patch had not yet been successfully applied (it failed on `git am`, per
+the update above), so this is one combined patch covering all of it,
+not a second independent one.** No `db/migrations/` changes, so no
+DB-Ops Handoff block is owed. Patch Handoff block (unchanged, note the
+`git checkout main` step added above — always required, not new to
+this specific patch):
+```
+cd ~/B-PAY-backend
+git checkout main
+git am ~/storage/downloads/<patch-file-name>
+git push
+```
+
+### Task 75 — update (2026-09-11, same day): `combined-base` stays as a pushed branch on `origin` — deliberate product-owner decision, overriding this session's own earlier recommendation, cost flagged and accepted
+
+**This session initially recommended removing the `combined-base`
+branch from `origin`** (a plain `git clone` pulls every branch's
+objects by default, so a ~116MB+ branch — the full `hyperswitch` fork
+history plus a 94MB test-fixture gif GitHub already warns about —
+becomes permanent overhead on every future clone of `B-Pay-backend`,
+compounding as `hyperswitch` itself keeps moving) **and offered two
+lighter-weight alternatives**: a GitHub Release asset (the bundle file
+as a plain download, zero impact on clone size) or a dedicated sibling
+repo, mirroring the `control-center` fork's own already-established
+"separate repo, not vendored in" pattern from Task 74.
+
+**Product owner heard the tradeoff and made the call directly: keep
+`combined-base` pushed to `origin` on `B-Pay-backend`, not moved to a
+release asset or sibling repo.** Stated rationale: the repo growing
+larger is an acceptable, expected cost of actually building the
+infrastructure this rewrite needs — not an oversight to correct.
+**This is now the standing decision, not a rejected recommendation
+left dangling** — recorded here, per this file's own convention of
+writing decisions down accurately rather than silently deferring to
+this session's own preference, the same way Task 73's full-infra scope
+itself overrode an earlier session's narrower framing after direct
+product-owner correction.
+
+**Practical effect on the Task 75 checkout procedure above: unchanged.**
+Every session still runs the same `git remote add hyperswitch` →
+`git fetch hyperswitch` → `git fetch <bundle> combined-base:combined-base`
+→ `git checkout combined-base` sequence — the only difference is that
+`combined-base` is now also directly `git fetch origin`-able like any
+other branch on this repo, which is a convenience, not a requirement;
+the bundle-based procedure still works identically for anyone who
+hasn't already got the `hyperswitch` remote fetched locally. **The
+"`combined-base` is reference/working-tree only, every patch targets
+`main`" rule from the update above is unchanged and still absolute** —
+being pushed to `origin` doesn't change what `combined-base` is for;
+it's still not a `git am` target.
+
+### Task 73 — sub-task allocation begins: Task 73/a scoped and confirmed — the Redis→Postgres replacement's actual shared choke-point identified, file counts re-verified against the real fork source (not the earlier session's recalled figure), no code written yet
+
+**Per this session's earlier confirmed sequencing decision (search
+"backend infra ... is the confirmed first slice"), this is the actual
+start of that work** — Task 73's own "sub-task allocation deliberately
+NOT done" note (repeated across several prior entries) is now
+superseded for this one leaf; the rest of Task 73/74 remains
+unallocated, per that same prior note.
+
+**File-count correction, verified directly against `combined-base`'s
+own `crates/router/src` this session (not reused from Task 73's
+earlier "86 files" figure, which this session could not reproduce
+from a fresh grep and is therefore treated as stale, same "confirm,
+don't guess" discipline as every other count correction in this
+file):**
+- **100 files** under `crates/router/src` mention `redis` in some form.
+- **63 files** have actual Redis client usage (`redis::`,
+  `RedisConnectionPool`, `get_redis_conn`/`redis_conn`), i.e. genuine
+  call sites, not just comments/strings/unrelated matches.
+- Of those 63: **39 touch locking**, **29 touch caching**, **18 touch
+  pub/sub or streams** (a file can fall into more than one category).
+- **Not a contradiction of Task 73's original "real, substantial
+  engineering work" framing** — if anything the confirmed 63-real-usage
+  figure plus the categorization below makes the shape of that work
+  clearer than the original single number did.
+
+**The actual highest-leverage first target, identified this session:**
+almost every one of those 63 call sites goes through one shared
+abstraction layer, not directly through a raw Redis client:
+- `crates/storage_impl/src/redis.rs` (`RedisStore`, the top-level
+  handle every caller gets) plus its three sibling modules —
+  `redis/cache.rs`, `redis/kv_store.rs`, `redis/pub_sub.rs` — under
+  `crates/storage_impl/src/redis/`.
+- Underneath that, the `redis_interface` crate itself
+  (`crates/redis_interface/src/`) — the actual client wrapper, with
+  two swappable backend modules already built into its own structure
+  (`module/redis_rs.rs`, `module/fred.rs`).
+- **This means the 63-file call-site surface is not 63 independent
+  rewrites.** Replacing `RedisStore` and its three redis/ submodules
+  with a Postgres-backed implementation exposing the same shape
+  (locking via `pg_advisory_lock`/`SELECT ... FOR UPDATE`, caching via
+  plain cache tables, pub/sub via `LISTEN`/`NOTIFY` or a polling
+  equivalent — matching the three real usage categories found above)
+  is the actual first buildable leaf. Each of the 63 call sites still
+  needs individual review afterward (some Redis-specific semantics —
+  TTL behavior, atomic multi-key ops — don't map 1:1 onto Postgres and
+  need a real per-call-site decision, not assumed away here), but the
+  shared choke-point is what unblocks that review, not the reverse.
+
+**Kafka/ClickHouse re-verified too, same session:** 32 files under
+`crates/router/src` and 12 files under `crates/analytics/src`
+reference `kafka`/`clickhouse` — consistent with Task 73's original
+32-file figure for the router side; the `analytics` crate's own 12
+were not previously broken out as a separate number and are worth
+tracking separately once this leaf is scoped for real.
+
+**Genuinely not done this session — real scope, not glossed over:**
+no Postgres-backed `RedisStore` replacement written, no schema for the
+replacement cache/lock/pub-sub tables designed, no per-call-site
+TTL/atomicity audit of the 63 files, nothing run against Supabase.
+This entry is the scoping pass that makes the next session's actual
+build work concrete instead of starting from Task 73's original
+single "86 files" estimate — same discovery-before-code pattern this
+file has used for every task at this scale (Task 59, Task 73's own
+original proposal, Task 72's Stripe research).
+
+**Next task, unambiguous: build the Postgres-backed replacement for
+`crates/storage_impl/src/redis.rs` + its three submodules, matching
+`RedisStore`'s existing public shape so the 63 call sites don't need a
+simultaneous rewrite.** Whoever picks this up next should start by
+reading `crates/storage_impl/src/redis/{cache,kv_store,pub_sub}.rs` and
+`crates/redis_interface/src/lib.rs` directly (both confirmed present
+and read at a structural level this session, not yet at the
+line-by-line implementation level) before writing any replacement code.
+
+**Per the Patch Handoff Convention, this scoping entry and the
+`combined-base`-stays-pushed decision above are folded into the same
+still-unapplied patch, per rule 6** — no code changes, so still no
+`db/migrations/` touch and no DB-Ops Handoff block owed. Patch Handoff
+block (unchanged):
+```
+cd ~/B-PAY-backend
+git checkout main
+git am ~/storage/downloads/<patch-file-name>
+git push
+```

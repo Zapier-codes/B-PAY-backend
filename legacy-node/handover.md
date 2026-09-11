@@ -100,7 +100,32 @@
 > task's own section. Nothing else in this file is required reading to
 > start work.**
 >
-> **✅ AUDIT STARTED (2026-09-11, newest) — per-call-site TTL/atomicity
+> **✅ CI ADDED (2026-09-11, newest) — `.github/workflows/rust-check.yml`
+> now exists, pinned to `rustc` 1.85.0 (matching the workspace's own
+> `package.rust-version`), running `cargo check -p storage_impl` +
+> full-workspace `cargo check` + `clippy` on every push/PR to `main`.**
+> This is the actual permanent fix for the toolchain wall documented
+> everywhere else in this file: GitHub-hosted runners have unrestricted
+> internet access, so `rustc` version is a non-issue there regardless
+> of what any given sandbox's network policy allows. **Every future
+> session should treat this workflow's result on `origin/main`, not a
+> sandbox's local `rustc` attempt, as the real compile signal** — check
+> the Actions tab / latest run status before re-running the New-Clone
+> Checklist's toolchain steps 2–3 from scratch. **This workflow has not
+> yet run for real** as of this patch being handed over — first result
+> only exists once this lands on `origin/main` and a push triggers it;
+> expected to come back **red** on `storage_impl` (never once compiled
+> against this workspace) rather than that being a workflow bug. **This
+> session's own first attempt at handing this over failed `git am`** —
+> the patch was built on a stale local base after the prior patch had
+> already landed upstream; the correction, and an amendment to Patch
+> Handoff Convention rule 8 documenting exactly how that happened, are
+> in the Task 73/a section at the end of the file (search "Task 73/a —
+> CI workflow added"). This patch has been test-applied against a
+> clean fresh clone of the real `origin/main` before being handed over
+> this time — see that section for confirmation, not just a claim.
+>
+> **⚠️ SUPERSEDED — AUDIT STARTED (2026-09-11) — per-call-site TTL/atomicity
 > audit (Task 73/a's own explicit next step, and the concrete task the
 > New-Clone Checklist points at when `rustc` is unavailable) begun; one
 > concrete, real gap found in `PgLock`'s API shape, not yet fixed.**
@@ -10016,6 +10041,33 @@ repo's handover.md (including mavins-web's):**
    like it might have changed — that assumption is exactly what
    caused the failure this rule exists to prevent.
 
+   **Missed again, 2026-09-11 — the exact failure mode this rule was
+   written to prevent, recurring inside a single session rather than
+   across sessions.** A session `git fetch`'d and generated a patch
+   correctly on its first pass. In the same session, minutes later, a
+   follow-up instruction (add a CI workflow) arrived; the session
+   amended its already-generated local commit and regenerated the
+   patch **without re-running step 1** — reasoning from memory of
+   "origin/main hadn't moved a few minutes ago" instead of actually
+   checking again. It had: the first patch had already been applied
+   and pushed by the product owner in the interim, so the amended
+   patch was built on a base that no longer existed upstream, and
+   `git am` correctly rejected it (`patch does not apply`). **The
+   fix isn't a new rule — rule 8 already covered this — it's that
+   "just checked a few minutes ago" is exactly the kind of assumption
+   step 1 exists to replace with a real check, no matter how recently
+   the last real check happened or how small the intervening change
+   feels.** Re-run `git fetch origin` immediately before *every*
+   `git format-patch`, including the second, third, or Nth time in
+   the same session, even if the only thing that changed since the
+   last patch was generated is one more file added to the same local
+   commit. Additionally: rule 8.3's "test-apply against a clean, fresh
+   clone before handing over" step was itself skipped this time (the
+   patch was handed over on the strength of `git diff --stat` looking
+   right, not a real `git am` test) — that step is not optional either,
+   and would have caught this exact failure before the product owner
+   did.
+
 ---
 
 ## DB-Ops Handoff Process — second environment, MANDATORY whenever a live Supabase/DB command is needed (effective 2026-09-08)
@@ -17427,6 +17479,96 @@ not owed (no `migrations/` diff, rule 7). This session does not push
 to `main` itself — per rule 4, that applies regardless of how the
 task was phrased to this session, including a direct instruction to
 push it directly:**
+```
+cd ~/B-PAY-backend
+git am ~/storage/downloads/<patch-file-name>
+git push
+```
+
+### Task 73/a — CI workflow added (2026-09-11, same session, continued): `.github/workflows/rust-check.yml`, plus a `git am` failure caused by skipping rule 8's own re-fetch step, corrected
+
+**What's actually new in this entry's patch — checked against real
+`origin/main` (`5b36ad8a8`), not assumed:** exactly two things —
+`.github/workflows/rust-check.yml` (new file) and this handover.md
+delta. The per-call-site audit content from the previous entry is
+**not** repeated here because `git diff origin/main` confirms it's
+already on `origin/main` — it landed via the first patch, applied by
+the product owner before this entry was written. An earlier version
+of this same entry incorrectly assumed that hadn't happened yet and
+produced a patch that `git am` rejected (`patch does not apply`); see
+the correction below.
+
+**What the CI workflow does:** `.github/workflows/rust-check.yml` runs
+on every push/PR to `main` (plus manual `workflow_dispatch`) on a
+GitHub-hosted `ubuntu-latest` runner:
+1. Installs `rustc`/`cargo` **1.85.0** exactly, via `dtolnay/
+   rust-toolchain` — matching the root `Cargo.toml`'s `package.
+   rust-version = "1.85.0"` precisely.
+2. Caches `~/.cargo/registry`, `~/.cargo/git`, and `target/` keyed on
+   `Cargo.lock`'s hash.
+3. Runs `cargo check -p storage_impl --all-targets` first and
+   separately — this crate has never compiled against this workspace
+   in any prior session, so it gets its own explicit step.
+4. Runs `cargo check --workspace --all-targets` after that.
+5. Runs `cargo clippy -p storage_impl --all-targets -- -D warnings`
+   last, `continue-on-error: true` so a clippy issue doesn't mask the
+   actual compile result.
+
+**Why this is the real fix:** every prior Task 73/a session hit the
+same wall from a different angle and correctly declined to fake a
+workaround around it. GitHub-hosted runners have ordinary unrestricted
+internet access, so the exact `static.rust-lang.org`/`sh.rustup.rs`
+host-block that's stopped every sandbox session so far simply doesn't
+apply there — this isn't a clever trick, it's routing the compile
+check to an environment that was never subject to the block in the
+first place.
+
+**Not yet verified running.** This workflow has not executed against
+real GitHub Actions infrastructure as of this patch. First real run
+happens once the product owner applies this patch and pushes. Expect
+**red** on `cargo check -p storage_impl` initially, not a sign the
+workflow itself is broken — the next session should read the actual
+run output rather than assume either outcome.
+
+**The `git am` failure, and the actual fix — told straight, not
+glossed over:** this session's first attempt to hand over this CI
+addition amended the same local commit the *previous* patch came from
+and handed over the result without re-running `git fetch origin`
+first. Rule 8 of the Patch Handoff Convention already required exactly
+that check — it exists specifically because an earlier session made
+this same mistake once before — and it was skipped here anyway,
+reasoning from "checked a few minutes ago" instead of checking again.
+By the time the second patch was generated, the product owner had
+already applied and pushed the first one, so the amended patch's base
+no longer existed on `origin/main`, and `git am` correctly rejected it
+with `patch does not apply` at `legacy-node/handover.md:100`. **Fix,
+this entry:** `git fetch origin` re-run for real (confirmed
+`origin/main` at `5b36ad8a8`, matching the previous entry's content
+exactly via `git diff origin/main -- legacy-node/handover.md` up to
+that point), local `main` reset to that real base
+(`git reset --hard origin/main`), and only the genuinely-still-missing
+files (the workflow file, plus this delta-only handover section)
+rebuilt on top of it — not a re-send of the previous, now-superseded
+diff. Rule 8 itself has been amended (search this file for "Missed
+again, 2026-09-11") to record this recurrence and make the "re-check
+even if you just checked" point explicit, rather than adding a
+duplicate rule next to an already-correct one.
+
+**Test-applied before handoff, not just eyeballed — rule 8.3, actually
+followed this time:** the resulting patch was applied with `git am`
+against a fresh, separate clone of `origin/main` (not this session's
+own working tree) and confirmed to apply cleanly before being handed
+to the product owner.
+
+**Not done, unchanged:** everything listed as open in the audit entry
+above (58 of 63 files still unread, `PgLock`'s multi-key gap unfixed,
+etc.) — this entry is CI infrastructure and a process correction only,
+no new Rust and no further audit progress.
+
+**Per the Patch Handoff Convention: `.github/workflows/rust-check.yml`
+(new file) + `handover.md` delta, one combined patch, base confirmed
+against real `origin/main` and test-applied before handoff (rule 8, as
+amended). No migration in this diff — DB-Ops block not owed.**
 ```
 cd ~/B-PAY-backend
 git am ~/storage/downloads/<patch-file-name>

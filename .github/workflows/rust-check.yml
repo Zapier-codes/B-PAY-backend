@@ -1,0 +1,65 @@
+name: Rust check
+
+# Sandboxed agent sessions working on this repo cannot reach
+# static.rust-lang.org / sh.rustup.rs (network policy blocks both,
+# confirmed repeatedly -- see legacy-node/handover.md, Task 73/a), so
+# this repo has had no real compile signal on any storage_impl Rust
+# change since that work started. GitHub-hosted runners have
+# unrestricted internet access and are the actual source of truth for
+# "does it compile" -- this workflow is that source of truth, not the
+# sandbox.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch: {}
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  cargo-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Pinned to the exact version this workspace declares
+      # (package.rust-version = "1.85.0" in the root Cargo.toml) so CI
+      # enforces the same floor the workspace itself claims, rather
+      # than drifting to whatever "stable" happens to be on a given
+      # run.
+      - name: Install Rust 1.85.0
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.85.0"
+          components: clippy
+
+      - name: Cache cargo registry and build artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-1.85.0-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-1.85.0-
+
+      # storage_impl (pg_lock.rs / pg_kv_store.rs / pg_pub_sub.rs, the
+      # Task 73/a Postgres-backed Redis replacement) checked explicitly
+      # and first: it's the crate under active work and has never once
+      # compiled successfully as of the session that added this
+      # workflow. A red check here is expected and useful signal, not
+      # a workflow bug.
+      - name: cargo check -p storage_impl
+        run: cargo check -p storage_impl --all-targets
+
+      - name: cargo check (full workspace)
+        run: cargo check --workspace --all-targets
+
+      - name: cargo clippy -p storage_impl
+        run: cargo clippy -p storage_impl --all-targets -- -D warnings
+        continue-on-error: true

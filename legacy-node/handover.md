@@ -130,10 +130,22 @@
 > semantics for both). Same risk class as the `card_testing_guard.rs`
 > finding above, but on a session-expiry security boundary rather than
 > a fraud counter. Full detail: search "Task 73/a — per-call-site
-> audit, third pass" at the end of the file. `rust-check.yml`'s first
-> real Actions run is **still unconfirmed** — not re-attempted this
-> pass, still needs someone with an unthrottled GitHub session to check
-> the Actions tab.
+> audit, third pass" at the end of the file.
+>
+> **✅ LANDED + AUDIT CONTINUED, FOURTH PASS (2026-09-11, newest) —
+> third-pass patch confirmed on `origin/main` (`561502f2f`, byte-
+> identical diff check, not assumed); 6 more files read (21 of 63 now,
+> 42 remain); two more concrete `pg_kv_store.rs` gaps.** Finding #6
+> (missing overwrite-set-with-TTL) is now confirmed the highest-call-
+> count gap — 3 more sites in `core/payment_methods.rs` alone need it.
+> Two new gaps: no batch/atomic multi-field hash write (Finding #7,
+> real correctness risk for `core/payment_method_balance.rs`'s balance
+> data), and no TTL-introspection method at all (Finding #8, tentative
+> — needed by the CVC-retrieval path, but not fully traced since
+> `vault.rs` isn't one of the 63 canonical sites). Full detail: search
+> "Task 73/a — per-call-site audit, fourth pass". `rust-check.yml`'s
+> first real Actions run is **still unconfirmed** — needs someone with
+> an unthrottled GitHub session to check the Actions tab.
 >
 > **⚠️ SUPERSEDED — CI ADDED (2026-09-11) — `.github/workflows/rust-check.yml`
 > now exists, pinned to `rustc` 1.85.0 (matching the workspace's own
@@ -17807,3 +17819,83 @@ owner checking the Actions tab directly, per the top box).
 **Per the Patch Handoff Convention: `handover.md` only, no `.rs` file
 touched, no migration. Base confirmed against real `origin/main`
 immediately before this session started (rule 8).**
+
+### Task 73/a — per-call-site audit, fourth pass (2026-09-11, same session, continued): CI patch from previous entry confirmed landed via `git am` on the product owner's device (`561502f2f`); 6 more files read, two new `pg_kv_store.rs` API gaps (batch hash-field write, TTL introspection)
+
+**Landing confirmed properly this time, not just format-patch's own
+"applied cleanly" from the test-clone step:** `git fetch origin` shows
+`origin/main` at `561502f2f`; `git diff` of that commit against this
+session's own pre-handoff commit (`bdff15b00`) for `legacy-node/
+handover.md` came back **empty** — byte-identical content, the hash
+difference is expected (different machine/committer timestamp via
+`git am`, not a discrepancy). Local sandbox reset to `origin/main`
+(rule 8) before continuing.
+
+**6 more files read in depth this pass** (bringing the running total
+to 21 of 63, 42 remain): `core/admin.rs`, `core/cache.rs`, `core/
+conditional_config.rs`, `core/health_check.rs`, `core/payment_method_
+balance.rs`, `core/payment_methods.rs`.
+
+**Category confirmation, not new — fan-out cache-invalidation group now
+5 files:** `core/admin.rs` (`CacheKind::Routing`, `redact_from_redis_
+and_publish`), `core/cache.rs` (this *is* the shared `redact_from_
+redis_and_publish` call site itself), and `core/conditional_config.rs`
+(`CacheKind::DecisionManager`) all join `db/api_keys.rs` and `db/
+organization.rs` in the same fan-out-broadcast category as Finding #5
+— same open question (per-subscriber vs. shared cursor in `pg_pub_
+sub.rs`'s eventual subscriber), no new information beyond confirming
+scope. `core/health_check.rs` is the trivial case, same as `configs/
+settings.rs`: a literal `test_key`/30s-TTL liveness ping, no real
+TTL/atomicity decision to make.
+
+**Finding #6 reinforced, not new — `core/payment_methods.rs` alone has
+3 more call sites needing the same missing overwrite-set-with-TTL:**
+single-use payment-method-token storage (`add_single_use_token_to_
+store`), volatile payment-method-record storage, and CVC token
+storage all call `serialize_and_set_key_with_expiry` the same way
+`db/payment_method_session.rs` does. This raises Finding #6 from "one
+file's gap" to "the single most-used missing primitive in `pg_kv_
+store.rs` so far" — worth the product owner treating as the priority
+fix once a toolchain exists, ahead of the multi-key locking gap
+(Finding #1) purely by call-site count, though Finding #1's deadlock
+risk is arguably higher-severity per-incident.
+
+**Finding #7 (new) — `pg_kv_store.rs` has no batch hash-field write;
+Redis's real `set_hash_fields` (plural) writes N fields in one call,
+`pg_kv_store.rs` only has singular `set_hash_field`.**
+`core/payment_method_balance.rs`'s `persist_individual_pm_balance_
+details_in_redis` builds a full list of `(field, value)` pairs for a
+payment intent's balance data and writes them **all in one
+`set_hash_fields` call** with a shared expiry. A naive port that
+loops `set_hash_field` once per pair would not be atomic — a reader
+could observe a partial write (some balance fields present, others
+not yet) mid-loop, which is a real correctness issue for balance data
+a caller might be checking concurrently. Not fixed this session, same
+standing discipline.
+
+**Finding #8 (new, tentative — scope only partly traced) —
+`pg_kv_store.rs` has no TTL-introspection method at all; something in
+the CVC-retrieval path needs one.** `core/payment_methods.rs` calls
+`vault::retrieve_key_and_ttl_for_cvc_from_payment_method_id`, which by
+its own name reads back a key's *remaining* TTL (Redis `TTL`/`PTTL`
+semantics), not just its value, then uses that to compute an expiry
+timestamp shown to the caller. `pg_kv_store.rs`'s full method list
+(`set_key_if_not_exist`, `get_key`, `set_hash_field`, `get_hash_field`,
+`set_hash_field_if_not_exist`, `scan_hash_fields`) has nothing that
+returns a remaining TTL. **Flagged tentative, not confirmed:**
+`vault.rs` itself is not one of the 63 canonical call sites (it
+doesn't match the `redis::|RedisConnectionPool|get_redis_conn|
+redis_conn` grep — presumably wraps the connection differently), so
+the actual mechanics of what "TTL" means there (vault-external TTL
+tracking vs. a real Redis `TTL` call) weren't traced this pass. Worth
+someone reading `vault.rs` directly before treating this as a
+confirmed `pg_kv_store.rs` gap rather than a likely one.
+
+**Not done, still open:** 42 of 63 files still unread; Findings #1,
+#6, #7, #8 all unfixed (no toolchain, same discipline as every prior
+entry); `rust-check.yml`'s first real Actions run still unconfirmed —
+still needs someone with an unthrottled GitHub session.
+
+**Per the Patch Handoff Convention: `handover.md` only, no `.rs` file
+touched, no migration. Base confirmed against real `origin/main`
+(`561502f2f`) immediately before this entry (rule 8).**

@@ -19,6 +19,12 @@
 //!   behaviour — but nothing deletes rows past `expires_at`; needs a
 //!   `scheduler` crate job before this can replace Redis in a
 //!   memory-bounded way, not just a correctness-bounded one).
+//! - **`KvOperation::Scan`'s LIKE-metacharacter escaping — fixed this
+//!   session** (was flagged here as open). `scan_hash_fields`'s glob-to-
+//!   `LIKE` translation now escapes `%`/`_`/`\` before turning `*` into an
+//!   unescaped `%`, paired with `LIKE ... ESCAPE '\'` in the query — see
+//!   `glob_to_escaped_sql_like`'s own doc comment for what's still
+//!   deliberately not translated (`?`, char classes) and why.
 //! - `KvOperation::Scan`'s Redis implementation (`hscan_and_deserialize`)
 //!   uses Redis's `HSCAN` cursor semantics for large hashes; this version
 //!   does a single indexed `SELECT ... WHERE cache_key = $1 AND field LIKE
@@ -31,10 +37,13 @@
 //!   away here.
 //! - Per-call-site TTL/atomicity audit (Task 73/a's own explicit next step
 //!   for all 63 files) has not started.
-//! - This module has not been compiled against the real workspace yet
-//!   (verified structurally against `crates/redis_interface` and
-//!   `crates/storage_impl/src/errors.rs` this session, not built). Treat
-//!   as a reviewed-by-reading first draft, not a proven one.
+//! - This module has not been compiled against the real workspace yet —
+//!   a real attempt was made this session (this sandbox can reach
+//!   `crates.io`), and hit a diagnosed blocker: the workspace pins
+//!   `rust-version = "1.85.0"`, the only toolchain this sandbox's package
+//!   sources offer is `1.75.0`, and there's no network path here to a
+//!   newer one. Treat as a reviewed-by-reading, partially-hardened first
+//!   draft, not a proven one.
 //!
 //! Do not treat this as a drop-in production replacement without both a
 //! real build/test pass and the per-call-site audit above.
@@ -292,17 +301,11 @@ impl PgKvStore {
             .get()
             .await
             .change_context(StorageError::DatabaseConnectionError)?;
-        // Redis SCAN globs ('*') map onto SQL LIKE ('%') at the call site,
-        // not inside this helper, so callers keep the same pattern strings
-        // they already pass to `hscan_and_deserialize` today. Only `*` is
-        // translated; a literal `%` or `_` in a real field name would need
-        // escaping this doesn't do yet — flagged for the per-call-site
-        // audit, none of the 63 sites were confirmed to rely on it.
-        let sql_pattern = field_pattern.replace('*', "%");
+        let sql_pattern = glob_to_escaped_sql_like(field_pattern);
 
         let rows: Vec<RawValueRow> = sql_query(
             "SELECT value FROM pg_kv_cache \
-             WHERE cache_key = $1 AND field LIKE $2 \
+             WHERE cache_key = $1 AND field LIKE $2 ESCAPE '\\' \
              AND (expires_at IS NULL OR expires_at > (now() AT TIME ZONE 'utc'))",
         )
         .bind::<Text, _>(key)
@@ -324,4 +327,31 @@ impl PgKvStore {
             })
             .collect()
     }
+}
+
+/// Redis SCAN globs (`*`) map onto SQL `LIKE` (`%`). **Fixed this session
+/// (was the module doc comment's flagged "not done" gap):** LIKE's own
+/// metacharacters (`%`, `_`) and its escape character (`\`) are escaped
+/// *before* `*` is translated, and the query pairs this with
+/// `LIKE ... ESCAPE '\'` — so a literal `%`, `_`, or `\` in a real field
+/// name now matches itself instead of being misread as a SQL wildcard.
+/// Redis SCAN globs also support `?` (single-char wildcard) and
+/// `[abc]`/`[a-z]` (char classes); neither is translated here — left as a
+/// literal character like any other, not guessed at, since none of the 63
+/// call sites were confirmed to rely on them. If a future per-call-site
+/// audit finds one that does, extend this function then, with that call
+/// site's actual pattern in hand, rather than speculatively now.
+fn glob_to_escaped_sql_like(field_pattern: &str) -> String {
+    let mut escaped = String::with_capacity(field_pattern.len());
+    for ch in field_pattern.chars() {
+        match ch {
+            '*' => escaped.push('%'),
+            '%' | '_' | '\\' => {
+                escaped.push('\\');
+                escaped.push(ch);
+            }
+            other => escaped.push(other),
+        }
+    }
+    escaped
 }

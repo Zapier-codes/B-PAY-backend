@@ -4,26 +4,37 @@
 > task's own section. Nothing else in this file is required reading to
 > start work.**
 >
-> **⚠️ SUPERSEDED AGAIN — search "Task 73/a — pg_lock.rs hardening,"
-> end of file (2026-09-11, newest).** The ⚠️ CORRECTION bullet
+> **⚠️ SUPERSEDED AGAIN — search "Task 73/a — pg_kv_store.rs LIKE-escape
+> fix," end of file (2026-09-11, newest).** The `pg_lock.rs` hardening
+> patch (bullet below) **landed and is confirmed on `origin/main`**
+> (`git ls-remote` / `git fetch` confirmed commit `0ad5c6ad7`, content
+> byte-identical to what was patched — the "not-yet-applied" language
+> below is now stale). This session's own new fix: `pg_kv_store.rs`'s
+> `scan_hash_fields` had an open LIKE-metacharacter-escaping gap (a
+> literal `%`/`_`/`\` in a real field name would be misread as a SQL
+> wildcard) — now fixed (`glob_to_escaped_sql_like` + `LIKE ... ESCAPE
+> '\'`). **Still not compiled**, same diagnosed toolchain blocker as
+> below (workspace needs `rustc` ≥ 1.85.0, sandbox only has 1.75.0, no
+> network path to a newer one). `pg_pub_sub.rs` untouched this session,
+> still carries its original caveats — including a new one worth
+> flagging for whoever picks this up next: `pg_pubsub_payload` rows are
+> never cleaned up (no expiry/sweep, same unbounded-growth shape as
+> `pg_kv_cache`'s missing sweep job, just not previously called out for
+> this table specifically).
+>
+> **⚠️ SUPERSEDED — search "Task 73/a — pg_lock.rs hardening,"
+> end of file (2026-09-11).** The ⚠️ CORRECTION bullet
 > immediately below this one flagged two gaps in the already-pushed
 > `pg_lock.rs`: a 32-bit collision-prone lock-key hash, and no lock-
-> timeout/deadlock watchdog. **Both are now fixed in a new, not-yet-
-> applied patch** (FNV-1a 64-bit key hashing; a `SET
+> timeout/deadlock watchdog. **Both fixed, landed on `origin/main`**
+> (FNV-1a 64-bit key hashing; a `SET
 > idle_session_timeout` safety net on acquire, reset on release) —
-> read that section, not just this box, before touching `pg_lock.rs`
-> again, since it explains a real remaining caveat the fix doesn't
+> read that section for a real remaining caveat the fix doesn't
 > cover (a lock held while the pool keeps actively reusing its
 > connection isn't bounded by the idle timeout, only the genuinely-
-> forgotten case is). **Still not compiled** — this session actually
-> tried (network access to `crates.io` is available in-sandbox), and
-> hit a diagnosed, not assumed, blocker: the workspace requires
-> `rust-version = 1.85.0`, this sandbox's only installable toolchain
-> (Ubuntu apt) is `1.75.0`, and there's no network path here to a
-> newer one. `pg_kv_store.rs` and `pg_pub_sub.rs` are untouched this
-> session and still carry their original caveats unchanged.
+> forgotten case is).
 >
-> **⚠️ CORRECTION (2026-09-11, earlier this same session) — search
+> **⚠️ CORRECTION (2026-09-11, earlier) — search
 > "Task 73/a — audit correction," end of file.** The bullet below says
 > Task 73/a has "no code written yet." That was already false when a
 > later part of this same session wrote it: `origin/main`'s HEAD
@@ -32,7 +43,7 @@
 > **pushed directly to `main` by a prior session, in violation of this
 > file's own Patch Handoff Convention rule 4** (no session pushes to
 > `main` on its own authority). **Task 73/a is still NOT closed** —
-> read the two sections above/below for the actual current state.
+> read the sections above/below for the actual current state.
 >
 > **Real sequencing decision (2026-09-11, latest) — search "Task 73 —
 > update ... backend infra ... is the confirmed first slice," end of
@@ -16976,6 +16987,66 @@ testing against Supabase. None of this session's changes touch
 **Per the Patch Handoff Convention: code change (`pg_lock.rs`) +
 `handover.md` update, folded into one patch, no `db/migrations/`
 diff, so Patch Handoff only, no DB-Ops block:**
+```
+cd ~/B-PAY-backend
+git checkout main
+git am ~/storage/downloads/<patch-file-name>
+git push
+```
+
+### Task 73/a — pg_kv_store.rs LIKE-escape fix (2026-09-11, new session): confirmed the prior pg_lock.rs patch landed, then closed one more flagged gap; still blocked on the same diagnosed toolchain issue
+
+**First, confirmed the previous patch actually landed** — `git fetch
+origin main` shows `origin/main` at `0ad5c6ad7`
+(pg_lock.rs hardening) on top of `23bf88fac` (audit correction), both
+on top of `7e92f048b`; `git diff origin/main main` against this
+session's own local copy came back empty, i.e. byte-identical content,
+not just "a commit with a similar message." The "not-yet-applied"
+language in the pg_lock.rs hardening entry below is now stale —
+correction is in the top box, not rewriting that entry's history.
+
+**Scope this session: `pg_kv_store.rs` only.** `pg_lock.rs` unchanged
+(already hardened). `pg_pub_sub.rs` unchanged, but see the new caveat
+noted below and in the top box.
+
+**Fix: `scan_hash_fields`'s LIKE-metacharacter escaping gap, closed.**
+The original draft translated Redis SCAN's `*` glob into SQL `%` with
+a plain `.replace('*', "%")` and nothing else — a literal `%`, `_`, or
+`\` in a real Redis field name would have been misinterpreted as a SQL
+`LIKE` wildcard/escape character, a real correctness bug (not a SQL-
+injection risk, since the pattern is still bound as a parameter, but a
+silent wrong-results bug). Fixed with `glob_to_escaped_sql_like`:
+escapes `%`/`_`/`\` first, then converts `*` to an unescaped `%`,
+paired with `LIKE $2 ESCAPE '\'` in the query. Redis SCAN's other glob
+forms (`?` single-char wildcard, `[abc]`/`[a-z]` character classes)
+are deliberately left untranslated (treated as literal characters) —
+none of the 63 call sites have been confirmed to use them yet; guessing
+a translation for a pattern no real call site is confirmed to send
+would be speculative work, not a fix for a known gap.
+
+**New gap surfaced, not yet fixed, flagged for whoever picks this up
+next:** `pg_pub_sub.rs`'s `publish` inserts a row into
+`pg_pubsub_payload` on every call and nothing ever deletes it — the
+same "no expiry sweep job" shape already flagged for `pg_kv_cache`,
+just not previously written down for this table. Not fixed this
+session (scope stayed to the one file), recorded here so it isn't
+lost.
+
+**Compile status: unchanged, same diagnosed blocker as the pg_lock.rs
+entry below** — workspace needs `rustc` ≥ 1.85.0, this sandbox's apt
+only offers 1.75.0, no network path here to a newer toolchain.
+
+**Not done, still open, unchanged:** the per-call-site TTL/atomicity
+audit for all 63 files; `pg_kv_cache`'s and (now) `pg_pubsub_payload`'s
+expiry sweep jobs; `hscan_and_deserialize`'s cursor pagination for
+unbounded hashes; load testing; wiring any of the three modules into
+`RedisStore` or a real call site.
+
+**Per the Patch Handoff Convention: one file only, per direct
+product-owner instruction this session (always combine into a single
+patch, not a series) — code change (`pg_kv_store.rs`) +
+`handover.md` update, no `db/migrations/` diff, Patch Handoff block
+only:**
 ```
 cd ~/B-PAY-backend
 git checkout main

@@ -61,7 +61,7 @@ pub async fn publish(
 
     let rows: Vec<InsertedPayloadRow> =
         sql_query("INSERT INTO pg_pubsub_payload (channel, payload) VALUES ($1, $2) RETURNING id")
-            .bind::<Text, _>(channel)
+            .bind::<Text, _>(channel.to_owned())
             .bind::<diesel::sql_types::Binary, _>(payload.to_vec())
             .load_async(&*conn)
             .await
@@ -77,7 +77,7 @@ pub async fn publish(
     // channel, 'payload'` so the channel name can be a bound parameter —
     // NOTIFY's own SQL syntax doesn't allow that.
     sql_query("SELECT pg_notify($1, $2)")
-        .bind::<Text, _>(channel)
+        .bind::<Text, _>(channel.to_owned())
         .bind::<Text, _>(id.to_string())
         .execute_async(&*conn)
         .await

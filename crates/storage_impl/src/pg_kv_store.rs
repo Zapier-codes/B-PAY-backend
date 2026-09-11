@@ -194,7 +194,7 @@ impl PgKvStore {
              ON CONFLICT (cache_key, field) DO NOTHING \
              RETURNING id",
         )
-        .bind::<Text, _>(key)
+        .bind::<Text, _>(key.to_owned())
         .bind::<diesel::sql_types::Binary, _>(bytes)
         .bind::<diesel::sql_types::Timestamp, _>(expires_at)
         .load_async(&*conn)
@@ -226,7 +226,7 @@ impl PgKvStore {
              WHERE cache_key = $1 AND field = '' \
              AND (expires_at IS NULL OR expires_at > (now() AT TIME ZONE 'utc'))",
         )
-        .bind::<Text, _>(key)
+        .bind::<Text, _>(key.to_owned())
         .load_async(&*conn)
         .await
         .map_err(StorageError::from)?;
@@ -264,8 +264,8 @@ impl PgKvStore {
              DO UPDATE SET value = EXCLUDED.value, expires_at = EXCLUDED.expires_at, \
                             updated_at = now()",
         )
-        .bind::<Text, _>(key)
-        .bind::<Text, _>(field)
+        .bind::<Text, _>(key.to_owned())
+        .bind::<Text, _>(field.to_owned())
         .bind::<diesel::sql_types::Binary, _>(bytes)
         .bind::<diesel::sql_types::Timestamp, _>(expires_at)
         .execute_async(&*conn)
@@ -292,8 +292,8 @@ impl PgKvStore {
              WHERE cache_key = $1 AND field = $2 \
              AND (expires_at IS NULL OR expires_at > (now() AT TIME ZONE 'utc'))",
         )
-        .bind::<Text, _>(key)
-        .bind::<Text, _>(field)
+        .bind::<Text, _>(key.to_owned())
+        .bind::<Text, _>(field.to_owned())
         .load_async(&*conn)
         .await
         .map_err(StorageError::from)?;
@@ -328,8 +328,8 @@ impl PgKvStore {
              ON CONFLICT (cache_key, field) DO NOTHING \
              RETURNING id",
         )
-        .bind::<Text, _>(key)
-        .bind::<Text, _>(field)
+        .bind::<Text, _>(key.to_owned())
+        .bind::<Text, _>(field.to_owned())
         .bind::<diesel::sql_types::Binary, _>(bytes)
         .bind::<diesel::sql_types::Timestamp, _>(expires_at)
         .load_async(&*conn)
@@ -363,7 +363,7 @@ impl PgKvStore {
              WHERE cache_key = $1 AND field LIKE $2 ESCAPE '\\' \
              AND (expires_at IS NULL OR expires_at > (now() AT TIME ZONE 'utc'))",
         )
-        .bind::<Text, _>(key)
+        .bind::<Text, _>(key.to_owned())
         .bind::<Text, _>(sql_pattern)
         .load_async(&*conn)
         .await
@@ -421,7 +421,7 @@ impl PgKvStore {
              ON CONFLICT (cache_key, field) DO NOTHING \
              RETURNING id",
         )
-        .bind::<Text, _>(key)
+        .bind::<Text, _>(key.to_owned())
         .bind::<diesel::sql_types::Binary, _>(bytes)
         .bind::<diesel::sql_types::Timestamp, _>(expires_at)
         .load_async(&*conn)
@@ -471,7 +471,7 @@ impl PgKvStore {
              DO UPDATE SET value = EXCLUDED.value, expires_at = EXCLUDED.expires_at, \
                             updated_at = now()",
         )
-        .bind::<Text, _>(key)
+        .bind::<Text, _>(key.to_owned())
         .bind::<diesel::sql_types::Binary, _>(bytes)
         .bind::<diesel::sql_types::Timestamp, _>(expires_at)
         .execute_async(&*conn)
@@ -530,7 +530,7 @@ impl PgKvStore {
              DO UPDATE SET value = EXCLUDED.value, expires_at = EXCLUDED.expires_at, \
                             updated_at = now()",
         )
-        .bind::<Text, _>(key)
+        .bind::<Text, _>(key.to_owned())
         .bind::<diesel::sql_types::Binary, _>(bytes)
         .bind::<diesel::sql_types::Timestamp, _>(expires_at)
         .execute_async(&*conn)
@@ -566,7 +566,7 @@ impl PgKvStore {
              ON CONFLICT (cache_key, field) \
              DO UPDATE SET value = EXCLUDED.value, updated_at = now()",
         )
-        .bind::<Text, _>(key)
+        .bind::<Text, _>(key.to_owned())
         .bind::<diesel::sql_types::Binary, _>(bytes)
         .bind::<diesel::sql_types::Timestamp, _>(fallback_expires_at)
         .execute_async(&*conn)
@@ -607,7 +607,7 @@ impl PgKvStore {
              WHERE cache_key = $1 AND field = '' \
              AND (expires_at IS NULL OR expires_at > (now() AT TIME ZONE 'utc'))",
         )
-        .bind::<Text, _>(key)
+        .bind::<Text, _>(key.to_owned())
         .load_async(&*conn)
         .await
         .map_err(StorageError::from)?;
@@ -646,7 +646,7 @@ impl PgKvStore {
             .change_context(StorageError::DatabaseConnectionError)?;
 
         sql_query("DELETE FROM pg_kv_cache WHERE cache_key = $1 AND field = ''")
-            .bind::<Text, _>(key)
+            .bind::<Text, _>(key.to_owned())
             .execute_async(&*conn)
             .await
             .map_err(StorageError::from)?;
@@ -667,8 +667,8 @@ impl PgKvStore {
             .change_context(StorageError::DatabaseConnectionError)?;
 
         sql_query("DELETE FROM pg_kv_cache WHERE cache_key = $1 AND field = $2")
-            .bind::<Text, _>(key)
-            .bind::<Text, _>(field)
+            .bind::<Text, _>(key.to_owned())
+            .bind::<Text, _>(field.to_owned())
             .execute_async(&*conn)
             .await
             .map_err(StorageError::from)?;
@@ -717,7 +717,7 @@ impl PgKvStore {
              DO UPDATE SET value = EXCLUDED.value, expires_at = EXCLUDED.expires_at, \
                             updated_at = now()",
         )
-        .bind::<Text, _>(key)
+        .bind::<Text, _>(key.to_owned())
         .bind::<diesel::sql_types::Array<Text>, _>(field_names)
         .bind::<diesel::sql_types::Array<diesel::sql_types::Binary>, _>(field_values)
         .bind::<diesel::sql_types::Timestamp, _>(expires_at)
@@ -806,8 +806,8 @@ impl PgKvStore {
              ), updated_at = now() \
              RETURNING convert_from(value, 'UTF8')::bigint AS new_value",
         )
-        .bind::<Text, _>(key)
-        .bind::<Text, _>(field)
+        .bind::<Text, _>(key.to_owned())
+        .bind::<Text, _>(field.to_owned())
         .bind::<diesel::sql_types::Binary, _>(initial_value)
         .bind::<diesel::sql_types::Nullable<diesel::sql_types::Timestamp>, _>(initial_expires_at)
         .bind::<diesel::sql_types::BigInt, _>(increment)
@@ -863,7 +863,7 @@ impl PgKvStore {
              WHERE cache_key = $1 AND field = '' \
              AND (expires_at IS NULL OR expires_at > (now() AT TIME ZONE 'utc'))",
         )
-        .bind::<Text, _>(key)
+        .bind::<Text, _>(key.to_owned())
         .load_async(&*conn)
         .await
         .map_err(StorageError::from)?;

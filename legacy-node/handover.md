@@ -19883,3 +19883,36 @@ cd ~/B-PAY-backend
 git am ~/storage/downloads/<patch-file-name>
 git push
 ```
+
+### CI — Finding #15's `&conn` -> `&*conn` fix (previous entry, `ffae40860`) landed and got `storage_impl` past E0277, but the very next run hit a new, different error -- E0521 lifetime-escape, 22 sites, root cause + fix applied (candidate, unverified, same standing caveat) (2026-09-11, new session)
+
+**Correction, stated plainly, not silently fixed:** `ffae40860` is confirmed on `origin/main` (`git merge-base --is-ancestor` checked clean against `origin/main` before this entry, rule 8) and did fix the E0277 trait-bound error it targeted — that part held. But CI run `34638590168` / job `103392572087` (`cargo check -p storage_impl`) failed again, with `error[E0521]: borrowed data escapes outside of method` at 21 call sites plus one `escapes outside of function` in `pg_pub_sub.rs`, 22 total, matching `error: could not compile storage_impl (lib) due to 22 previous errors`. Pulled via the same per-job log endpoint as last time:
+```
+gh api --allow-escape-sequences repos/Zapier-codes/B-Pay-backend/actions/jobs/103392572087/logs > storage_impl.log
+grep -n "^error" storage_impl.log
+```
+
+**Root cause, read directly off the compiler's own explanation (not a hypothesis this time — this is what `rustc` actually says, e.g. at `pg_kv_store.rs:191:38`):** every `_async(...)` call site does `sql_query(...).bind::<Text, _>(key)` where `key: &str` is a *function parameter* — a reference whose lifetime is scoped to the calling function's stack frame. `diesel`'s `sql_query(...).bind(...)` builder captures that reference inside the query value it returns, and `load_async`/`execute_async` box that query into a future. A boxed future has to be able to outlive the frame that created it (that's the whole point of `.await`ing it across an async boundary), so the compiler requires every value the future captures to be `'static`. A borrowed `&str` tied to the method's own parameter can never satisfy that — hence "argument requires that `'1` must outlive `'static`" on every single site, worded identically because it's the same shape 22 times over (`key`, `field`, or `channel`, each a `&str` parameter bound directly instead of owned).
+
+**Fix applied this pass, mechanical and uniform, no logic changed:** every `.bind::<Text, _>(key)` / `(field)` / `(channel)` became `.bind::<Text, _>(key.to_owned())` / `(field.to_owned())` / `(channel.to_owned())` — 21 sites in `pg_kv_store.rs`, 2 in `pg_pub_sub.rs` (23 total; one of the 23, `pg_pub_sub.rs`'s second `pg_notify` call, wasn't separately broken out in the log's 22-error count for reasons not investigated further, but fixing it the same way is correct regardless — an unfixed sibling call binding the same borrowed `channel` would only surface as its own E0521 on the next run). This is the standard fix for this exact shape in any diesel-over-async codebase — own your bind parameters, don't borrow across an await point — not a novel workaround. Two bind sites were deliberately left alone because they were already owned, not borrowed, and didn't error: `sql_pattern` in `scan_hash_fields` (already a local `String` from `glob_to_escaped_sql_like`) and `id.to_string()` in `pg_pub_sub::publish`'s second query — moving an owned value into `.bind()` was never the problem.
+
+**Explicitly NOT claimed:** that `storage_impl` now compiles clean end to end. This closes the specific 22-error E0521 finding this pass surfaced; there is no guarantee a third, different error isn't waiting behind it, per this file's own standing decision that only a real GitHub Actions run — not a sandbox read — verifies anything. No `rustc` in this sandbox this session either (checked: `rustc`/`cargo` both still `not found`), so this is reviewed-by-reading only, same as every `.rs`-adjacent finding before it.
+
+**Exact command to check whether this landed correctly, once pushed:**
+```
+gh run list --repo Zapier-codes/B-Pay-backend --branch main --limit 3 --json databaseId,status,conclusion,displayTitle,event,createdAt
+# once the newest push's run shows status: completed:
+gh api --allow-escape-sequences repos/Zapier-codes/B-Pay-backend/actions/jobs/<storage-impl-job-id>/logs > storage_impl.log && grep -n "^error" storage_impl.log
+```
+An empty `grep` result is what success looks like, confirmed against `conclusion: "success"` on the `storage_impl` job specifically, not just absent `error[E...]` lines (a later step, e.g. `cargo clippy -p storage_impl`, can still fail red).
+
+**Not done, still open, unchanged by this entry:** `wasm_check.log`/`spell_check.log` from the earlier run `34637047745` still unread; `check-msrv`'s status from that run still unknown; wiring any of Findings #6-#15 into a real call site (`RedisStore`/`blacklist.rs`/etc.) still not started; the per-call-site TTL/atomicity audit from the New-Clone Checklist's step 4 still open.
+
+**Per the Patch Handoff Convention: two `.rs` files touched (`pg_kv_store.rs`, `pg_pub_sub.rs`), plus this `handover.md` entry. Not compiled — candidate fix only, real verification is CI's job now, per this file's own standing decision. Base confirmed against real `origin/main` (`ffae40860`) via `git fetch origin` immediately before this entry (rule 8) — no drift, prior patch confirmed landed first (see correction above).**
+
+**Exact command(s) for the product owner, per rule 7 — Patch Handoff only this pass:**
+```
+cd ~/B-PAY-backend
+git am ~/storage/downloads/<patch-file-name>
+git push
+```

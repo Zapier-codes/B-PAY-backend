@@ -143,9 +143,23 @@
 > data), and no TTL-introspection method at all (Finding #8, tentative
 > — needed by the CVC-retrieval path, but not fully traced since
 > `vault.rs` isn't one of the 63 canonical sites). Full detail: search
-> "Task 73/a — per-call-site audit, fourth pass". `rust-check.yml`'s
-> first real Actions run is **still unconfirmed** — needs someone with
-> an unthrottled GitHub session to check the Actions tab.
+> "Task 73/a — per-call-site audit, fourth pass".
+>
+> **✅ LANDED + AUDIT CONTINUED, FIFTH PASS (2026-09-11, newest) —
+> fourth-pass patch confirmed on `origin/main` (`85ad9b3be`); 6 more
+> files read (27 of 63 now, 36 remain); Finding #8 upgraded from
+> tentative to confirmed, plus one new significant gap.** Correction
+> on record: `vault.rs` actually IS one of the 63 canonical sites
+> (previous entry wrongly excluded it) — its `get_ttl()` call confirms
+> Finding #8 for real. **Finding #9 (new) — `pg_kv_store.rs` has no
+> delete method at all**, and real Redis's `delete_key` is used for
+> token *revocation* (single-use payment tokens, temp-locker cleanup),
+> not just cache housekeeping — a naive port with no delete primitive
+> would leave deleted tokens usable until their original TTL expires
+> instead of being immediately invalidated. Full detail: search "Task
+> 73/a — per-call-site audit, fifth pass". `rust-check.yml`'s first
+> real Actions run is **still unconfirmed** — needs someone with an
+> unthrottled GitHub session to check the Actions tab.
 >
 > **⚠️ SUPERSEDED — CI ADDED (2026-09-11) — `.github/workflows/rust-check.yml`
 > now exists, pinned to `rustc` 1.85.0 (matching the workspace's own
@@ -17899,3 +17913,80 @@ still needs someone with an unthrottled GitHub session.
 **Per the Patch Handoff Convention: `handover.md` only, no `.rs` file
 touched, no migration. Base confirmed against real `origin/main`
 (`561502f2f`) immediately before this entry (rule 8).**
+
+### Task 73/a — per-call-site audit, fifth pass (2026-09-11, same session, continued): fourth-pass patch confirmed landed (`85ad9b3be`); 6 more files read, Finding #8 upgraded from tentative to confirmed (and its own caveat corrected), one new significant gap: `pg_kv_store.rs` has no delete method at all
+
+**Landing confirmed the same way as every prior pass, not skipped:**
+`git fetch origin` shows `origin/main` at `85ad9b3be`; diff against
+this session's own pre-handoff commit for `legacy-node/handover.md`
+came back empty. Local sandbox reset to match (rule 8).
+
+**6 more files read in depth this pass** (bringing the running total
+to 27 of 63, 36 remain): `core/payment_methods/cards.rs`, `core/
+payment_methods/surcharge_decision_configs.rs`, `core/payment_
+methods/utils.rs`, `core/payment_methods/vault.rs`, `core/payments.rs`
+(sampled at its 5 separate redis touch points, not read start-to-end —
+it's an 8000+ line file and every touch point found so far is a
+pattern already confirmed elsewhere in it), `core/payments/client_
+session.rs`.
+
+**Correction to the previous entry's own hedge — `vault.rs` IS one of
+the 63 canonical call sites, not excluded from them.** The prior entry
+flagged Finding #8 as "tentative... `vault.rs` isn't one of the 63
+canonical sites." That was wrong — re-running the canonical grep this
+pass shows `core/payment_methods/vault.rs` in the list plainly (line
+12 of the fresh `redis_call_sites_current.txt`). Recorded here rather
+than silently fixed, per this file's own standing practice of not
+quietly editing past claims.
+
+**Finding #8, now confirmed (not tentative) — `retrieve_key_and_ttl_
+for_cvc_from_payment_method_id` (`vault.rs`) calls `redis_conn.get_
+ttl(&key)` directly, a real Redis `TTL` command, to compute the CVC
+expiry timestamp shown to the caller.** `pg_kv_store.rs`'s full method
+list (unchanged since Finding #6: `set_key_if_not_exist`, `get_key`,
+`set_hash_field`, `get_hash_field`, `set_hash_field_if_not_exist`,
+`scan_hash_fields`) has nothing that returns remaining TTL. This is a
+real, used, non-optional primitive — not a nice-to-have.
+
+**Finding #9 (new, significant) — `pg_kv_store.rs` has no delete
+method at all.** Confirmed by re-reading its full method list directly
+(no `delete`/`remove`/`expire_now`-shaped function exists). Real
+Redis's `delete_key` is used for token invalidation in at least two of
+this pass's files: `core/payment_methods/utils.rs`'s
+`delete_payment_token_data` and `vault.rs`'s own delete call (line
+2108, the temp-locker-data cleanup path). **Why this is higher-severity
+than a missing convenience method:** deletion here isn't cache
+housekeeping, it's *revocation* — a single-use payment token or
+temp-locker entry that should stop being valid the moment it's
+deleted. Without a `pg_kv_store.rs` equivalent, a naive port has no
+way to implement that revocation at all; the safest fallback (do
+nothing, let the row expire on its own TTL) would leave deleted
+tokens usable for the remainder of their original TTL window instead
+of being immediately invalidated — a real security regression, not
+just a missing feature. Not fixed this session, same standing
+discipline as every other finding.
+
+**Finding #6 reinforced again, no new information — now confirmed at
+essentially every payment/token file touched so far:**
+`cards.rs`, `client_session.rs`, and two more spots in `payments.rs`
+all call `set_key_with_expiry`/`serialize_and_set_key_with_expiry`,
+the same unconditional-overwrite-with-TTL primitive `pg_kv_store.rs`
+still lacks. Not re-describing the risk again here — see the third-
+pass entry for the full reasoning, which stands unchanged.
+
+**Fan-out cache-invalidation category, now 6 files, still no new
+information:** `core/payment_methods/surcharge_decision_configs.rs`
+(`SURCHARGE_CACHE`) and `core/payment_methods/utils.rs`
+(`PM_FILTERS_CGRAPH_CACHE`) join the group already covering `db/api_
+keys.rs`, `db/organization.rs`, `core/admin.rs`, `core/cache.rs`, and
+`core/conditional_config.rs` — same open per-subscriber-cursor
+question from Finding #5, unchanged.
+
+**Not done, still open:** 36 of 63 files still unread; Findings #1,
+#6, #7, #8, #9 all unfixed (no toolchain, same discipline as every
+prior entry); `rust-check.yml`'s first real Actions run still
+unconfirmed.
+
+**Per the Patch Handoff Convention: `handover.md` only, no `.rs` file
+touched, no migration. Base confirmed against real `origin/main`
+(`85ad9b3be`) immediately before this entry (rule 8).**

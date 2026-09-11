@@ -39,8 +39,7 @@ use async_bb8_diesel::AsyncRunQueryDsl;
 use diesel::{sql_query, sql_types::Text, QueryableByName};
 use error_stack::ResultExt;
 
-use crate::errors::StorageError;
-use crate::pg_kv_store::PgKvPool;
+use crate::{errors::StorageError, pg_kv_store::PgKvPool};
 
 #[derive(QueryableByName)]
 struct InsertedPayloadRow {
@@ -60,14 +59,13 @@ pub async fn publish(
         .await
         .change_context(StorageError::DatabaseConnectionError)?;
 
-    let rows: Vec<InsertedPayloadRow> = sql_query(
-        "INSERT INTO pg_pubsub_payload (channel, payload) VALUES ($1, $2) RETURNING id",
-    )
-    .bind::<Text, _>(channel)
-    .bind::<diesel::sql_types::Binary, _>(payload.to_vec())
-    .load_async(&conn)
-    .await
-    .map_err(StorageError::from)?;
+    let rows: Vec<InsertedPayloadRow> =
+        sql_query("INSERT INTO pg_pubsub_payload (channel, payload) VALUES ($1, $2) RETURNING id")
+            .bind::<Text, _>(channel)
+            .bind::<diesel::sql_types::Binary, _>(payload.to_vec())
+            .load_async(&conn)
+            .await
+            .map_err(StorageError::from)?;
 
     let id = rows.first().map(|r| r.id).ok_or_else(|| {
         error_stack::report!(StorageError::ValueNotFound(

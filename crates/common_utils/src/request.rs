@@ -1,9 +1,8 @@
 use hyperswitch_masking::{Maskable, Secret};
-use serde::{Deserialize, Serialize};
-use utoipa::ToSchema;
-
 #[cfg(not(target_arch = "wasm32"))]
 use reqwest::multipart::Form;
+use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 /// Stand-in for `reqwest::multipart::Form` on `wasm32` targets, where the
 /// `reqwest` dependency (and the `tokio`/`mio` stack it pulls in for its

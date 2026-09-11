@@ -174,8 +174,7 @@ impl PgKvStore {
             .get()
             .await
             .change_context(StorageError::DatabaseConnectionError)?;
-        let bytes =
-            serde_json::to_vec(value).change_context(StorageError::SerializationFailed)?;
+        let bytes = serde_json::to_vec(value).change_context(StorageError::SerializationFailed)?;
         let expires_at = self.expiry_from_now();
 
         let rows: Vec<InsertedRow> = sql_query(
@@ -221,10 +220,11 @@ impl PgKvStore {
         .await
         .map_err(StorageError::from)?;
 
-        let row = rows
-            .into_iter()
-            .next()
-            .ok_or_else(|| report!(StorageError::ValueNotFound(format!("pg cache key not found: {key}"))))?;
+        let row = rows.into_iter().next().ok_or_else(|| {
+            report!(StorageError::ValueNotFound(format!(
+                "pg cache key not found: {key}"
+            )))
+        })?;
         serde_json::from_slice(&row.value).change_context(StorageError::DeserializationFailed)
     }
 
@@ -243,8 +243,7 @@ impl PgKvStore {
             .get()
             .await
             .change_context(StorageError::DatabaseConnectionError)?;
-        let bytes =
-            serde_json::to_vec(value).change_context(StorageError::SerializationFailed)?;
+        let bytes = serde_json::to_vec(value).change_context(StorageError::SerializationFailed)?;
         let expires_at = self.expiry_from_now();
 
         sql_query(
@@ -288,10 +287,11 @@ impl PgKvStore {
         .await
         .map_err(StorageError::from)?;
 
-        let row = rows
-            .into_iter()
-            .next()
-            .ok_or_else(|| report!(StorageError::ValueNotFound(format!("pg cache field not found: {key}.{field}"))))?;
+        let row = rows.into_iter().next().ok_or_else(|| {
+            report!(StorageError::ValueNotFound(format!(
+                "pg cache field not found: {key}.{field}"
+            )))
+        })?;
         serde_json::from_slice(&row.value).change_context(StorageError::DeserializationFailed)
     }
 
@@ -308,8 +308,7 @@ impl PgKvStore {
             .get()
             .await
             .change_context(StorageError::DatabaseConnectionError)?;
-        let bytes =
-            serde_json::to_vec(value).change_context(StorageError::SerializationFailed)?;
+        let bytes = serde_json::to_vec(value).change_context(StorageError::SerializationFailed)?;
         let expires_at = self.expiry_from_now();
 
         let rows: Vec<InsertedRow> = sql_query(
@@ -399,8 +398,7 @@ impl PgKvStore {
             .get()
             .await
             .change_context(StorageError::DatabaseConnectionError)?;
-        let bytes =
-            serde_json::to_vec(value).change_context(StorageError::SerializationFailed)?;
+        let bytes = serde_json::to_vec(value).change_context(StorageError::SerializationFailed)?;
         let expires_at = match expiry_seconds {
             Some(secs) => common_utils::date_time::now() + time::Duration::seconds(secs),
             None => self.expiry_from_now(),
@@ -452,8 +450,7 @@ impl PgKvStore {
             .get()
             .await
             .change_context(StorageError::DatabaseConnectionError)?;
-        let bytes =
-            serde_json::to_vec(value).change_context(StorageError::SerializationFailed)?;
+        let bytes = serde_json::to_vec(value).change_context(StorageError::SerializationFailed)?;
         let expires_at = self.expiry_from_now();
 
         sql_query(
@@ -490,8 +487,7 @@ impl PgKvStore {
             .get()
             .await
             .change_context(StorageError::DatabaseConnectionError)?;
-        let bytes =
-            serde_json::to_vec(value).change_context(StorageError::SerializationFailed)?;
+        let bytes = serde_json::to_vec(value).change_context(StorageError::SerializationFailed)?;
         let fallback_expires_at = self.expiry_from_now();
 
         sql_query(
@@ -638,9 +634,8 @@ impl PgKvStore {
         let mut field_values = Vec::with_capacity(fields.len());
         for (field, value) in fields {
             field_names.push(field.clone());
-            field_values.push(
-                serde_json::to_vec(value).change_context(StorageError::SerializationFailed)?,
-            );
+            field_values
+                .push(serde_json::to_vec(value).change_context(StorageError::SerializationFailed)?);
         }
         let expires_at = self.expiry_from_now();
 
@@ -690,7 +685,8 @@ impl PgKvStore {
         #[derive(QueryableByName)]
         struct ExistsRow {
             #[diesel(sql_type = diesel::sql_types::Bool)]
-            #[allow(dead_code)] // existence of the row is the signal; value itself unused
+            #[allow(dead_code)]
+            // existence of the row is the signal; value itself unused
             present: bool,
         }
 

@@ -93,8 +93,7 @@ use bb8::PooledConnection;
 use diesel::{sql_query, sql_types::BigInt, QueryableByName};
 use error_stack::ResultExt;
 
-use crate::errors::StorageError;
-use crate::pg_kv_store::PgKvPool;
+use crate::{errors::StorageError, pg_kv_store::PgKvPool};
 
 /// How long a held lock's connection may sit genuinely idle in the pool
 /// before Postgres kills that backend and frees any advisory lock it still
@@ -210,7 +209,10 @@ impl<'a> PgLock<'a> {
                     .await
                     .map_err(StorageError::from)?;
 
-            let acquired = rows.first().map(|r| r.pg_try_advisory_lock).unwrap_or(false);
+            let acquired = rows
+                .first()
+                .map(|r| r.pg_try_advisory_lock)
+                .unwrap_or(false);
 
             if acquired {
                 acquired_keys.push(numeric_key);

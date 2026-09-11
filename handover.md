@@ -4,6 +4,38 @@
 > task's own section. Nothing else in this file is required reading to
 > start work.**
 >
+> **Task 73 — ALL 5 OPEN QUESTIONS NOW CLOSED. This is the SOLE ACTIVE
+> PRIORITY — every other in-flight task thread in this file is PAUSED**
+> (search "all 5 open questions now CLOSED" for full detail). Closed:
+> (1) schema — Hyperswitch's own wins, `routing_fallbacks`/
+> `payment_intents`/`payment_attempts` confirmed empty, dropped, no
+> migration; (2) Redis stripped entirely, replaced with Postgres-native
+> locking/caching (86-file scope in the router's core, real work, not
+> a toggle); (3) Kafka/ClickHouse stripped, replaced with Postgres
+> materialized views + `pg_cron` + Supabase Edge Functions (32-file
+> scope, events-sink role, easier swap than Redis); (4) **final
+> provider count corrected to 9, not 10, confirmed by the product
+> owner**: already coded — Korapay, Paystack, JuicyWay, Flutterwave,
+> telcos.opik.net; not yet coded — DodoPayments, Remita, Xixapay,
+> PaymentPoint. Neither Prestmit (folded into `telcos.opik.net`, Task
+> 54) nor Payscribe (fully removed, Task 51/a — code deleted, routing
+> repointed to Korapay) is a standalone provider; both corrections
+> re-confirmed this session, not new decisions; (5) mavins-web cutover — dual-run old Node +
+> new Rust behind versioned endpoint, retire old only after a
+> confirmed transition window, mirroring Stripe's own deprecation
+> practice; PCI vault — external certified vault/tokenization in
+> production, `mock_locker = true` in sandbox/dev, mirroring Stripe's
+> own no-in-house-vault model, same as the fork's own default. Full
+> scope unchanged from the original proposal (Rust fork of
+> `Zapier-codes/hyperswitch`, this repo's own Supabase for Postgres,
+> Render hosting, fork's own `control-center` dashboard kept and
+> upgraded). **Sub-task allocation still deliberately NOT done** —
+> next session splits this using the file's own existing six-level
+> Task Numbering & Workflow Convention (a–e/1–4/i–iii/zi–zo/X, defined
+> before Task 0) — same mechanism as every other task here, nothing
+> new invented. Patch Handoff Convention unchanged. Full detail in all
+> of Task 73's sections, end of file.
+>
 > **Task 72's migration is DONE, pushed (part of PR #3, not yet merged
 > by Phoenix-Boss), AND confirmed live against the real Supabase
 > instance (2026-09-11)** — re-confirmed via `git ls-remote` against
@@ -15853,3 +15885,234 @@ migration in this schema has used. `node --check` not run — no `.js`
 file touched, migration + `db/SCHEMA.md` + this write-up only.
 
 ---
+
+## Task 73 — Full rewrite of B-Pay-backend as a Rust fork of `Zapier-codes/hyperswitch`, our 10 providers as new connector crates, full infra (no scope cut) — PROPOSAL ONLY, no code, needs product-owner sign-off before any work starts [ ]
+
+**Same "propose, needs product-owner sign-off before code" convention as Task 61/d, Task 62/a, and Task 72** — this is a direction confirmed in conversation with the product owner, not yet a decision to start cutting code, because it invalidates or collides with several already-shipped, already-live pieces of this repo (named explicitly below, not glossed over).
+
+**Confirmed direction (this session):**
+- Language: **Rust**, not JS — B-Pay-backend's current Node/Express code is retired, not merged line-by-line (there is no mechanical JS↔Rust merge; this is a rewrite using `Zapier-codes/hyperswitch`, a fork of the real Hyperswitch project, as the actual codebase, extended via its own documented `add_connector.md` process).
+- Repo: stays `Zapier-codes/B-Pay-backend` — the Hyperswitch fork's code lands here, this repo doesn't move to `hyperswitch`.
+- Our providers (Korapay, JuicyWay, Paystack, Flutterwave, `telcosOpik` — 5 confirmed in `providers/` today; product owner has referred to "ten providers" in conversation, actual count needs reconciling before the connector work starts) become new connector crates inside `crates/hyperswitch_connectors`, following the same shape as Hyperswitch's existing built-in connectors.
+- Database: Postgres via the product owner's existing Supabase project — Hyperswitch's Diesel migrations run against a plain Postgres connection string, so this is a config change (connection string), not a schema translation. Supabase's JS-client/RLS conventions are not used here; Diesel talks to it as plain Postgres.
+- Hosting: Render, via the Dockerfile already shipped in the Hyperswitch fork.
+- **Full architecture, nothing scoped out of the design**, confirmed explicitly by the product owner after this session raised (and was corrected on) a scoping question re: analytics timing. Every service in the fork's own `docker-compose.yml` is in scope: Postgres, standalone Redis + Redis cluster, the Kafka-style producer/consumer/drainer pipeline, ClickHouse analytics, the `control-center` admin dashboard, and the observability stack (Grafana/Loki/Prometheus/Tempo/OpenSearch).
+
+**What this session actually verified by reading the fork's own repo (not recalled from training — Hyperswitch's real shape changes over time, same "confirm, don't guess" discipline as Task 72's Stripe research):**
+- 39 workspace crates (`crates/*`), confirmed via `Cargo.toml`.
+- Real binaries: `router` (the core API), `drainer`, `config_importer`, plus dev tooling (`hsdev`, `openapi`, `smithy-generator`) — confirmed via each crate's own `main.rs`.
+- `docker-compose.yml` defines ~24 services (listed above), not just Postgres — confirmed by reading the file directly.
+- **Card vaulting is NOT included in this monorepo.** `crates/router/src/configs/*` references a `[locker]` config block (`mock_locker`, `locker_enabled`, `use_legacy_locker`) — Hyperswitch's real deployment talks to a separate PCI-compliant "Locker" service (a different repo entirely in the upstream project), or runs in `mock_locker = true` for dev with no real vaulting. **This is a genuine gap, not a scoping choice**: if we want real card-data vaulting, that's a whole separate PCI-compliant service to stand up, not a config flag in this repo.
+
+**Open questions this session did NOT decide — flagged for direct product-owner confirmation, same as Task 72's three open questions were flagged before that migration was written:**
+
+1. **Schema collision with work already shipped.** Task 63/a (`routing_fallbacks`) and Task 72 (`payment_intents`/`payment_attempts`) are live, additive migrations already running against the product owner's real Supabase instance (confirmed live 2026-09-11, per this file's own `NEXT TASK` box). Hyperswitch's own schema independently defines its own `payment_intent`/`payment_attempt`/routing-config tables, under its own Diesel migration history (500+ migrations, confirmed via `migrations/` directory count in the fork). Pointing the fork's migration runner at the same Supabase project **will collide** with Tasks 63/a and 72's tables unless one of the following is explicitly chosen: (a) run Hyperswitch's migrations into a fresh schema/database and treat Tasks 63/a+72's tables as retired, (b) rename/namespace one side, or (c) some reconciliation plan. Not decided here — this needs the same explicit product-owner call Task 72's own overlap-with-`transactions` question got, before any migration runs.
+2. **External services Render doesn't provide natively.** Render can host the `router` binary directly (Docker) and offers managed Redis as an add-on. It does not offer managed Kafka or managed ClickHouse — those would need an external provider (e.g., Confluent/Upstash for Kafka-equivalent, ClickHouse Cloud or self-hosted) or a decision to run them as additional Render Docker services ourselves. Not a scope cut — a decision about which vendor/hosting choice for each piece, still to be made.
+3. **Vault/PCI scope.** Whether real card-data vaulting (a separate PCI-compliant service, not part of this monorepo) is in scope for this rewrite, or whether we run with `mock_locker = true` until that's addressed as its own project. Compliance-relevant, so flagged explicitly rather than assumed either way.
+4. **Provider count reconciliation.** `providers/` currently has 5 files; product owner has referred to 10 providers in conversation. Needs a confirmed list before connector-crate work starts, so none are missed and none are duplicated.
+5. **Live-consumer migration path.** `webhookGateway.js`'s tenant-fanout model (Task 41, confirmed by mavins-web's own Task 42 as the receiving side) is a live, in-production contract. The rewrite needs an explicit cutover plan for existing callers (at minimum mavins-web) — old Node service and new Rust service can't both be "the" webhook target at once without a defined handoff point.
+
+**Not built, not this leaf's scope:** any Rust code, any connector crate, any migration run against Supabase, any Render service provisioning. This entry is discovery + confirmed direction only, per this session's own conversation with the product owner — same division this file has used for every proposal-stage task before code starts (Task 61/d, 62/a, 72).
+
+### Task 73 — update (2026-09-11, same session as the original proposal above): 3 of 5 open questions confirmed by the product owner; marked PRIORITY / READY TO START — sub-task allocation deliberately NOT done this session
+
+**Confirmed, no longer open:**
+
+1. **Schema collision (open question #1): resolved cleanly.** Product
+   owner confirmed `routing_fallbacks` (Task 63/a) and
+   `payment_intents`/`payment_attempts` (Task 72) hold **no real
+   production data** — both are empty. This removes what would
+   otherwise have been the hardest part of the schema-collision
+   question: there is no data-migration step. Hyperswitch's own schema
+   wins outright; these three tables are retired/dropped in favor of
+   the fork's own equivalent tables, no reconciliation logic needed.
+
+2. **Redis: stripped entirely, replaced with Postgres-native
+   equivalents — confirmed direction, NOT a config toggle.** Verified
+   this session by reading the fork's own source directly (not
+   assumed): Redis is wired into **86 files** inside `crates/router/src`
+   alone, used for actual mid-request distributed locking (revenue-
+   recovery retry stats, `get_redis_locker_key` in
+   `core/payment_methods/vault.rs`) and shared caching (merchant key
+   store, routing cache, surcharge cache) — synchronous, shared state
+   across running instances, which a stateless request-handler model
+   cannot substitute for. The confirmed replacement is **Postgres
+   itself** (already the DB layer via Supabase): `pg_advisory_lock`/
+   `SELECT ... FOR UPDATE` in place of Redis's locking role, plain
+   cache tables/materialized views in place of Redis's caching role.
+   **This is real, substantial engineering work at those 86
+   touchpoints inside the core payment path — flagged explicitly so it
+   isn't underestimated as a config change once sub-tasks are cut.**
+
+3. **Kafka/ClickHouse/analytics: also replaced with Postgres-native
+   equivalents + Supabase Edge Functions — confirmed direction.**
+   Verified this session: Kafka/ClickHouse touchpoints (32 files,
+   mostly `db/kafka_store.rs` + the `analytics` crate) are contained to
+   an **events-sink role** — the router writes events out for
+   analytics, it does not gate live payment logic on them the way
+   Redis's locks do. This makes it a materially easier substitution
+   than Redis: Postgres materialized views + `pg_cron` for
+   scheduled reporting, Supabase Edge Functions taking over the
+   producer/consumer/drainer's event-driven role. Confirmed as the
+   right read, not just this session's guess.
+
+**New scope added this session, not previously in Task 73:**
+
+4. **Use the fork's existing `control-center` UI/dashboard —
+   upgrade it, do not rebuild from scratch.** Hyperswitch ships its own
+   admin dashboard (`hyperswitch-control-center` in the fork's
+   `docker-compose.yml`, confirmed present in the earlier service list)
+   — this stays in the architecture and gets branded/extended for our
+   use, rather than building a separate custom dashboard.
+
+5. **All of our providers must be wired in as connector crates,
+   explicitly including providers not yet in this repo at all** — e.g.
+   **DodoPayments**, named directly by the product owner as one
+   currently missing. This supersedes open question #4's framing
+   (`providers/` has 5 files vs. "ten providers" mentioned) — it's now
+   confirmed there are provider(s) that don't exist anywhere in this
+   repo yet, not just an undercount of existing files. **Still open:
+   the complete, final list of all 10 providers has not been given
+   yet** — DodoPayments is confirmed as one example, not the full list.
+   Whoever splits this into sub-tasks needs that complete list before
+   assigning connector-crate work, so none are missed, none
+   duplicated, and none of the already-built 5 (Korapay, JuicyWay,
+   Paystack, Flutterwave, `telcosOpik`) are mistakenly re-built from
+   scratch instead of ported forward as new connector crates.
+
+**Deliberately NOT done this session, per direct instruction: task
+allocation / splitting Task 73 into sub-tasks.** This entry marks
+Task 73 as the **priority task for the next session to pick up**, but
+the actual work of spreading it across multiple sessions (which piece
+gets built first, second, etc.) is explicitly left for that next
+session to do, using whatever splitting formula this repo settles on
+for a task this size — **the existing handoff mechanics (Patch
+Handoff Convention + DB-Ops Handoff Process, both already defined
+elsewhere in this file) remain unchanged and still apply** to however
+the split ends up being cut; only the splitting/sequencing decision
+itself is deferred, not the handoff process around it.
+
+**Still genuinely open, unchanged from the original proposal — not
+addressed this session:**
+- Open question #3 (PCI vault/locker scope — real card vaulting is not
+  included in the Hyperswitch fork itself).
+- Open question #5 (`webhookGateway.js`'s live tenant-fanout to
+  mavins-web — needs an explicit cutover plan, not a silent dual-
+  service period).
+- The complete 10-provider list (point 5 above).
+
+### Task 73 — all 5 open questions now CLOSED (2026-09-11, same session); THIS IS NOW THE SOLE ACTIVE PRIORITY — every other in-flight track is paused, all sessions converge here
+
+**Open question #4 (provider count/list) — closed, verified against this
+file's own record, not re-decided fresh.** Task 0 originally named 11
+under a "ten total" heading, including Prestmit — but **Task 54
+(2026-09-07) already resolved this**, directly on record above:
+*"Prestmit is no longer a standalone provider candidate — it's one of
+`telcos.opik.net`'s internal gift-card providers"* (alongside
+Tremendous), same treatment as `telcos.opik.net`'s other internal VTU
+sub-providers (Lizzysub/Zendit/Accragh). This was a real prior
+resolution this session initially missed on the first read, not a new
+decision. **Final confirmed list of 10, cross-checked against
+`providers/` on disk:**
+
+- Already coded: **Korapay, Paystack, JuicyWay, Flutterwave,
+  telcos.opik.net** (`telcosOpik.js`) — 5 files, confirmed present.
+- Not yet coded, connector crates still to be built: **Payscribe,
+  DodoPayments, Remita, Xixapay, PaymentPoint** — 5 remaining.
+  (DodoPayments, Remita, Xixapay, PaymentPoint already have FULL
+  API-discovery passes on record elsewhere in this file — search each
+  name's own "FULL API discovery pass" heading — that research is the
+  source of truth for whoever builds each connector crate; Payscribe
+  has no discovery pass on record yet and needs one before its crate
+  is built.)
+
+**Open question #3 (PCI vault/locker scope) — closed, mirroring
+Stripe's own architecture.** Stripe's model: raw card data never
+touches the merchant/orchestration layer at all — a certified PCI
+Level 1 vault owns that storage, everything above it only ever
+handles tokens. Building an in-house PCI-audited vault is a
+multi-month compliance/audit undertaking even large processors avoid
+doing themselves. **Closed decision:** production points the fork's
+own `[locker]` config at an external certified vault/tokenization
+provider; sandbox/dev runs with `mock_locker = true`, exactly as the
+fork's own default dev setup already does. No in-house vault gets
+built as part of this rewrite.
+
+**Open question #5 (mavins-web cutover) — closed, mirroring Stripe's
+own versioning/deprecation practice.** Stripe never hard-swaps a live
+integration — it dual-runs old and new behind API versioning with a
+defined deprecation window. **Closed decision:** the current Node
+service and the new Rust service run in parallel during migration;
+mavins-web (and any other existing consumer) is migrated onto the new
+service behind a versioned endpoint; both are monitored through an
+agreed transition window; the old Node service is retired only after
+that window confirms a clean cutover — never a simultaneous single-
+point swap.
+
+**All 5 of Task 73's original open questions are now closed.**
+Nothing about the full-infra scope from the original proposal changed
+— Rust rewrite of this repo as a fork of `Zapier-codes/hyperswitch`,
+Hyperswitch's own schema (Postgres via the product owner's Supabase
+project, plain connection string), Redis stripped for Postgres-native
+locking/caching (86-file scope, flagged as real work), Kafka/
+ClickHouse stripped for Postgres materialized views + `pg_cron` +
+Supabase Edge Functions, the fork's own `control-center` dashboard
+kept and upgraded (not rebuilt), all 10 providers above wired in as
+connector crates, hosted on Render.
+
+**THIS IS NOW THE SOLE ACTIVE PRIORITY.** Any other task thread
+already in flight in this file (the Task 0 `a/b/c/d→1/2/3→i/ii→X`
+track, Task 61/d's per-provider discovery continuation, or any other
+node anywhere below this point still marked as an active `X`) is
+**paused, not abandoned** — its own research/findings remain valid and
+reusable (e.g. the DodoPayments/Remita/Xixapay/PaymentPoint discovery
+passes feed directly into their Task 73 connector-crate work) but no
+session should pick up a non-Task-73 `X` node until Task 73 itself is
+complete or a future session explicitly un-pauses something else.
+**Sub-task allocation across sessions still deliberately NOT done
+here** — the next session splits Task 73 using this file's own
+existing six-level Task Numbering & Workflow Convention
+(a–e/1–4/i–iii/zi–zo/X, defined above, before Task 0) — the same
+splitting mechanism already governing every other task in this file,
+not a new one invented for this task. The existing Patch Handoff
+Convention (below) governs how each resulting `X` gets handed off,
+unchanged.
+
+### Task 73 — provider count corrected to 9, not 10 (2026-09-11, same session, second correction after the Prestmit one above)
+
+**Confirmed: Payscribe is also NOT a standalone provider** — same
+class of correction as Prestmit above, and just as unambiguous in
+this file's own record. Task 51/a (2026-09-07) fully removed it:
+`providers/payscribe.js` deleted, its webhook stub removed,
+`ROUTING_RULES.bank_transfer` repointed from `payscribe` to `korapay`,
+`PAYSCRIBE_SECRET_KEY` pulled from `render.yaml`, and Task 6
+(Payscribe webhook) struck as moot with a direct `grep -rin payscribe`
+confirming zero live references anywhere in the codebase. The
+provider-count reconciliation this session's earlier note asked for
+(search "provider count reconciliation") is now answered directly by
+the product owner, not left to a future session to rediscover.
+
+**Final corrected count: 9 providers, not 10 — confirmed by the
+product owner directly this session, not assumed or defaulted to by
+this session on its own.** With both Prestmit (folded into
+`telcos.opik.net`, per Task 54) and Payscribe (fully removed, per Task
+51/a) out as standalone entries, no 10th name remains anywhere in this
+file's history. **This is a real, confirmed reduction in scope from
+Task 0's original "ten providers" framing — not a gap, not an
+oversight, not something later sessions should try to fill by
+resurrecting Payscribe or Prestmit as standalone connectors.**
+
+**Definitive list for Task 73's connector-crate work, superseding
+every earlier count in this task's own prior notes:**
+- Already coded, port forward as connector crates: **Korapay,
+  Paystack, JuicyWay, Flutterwave, telcos.opik.net** (5).
+- Not yet coded, new connector crates to build: **DodoPayments,
+  Remita, Xixapay, PaymentPoint** (4). Each already has a FULL
+  API-discovery pass on record elsewhere in this file (search each
+  name's own "FULL API discovery pass" heading) — that research is
+  the source of truth for whoever builds each crate.
+- **Total: 9.** Every future reference to "the ten providers" anywhere
+  above this note (there are many, scattered across other tasks
+  written before this correction) refers to the pre-correction count
+  and should be read as 9 going forward for any work that touches
+  Task 73 specifically.

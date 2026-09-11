@@ -226,7 +226,7 @@ jobs:
 
   test:
     name: Run tests on stable toolchain
-    runs-on: ${{ github.event_name == 'pull_request' && 'hyperswitch-runners' || 'hyperswitch-runners-merge' }}
+    runs-on: ubuntu-latest
 
     env:
       RUSTFLAGS: "-D warnings"
@@ -367,7 +367,7 @@ jobs:
 
   check-v2:
     name: Check compilation for V2 features
-    runs-on: ${{ github.event_name == 'pull_request' && 'hyperswitch-runners' || 'hyperswitch-runners-merge' }}
+    runs-on: ubuntu-latest
 
     env:
       RUSTFLAGS: "-A warnings"
@@ -546,12 +546,21 @@ jobs:
 
   nix-check:
     name: Nix CI
-    runs-on: ${{ matrix.system }}
+    runs-on: ${{ matrix.runner }}
     permissions:
       contents: read
     strategy:
       matrix:
-        system: [x86_64-linux, aarch64-darwin]
+        # `system` is the Nix system identifier passed to `om ci run
+        # --systems` below; `runner` is the GitHub-hosted label that can
+        # actually build for it. Kept as separate keys (not a lookup on
+        # `system` alone) because GitHub-hosted `runs-on` labels and Nix
+        # system strings aren't the same vocabulary.
+        include:
+          - system: x86_64-linux
+            runner: ubuntu-latest
+          - system: aarch64-darwin
+            runner: macos-latest # currently arm64 (Apple Silicon) -- see PR discussion
     steps:
       - uses: actions/checkout@v7
 

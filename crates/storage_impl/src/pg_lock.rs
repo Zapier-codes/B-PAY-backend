@@ -48,10 +48,11 @@
 //! automatically when their owning backend terminates (documented Postgres
 //! behaviour), so if a caller forgets `.release()` (or panics before
 //! reaching it) and the connection goes back to the pool unreleased, once
-//! that connection then sits genuinely idle for
-//! [`LOCK_IDLE_SESSION_TIMEOUT_SECS`] Postgres kills the backend itself and
-//! the lock frees — turning the previously-unbounded leak into a bounded
-//! one. **Caveat, stated plainly, not hidden:** this does not bound a lock
+//! that connection then sits genuinely idle for the resolved timeout (see
+//! [`DEFAULT_LOCK_IDLE_SESSION_TIMEOUT_SECS`] and Finding #13, below)
+//! Postgres kills the backend itself and the lock frees — turning the
+//! previously-unbounded leak into a bounded one. **Caveat, stated plainly,
+//! not hidden:** this does not bound a lock
 //! held while the pool keeps actively reusing that same connection for
 //! other queries (each query resets the idle timer), only the
 //! genuinely-idle-and-forgotten case the module doc comment originally
@@ -95,11 +96,31 @@ use error_stack::ResultExt;
 
 use crate::{errors::StorageError, pg_kv_store::PgKvPool};
 
-/// How long a held lock's connection may sit genuinely idle in the pool
-/// before Postgres kills that backend and frees any advisory lock it still
-/// holds — the safety net for a caller that never called `.release()`. See
-/// the module doc comment's caveats before relying on this as a full fix.
-const LOCK_IDLE_SESSION_TIMEOUT_SECS: u32 = 30;
+/// Default for how long a held lock's connection may sit genuinely idle in
+/// the pool before Postgres kills that backend and frees any advisory lock
+/// it still holds — the safety net for a caller that never called
+/// `.release()`. See the module doc comment's caveats before relying on
+/// this as a full fix.
+///
+/// **Finding #13 (per-call-site audit, `handover.md`) — fixed this
+/// session: this used to be a fixed module constant every caller shared,
+/// with no way to override it.** Found across three real Redis lock call
+/// sites, each already configuring its *own* expiry today:
+/// `types/storage/revenue_recovery_redis_operation.rs`'s lock functions
+/// (`redis_ttl_in_seconds`), `core/revenue_recovery/retry_stats/record.rs`'s
+/// `with_retry_stats_lock` (`retry_stats_lock.redis_lock_expiry_seconds`),
+/// and `core/webhooks/utils.rs`'s `perform_redis_lock`
+/// (`state.conf().webhooks.redis_lock_expiry_seconds`). A single shared
+/// constant here would silently ignore all three of those per-use-case
+/// values — wrong in either direction: a caller that configured a longer
+/// expiry than this constant could have its safety net fire *before* the
+/// caller's own intended timeout, while a caller that configured a shorter
+/// one would hold the connection-level safety net open longer than the
+/// caller's own lock semantics call for. `try_acquire`/
+/// `try_acquire_multiple` below now take an `idle_session_timeout_secs:
+/// Option<u32>` parameter; this constant is only the fallback for a caller
+/// that passes `None`, not the only value in play anymore.
+const DEFAULT_LOCK_IDLE_SESSION_TIMEOUT_SECS: u32 = 30;
 
 fn lock_key_to_bigint(key: &str) -> i64 {
     // FNV-1a, 64-bit. Fully specified, dependency-free, deterministic
@@ -148,11 +169,18 @@ impl<'a> PgLock<'a> {
     /// try-lock. Returns `Ok(None)` (not an error) when another holder
     /// already has the lock — mirrors the existing call sites' pattern of
     /// treating "lock not acquired" as a normal branch, not a failure.
+    ///
+    /// `idle_session_timeout_secs` is this lock's own safety-net duration
+    /// (Finding #13) — `None` falls back to
+    /// `DEFAULT_LOCK_IDLE_SESSION_TIMEOUT_SECS`, matching this method's
+    /// behaviour before Finding #13 was fixed, for any caller that doesn't
+    /// need a per-use-case override.
     pub async fn try_acquire(
         pool: &'a PgKvPool,
         key: &str,
+        idle_session_timeout_secs: Option<u32>,
     ) -> error_stack::Result<Option<Self>, StorageError> {
-        Self::try_acquire_multiple(pool, &[key]).await
+        Self::try_acquire_multiple(pool, &[key], idle_session_timeout_secs).await
     }
 
     /// Multi-key analog of `try_acquire`, backing `LockAction::HoldMultiple`
@@ -187,9 +215,16 @@ impl<'a> PgLock<'a> {
     /// strategy ever changes later — it isn't load-bearing for correctness
     /// today, since the non-blocking property above already rules out the
     /// cyclic-wait deadlock condition on its own.
+    ///
+    /// `idle_session_timeout_secs` is this lock's own safety-net duration
+    /// (Finding #13) — `None` falls back to
+    /// `DEFAULT_LOCK_IDLE_SESSION_TIMEOUT_SECS`. Applies to the whole
+    /// batch (one held connection, one `SET idle_session_timeout`), same
+    /// as the fixed constant did before this parameter existed.
     pub async fn try_acquire_multiple(
         pool: &'a PgKvPool,
         keys: &[&str],
+        idle_session_timeout_secs: Option<u32>,
     ) -> error_stack::Result<Option<Self>, StorageError> {
         let mut numeric_keys: Vec<i64> = keys.iter().map(|key| lock_key_to_bigint(key)).collect();
         numeric_keys.sort_unstable();
@@ -247,13 +282,18 @@ impl<'a> PgLock<'a> {
         }
 
         // Every key in the batch acquired cleanly. Safety net for a caller
-        // that never reaches `.release()` — see module doc comment. Value
-        // is a compile-time constant, not caller input, so it's inlined
-        // directly rather than bound: Postgres's `SET` grammar doesn't
-        // accept a query parameter in the value position (`SET x = $1` is a
-        // syntax error over the extended protocol), only a literal.
+        // that never reaches `.release()` — see module doc comment and
+        // Finding #13. The resolved value (caller override or the module
+        // default) is a plain `u32`, not attacker/caller-controlled SQL, so
+        // formatting it into the statement is safe from an injection
+        // standpoint — but it's still inlined rather than bound because
+        // Postgres's `SET` grammar doesn't accept a query parameter in the
+        // value position (`SET x = $1` is a syntax error over the extended
+        // protocol), only a literal, same reasoning as before Finding #13.
+        let resolved_idle_timeout_secs =
+            idle_session_timeout_secs.unwrap_or(DEFAULT_LOCK_IDLE_SESSION_TIMEOUT_SECS);
         let idle_timeout_sql =
-            format!("SET idle_session_timeout = '{LOCK_IDLE_SESSION_TIMEOUT_SECS}s'");
+            format!("SET idle_session_timeout = '{resolved_idle_timeout_secs}s'");
         sql_query(idle_timeout_sql)
             .execute_async(&conn)
             .await
@@ -305,11 +345,13 @@ impl<'a> PgLock<'a> {
 // unlock on drop without either an owned connection type this pool doesn't
 // provide or `unsafe_code` (forbidden workspace-wide by this crate's own
 // lints). Returning the connection to the pool without calling
-// `pg_advisory_unlock` first now costs at most
-// `LOCK_IDLE_SESSION_TIMEOUT_SECS` of leaked-lock time instead of the
-// connection's entire remaining pooled lifetime (see `try_acquire`'s
-// `SET idle_session_timeout` and the module doc comment's caveats on what
-// that safety net does and doesn't cover) — bounded now, not eliminated.
+// `pg_advisory_unlock` first now costs at most the resolved
+// `idle_session_timeout_secs` (Finding #13; `DEFAULT_LOCK_IDLE_SESSION_
+// TIMEOUT_SECS` for any caller that didn't override it) of leaked-lock
+// time instead of the connection's entire remaining pooled lifetime (see
+// `try_acquire`'s `SET idle_session_timeout` and the module doc comment's
+// caveats on what that safety net does and doesn't cover) — bounded now,
+// not eliminated.
 // Callers MUST still call `.release()` explicitly, including on error
 // paths; a `PgLockGuard`-with-async-drop-shim (or a scoped-closure API)
 // backed by an owned connection is the real fix and still isn't built.

@@ -49,6 +49,17 @@
 //!   real call site, not compiled — same caveats as every other finding
 //!   above.
 //!
+//! - **Finding #12 — fixed this session (eleventh pass, following the
+//!   ninth pass's original discovery and the tenth pass's second call
+//!   site), same additive pattern as #6–#11.** `increment_hash_field`,
+//!   an atomic Redis-`HINCRBY` analog via one `INSERT ... ON CONFLICT DO
+//!   UPDATE SET value = old + increment` round trip — for
+//!   `kill_switch.rs`'s UCS rollout-failure counter and `core/payments/
+//!   routing/utils.rs`'s decision-engine routing-diff counter, neither of
+//!   which any existing `set_hash_field*` method could serve atomically
+//!   (all three overwrite). Not wired into either real call site, not
+//!   compiled — same caveats as every other finding above.
+//!
 //! Not done, left for the per-call-site review Task 73/a explicitly calls
 //! out as separate follow-up work:
 //! - **Expiry sweep — fixed this session, via `pg_cron`, not the
@@ -657,6 +668,101 @@ impl PgKvStore {
 
         Ok(())
     }
+    // ---- atomic hash-field increment (Finding #12) -----------------------
+    //
+    // Found in the per-call-site audit's ninth pass (`kill_switch.rs`'s UCS
+    // rollout-failure counter) and reinforced in the tenth pass
+    // (`core/payments/routing/utils.rs`'s decision-engine routing-diff
+    // counter, a simpler no-TTL version of the same shape):
+    // `set_hash_field`/`set_hash_field_if_not_exist`/`set_hash_fields`
+    // above all overwrite — none of them can express Redis `HINCRBY`'s
+    // atomic read-modify-write. A caller working around that gap with a
+    // separate get-then-set pair can undercount under concurrent writers —
+    // the same risk class as the already-recorded `card_testing_guard.rs`
+    // race, but for a hash field specifically.
+
+    /// Analog of Redis `HINCRBY`. Atomic via a single `INSERT ... ON
+    /// CONFLICT DO UPDATE SET value = <old + increment>` round trip — the
+    /// read of the pre-increment value, the add, and the write of the new
+    /// total all happen inside one statement, so two concurrent callers
+    /// can't each read the same pre-increment value and add their own
+    /// delta on top of it.
+    ///
+    /// The stored value is JSON-encoded (`serde_json::to_vec`, matching
+    /// every other value in this table), so a plain integer round-trips as
+    /// its own decimal text: `convert_from(value, 'UTF8')::bigint` reads
+    /// back exactly what `serde_json::to_vec(&count)` would have written,
+    /// and the new total is re-encoded the same way going back in. A field
+    /// holding a non-integer JSON value (a string, an object) fails the
+    /// `::bigint` cast and surfaces as a `StorageError::DatabaseError`, not
+    /// silent garbage — the same fail-closed behavior Redis itself gives
+    /// for `HINCRBY` against a non-integer field.
+    ///
+    /// Does **not** touch `expires_at` on an already-existing row, matching
+    /// Redis's own `HINCRBY` (never resets a key's TTL as a side effect —
+    /// that's what a separate, explicit TTL-refresh call is for). On first
+    /// insert (no existing row for this `cache_key`/`field` pair),
+    /// `initial_expiry_seconds` sets the starting TTL for the new row:
+    /// `None` for a non-expiring counter (this store's own `ttl_seconds`
+    /// is a *cache* TTL default, not appropriate for a lifetime counter —
+    /// matches `core/payments/routing/utils.rs`'s routing-diff counter,
+    /// which is explicitly documented as having no TTL at all), `Some(secs)`
+    /// for a counter that should start expiring immediately. Neither real
+    /// call site audited so far needs a "refresh TTL on every increment"
+    /// variant — `kill_switch.rs`'s caller does its own separate
+    /// TTL-refresh call after incrementing today (already documented in
+    /// that file as "not atomic, but harmless" for that half), so this
+    /// method doesn't invent one speculatively; add it if a future call
+    /// site is actually found needing it.
+    pub async fn increment_hash_field(
+        &self,
+        key: &str,
+        field: &str,
+        increment: i64,
+        initial_expiry_seconds: Option<i64>,
+    ) -> error_stack::Result<i64, StorageError> {
+        let conn = self
+            .pool
+            .get()
+            .await
+            .change_context(StorageError::DatabaseConnectionError)?;
+
+        let initial_value =
+            serde_json::to_vec(&increment).change_context(StorageError::SerializationFailed)?;
+        let initial_expires_at = initial_expiry_seconds
+            .map(|secs| common_utils::date_time::now() + time::Duration::seconds(secs));
+
+        #[derive(QueryableByName)]
+        struct IncrementedRow {
+            #[diesel(sql_type = diesel::sql_types::BigInt)]
+            new_value: i64,
+        }
+
+        let rows: Vec<IncrementedRow> = sql_query(
+            "INSERT INTO pg_kv_cache (cache_key, field, value, expires_at) \
+             VALUES ($1, $2, $3, $4) \
+             ON CONFLICT (cache_key, field) \
+             DO UPDATE SET value = convert_to( \
+                 (convert_from(pg_kv_cache.value, 'UTF8')::bigint + $5)::text, 'UTF8' \
+             ), updated_at = now() \
+             RETURNING convert_from(value, 'UTF8')::bigint AS new_value",
+        )
+        .bind::<Text, _>(key)
+        .bind::<Text, _>(field)
+        .bind::<diesel::sql_types::Binary, _>(initial_value)
+        .bind::<diesel::sql_types::Nullable<diesel::sql_types::Timestamp>, _>(initial_expires_at)
+        .bind::<diesel::sql_types::BigInt, _>(increment)
+        .load_async(&conn)
+        .await
+        .map_err(StorageError::from)?;
+
+        rows.into_iter().next().map(|row| row.new_value).ok_or_else(|| {
+            report!(StorageError::ValueNotFound(format!(
+                "pg cache increment returned no row for: {key}.{field}"
+            )))
+        })
+    }
+
     // ---- key existence (Finding #10) ------------------------------------
     //
     // Found in the per-call-site audit's sixth pass, not the original four

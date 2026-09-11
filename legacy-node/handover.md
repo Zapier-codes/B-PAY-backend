@@ -18830,3 +18830,129 @@ instructions to do so — work is on branch `docs/task-73a-audit-tenth-
 pass`, and a patch (`task-73a-tenth-pass.patch`) was generated via `git
 format-patch` and handed to the product owner to review, `git am`, and
 push from their own device.
+
+### Task 73/a — eleventh pass (2026-09-11, new session): Findings #12 and #13 fixed (reviewed by reading only); pg_pubsub_payload subscriber-side DB-support question investigated, no migration needed for the baseline case
+
+**Toolchain wall re-confirmed, unchanged, before any of this pass's
+`.rs` edits:** `apt-cache policy rustc` candidate still
+`1.75.0+dfsg0ubuntu1-0ubuntu7.4`; `curl -sI https://sh.rustup.rs` a real
+`403`, `x-deny-reason: host_not_allowed`. Every change below is
+reviewed-by-reading only, same standing caveat as every prior `.rs`
+change in this file — **not compiled**, `cargo check -p storage_impl`
+still has never once run to completion against this workspace.
+
+**Finding #12 fixed — `pg_kv_store.rs::increment_hash_field`, an atomic
+`HINCRBY` analog.** One `INSERT ... ON CONFLICT DO UPDATE SET value =
+convert_to((convert_from(pg_kv_cache.value, 'UTF8')::bigint +
+$increment)::text, 'UTF8')` round trip: the read of the pre-increment
+value, the add, and the write of the new total happen inside the same
+statement, so two concurrent callers can't each read the same
+pre-increment value and stack their own delta on top of it — the same
+single-round-trip approach every other atomic method in this file already
+uses (`set_key_if_not_exist`'s `ON CONFLICT DO NOTHING RETURNING`, etc.),
+just with an arithmetic `DO UPDATE` instead of a no-op or overwrite one.
+Does not touch `expires_at` on an existing row (matches Redis `HINCRBY`
+never resetting TTL); takes an `initial_expiry_seconds: Option<i64>` for
+the first-insert case only (`None` for a non-expiring counter — the
+routing-diff counter's actual shape — `Some(secs)` otherwise). A field
+holding non-integer JSON fails the `::bigint` cast and surfaces as a
+`StorageError::DatabaseError`, not silent corruption — deliberately
+fail-closed, matching Redis's own `HINCRBY` behavior against a
+non-integer field. Full reasoning and the two real call sites
+(`kill_switch.rs`'s UCS counter, `core/payments/routing/utils.rs`'s
+routing-diff counter) are in the method's own doc comment and the
+updated module doc comment (both in `pg_kv_store.rs`).
+
+**Finding #13 fixed — `pg_lock.rs`'s `LOCK_IDLE_SESSION_TIMEOUT_SECS`
+constant renamed to `DEFAULT_LOCK_IDLE_SESSION_TIMEOUT_SECS` and both
+`try_acquire`/`try_acquire_multiple` now take an
+`idle_session_timeout_secs: Option<u32>` parameter** (`None` falls back
+to the default, so this is not a breaking change for any hypothetical
+existing caller — though per the module's own standing note, nothing
+real is wired into either method yet). The three real call sites on
+record that each configure their own expiry today
+(`revenue_recovery_redis_operation.rs`'s lock functions,
+`retry_stats/record.rs`'s `with_retry_stats_lock`,
+`webhooks/utils.rs`'s `perform_redis_lock`) can now pass that value
+through instead of being silently overridden by a single shared
+constant — the actual bug shape Finding #13 named: a caller with a
+longer configured expiry than the old fixed 30s could have its
+connection-level safety net fire *before* its own intended timeout.
+Full reasoning is in the constant's own updated doc comment in
+`pg_lock.rs`.
+
+**Neither fix is wired into a real call site — deliberately, not an
+oversight.** Consistent with every other finding fixed so far (#6
+through #12): `kill_switch.rs`, `core/payments/routing/utils.rs`,
+`revenue_recovery_redis_operation.rs`, `retry_stats/record.rs`, and
+`webhooks/utils.rs` all still call the real Redis client today. Wiring
+any real call site over to `pg_kv_store.rs`/`pg_lock.rs` is the
+still-unstarted `RedisStore` integration step the module doc comments
+have flagged since the very first Task 73/a session — blocked on the
+same toolchain wall as compiling this module at all, not a new
+prerequisite invented here.
+
+**`pg_pubsub_payload` subscriber-side DB-support question (New-Clone
+Checklist step 5) — investigated, conclusion: no additional migration
+needed for the baseline fetch-by-id case; a real open question remains,
+but it's a call-site-audit gap, not a schema gap.** Reviewed the existing
+DB objects against what a subscriber loop actually needs to do the
+minimum useful thing (`LISTEN`, wake on `NOTIFY <channel>, '<id>'`,
+`SELECT payload FROM pg_pubsub_payload WHERE id = $1`):
+- The table, the `(channel, created_at)` index, and the
+  `sweep_pg_pubsub_payload()` pg_cron job (this file's own tenth-pass-
+  adjacent migration, `2026-09-11-130000_...`) already cover that
+  baseline case — a subscriber that's actively `LISTEN`-ing and fetches
+  by the id `NOTIFY` carries needs nothing further at the DB level.
+- **What's actually still missing is Rust-side, not DB-side**, exactly as
+  `pg_pub_sub.rs`'s own module doc comment already says: a dedicated,
+  non-pooled connection for the `LISTEN` loop's whole lifetime (`bb8`'s
+  pooled connections aren't built for that), which is separate,
+  already-scoped follow-up work, not newly discovered here.
+- **One real open question does exist and is NOT resolved by this
+  pass**, flagged rather than guessed at: whether a subscriber that
+  misses a `NOTIFY` (disconnected, or started listening after `publish()`
+  already fired) needs a way to catch up on payloads it missed — and if
+  so, whether that catch-up cursor is per-subscriber (needing its own
+  persisted "last-seen id" somewhere, which *would* need a migration) or
+  a single shared cursor sufficient for every subscriber on a channel.
+  This is the exact "per-subscriber vs. shared cursor" question already
+  on record from the fan-out-broadcast cache-invalidation category
+  (Finding #5) — same open question, now confirmed to also apply here,
+  not a separate one. **Answering it needs the 18 real pub/sub call
+  sites' actual subscriber shapes audited first** — `pg_pub_sub.rs`'s own
+  doc comment already says as much ("the 18 real call sites' subscriber
+  shapes haven't been audited yet either... writing a generic loop here
+  risks guessing an API shape that doesn't fit"), and this pass didn't
+  do that audit (out of scope for a DB-support question — it's the
+  natural pub/sub-category twin of the 63-file Redis locking/caching
+  audit that just finished, not folded into this entry speculatively).
+  **This is the concrete next open thread**, separate from anything else
+  in this file: a per-call-site audit of the 18 pub/sub call sites,
+  mirroring the just-completed 63-file audit's own format.
+
+**Not done, still open:** the 18-file pub/sub call-site audit itself
+(not started, scope named above); wiring Findings #6-#13 into any real
+call site; `rust-check.yml`'s first real Actions run still unconfirmed.
+
+**Per the Patch Handoff Convention: two files touched
+(`crates/storage_impl/src/pg_kv_store.rs`,
+`crates/storage_impl/src/pg_lock.rs`), plus this `handover.md` entry. No
+migration, no DB-Ops block owed — the pg_pubsub_payload investigation's
+conclusion was "no new migration needed for the baseline case," not a
+schema change. Per rule 8: `git fetch origin` run immediately before
+generating this pass's patch, confirmed no drift against the tenth
+pass's already-landed base. Per rule 4: not pushed to `main` — work is
+on branch `feat/task-73a-findings-12-13`, patch
+(`task-73a-findings-12-13.patch`) generated via `git format-patch` and
+handed to the product owner to review, `git am`, and push from their own
+device.**
+
+**Exact command(s) for the product owner, per rule 7 (Patch Handoff —
+the only handoff process this pass touched; no `db/migrations/` file in
+this pass's diff, so the DB-Ops block is not owed):**
+```
+cd ~/B-PAY-backend
+git am ~/storage/downloads/task-73a-findings-12-13.patch
+git push
+```

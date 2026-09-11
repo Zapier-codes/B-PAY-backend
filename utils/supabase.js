@@ -601,6 +601,89 @@ export async function getRecentWebhookOutcomes(provider, limit = 10) {
 }
 
 // ==================================================
+// 🔁 IDEMPOTENCY-KEY CACHE (Task 65/a+b, migrations 0021/0022)
+// ==================================================
+// Scoped to the two VTU purchase routes only — see migration 0021's
+// own header comment for why `/pay`/`/payout` are deliberately not
+// wired to this yet (no `business_id` in scope for those routes
+// today). Both functions mirror isWebhookEventProcessed()/
+// recordWebhookEvent()'s exact "never throws, fail open on any
+// Supabase error" posture directly above — a cache lookup/write
+// failure must never block the actual purchase from proceeding.
+
+// Returns the cached `{ response_status, response_body }` for a
+// (business, key) pair that's already been recorded, or `null` on any
+// miss — no row, Supabase not configured, or a lookup error. A `null`
+// return means "proceed as a normal, fresh request", same as a
+// genuine first-time key.
+export async function getCachedIdempotentResponse(businessId, idempotencyKey) {
+  if (!businessId || !idempotencyKey) return null;
+
+  let client;
+  try {
+    client = getSupabaseClient();
+  } catch (err) {
+    log(`getCachedIdempotentResponse skipped — Supabase not available: ${err.message}`, 'warn');
+    return null;
+  }
+
+  try {
+    const { data, error } = await client
+      .from('idempotency_keys')
+      .select('response_status, response_body')
+      .eq('business_id', businessId)
+      .eq('idempotency_key', idempotencyKey)
+      .maybeSingle();
+
+    if (error) {
+      log(`getCachedIdempotentResponse lookup failed for business ${businessId}: ${error.message}`, 'warn');
+      return null;
+    }
+
+    return data || null;
+  } catch (err) {
+    log(`getCachedIdempotentResponse failed for business ${businessId}: ${err.message}`, 'warn');
+    return null;
+  }
+}
+
+// Records a (business, key) pair's response for future replay.
+// Fire-and-forget from the caller's side, same posture as
+// recordWebhookEvent() — a write failure here must not fail or delay
+// the response already being sent to the actual caller. A conflict on
+// the table's own `(business_id, idempotency_key)` unique constraint
+// (e.g. two near-simultaneous requests with the same fresh key) is
+// treated as a benign no-op, not an error — whichever request's
+// response landed first is the one that gets cached and replayed,
+// same "first write wins" outcome Task 65/b's own caching model
+// implies.
+export async function recordIdempotentResponse({ business_id, idempotency_key, request_hash, response_status, response_body } = {}) {
+  let client;
+  try {
+    client = getSupabaseClient();
+  } catch (err) {
+    log(`recordIdempotentResponse skipped — Supabase not available: ${err.message}`, 'warn');
+    return;
+  }
+
+  try {
+    const { error } = await client
+      .from('idempotency_keys')
+      .insert({ business_id, idempotency_key, request_hash, response_status, response_body })
+      .select('id')
+      .maybeSingle();
+
+    // Postgres unique_violation — a benign race, not a real failure,
+    // per this function's own header comment above.
+    if (error && error.code !== '23505') {
+      log(`recordIdempotentResponse insert failed for business ${business_id}: ${error.message}`, 'warn');
+    }
+  } catch (err) {
+    log(`recordIdempotentResponse failed for business ${business_id}: ${err.message}`, 'warn');
+  }
+}
+
+// ==================================================
 // 🧑‍💼 CUSTOMER VAULT — READ/WRITE (Task 57/d)
 // ==================================================
 // The read/write halves of the `customers` table (migrations 0003/

@@ -3,8 +3,8 @@ import { Paystack } from './providers/paystack.js';
 import { Juicyway } from './providers/juicyway.js';
 import { Korapay } from './providers/korapay.js';
 import { TelcosOpik, provisionTelcosOpikAccount, resolveTelcosOpikApiKey } from './providers/telcosOpik.js';
-import { log, formatPayload, generateReference, getSupportedCurrencies, isValidCurrencyCode, isValidEmail, providerRequiresEmail, requireInternalApiKey, classifyDomain, computeProviderEventKey } from './utils/helpers.js';
-import { recordTransaction, recordBalanceTransaction, getBusinessBalance, getTransactionByReference, getRoutingDefaultProvider, getCapabilityStatus, isWebhookEventProcessed, recordWebhookEvent, markWebhookEventStatus, getWebhookEventById, getRecentWebhookOutcomes } from './utils/supabase.js';
+import { log, formatPayload, generateReference, getSupportedCurrencies, isValidCurrencyCode, isValidEmail, providerRequiresEmail, requireInternalApiKey, classifyDomain, computeProviderEventKey, hashRequestBody } from './utils/helpers.js';
+import { recordTransaction, recordBalanceTransaction, getBusinessBalance, getTransactionByReference, getRoutingDefaultProvider, getCapabilityStatus, isWebhookEventProcessed, recordWebhookEvent, markWebhookEventStatus, getWebhookEventById, getRecentWebhookOutcomes, getCachedIdempotentResponse, recordIdempotentResponse } from './utils/supabase.js';
 import { getMissingFields } from './utils/fieldRequirements.js';
 import { resolveCustomer } from './utils/customerVault.js';
 import { handleGatewayEvent } from './webhookGateway.js';
@@ -1238,6 +1238,68 @@ function getVtuBusinessId(req) {
   return businessId;
 }
 
+// Task 65/a+b: wraps a mutating route handler with idempotency-key
+// caching. Scoped to routes that already have a real, caller-supplied
+// business identity (`getVtuBusinessId` above) — see migration 0021's
+// own header comment for why `/pay`/`/payout` aren't wired to this
+// yet. Lives here rather than in utils/helpers.js because it needs
+// both that file's `hashRequestBody`/`log` and utils/supabase.js's
+// idempotency-cache functions together — utils/supabase.js already
+// imports `log` from utils/helpers.js, so putting this in helpers.js
+// would create a circular import between the two.
+//
+// Behavior: no `Idempotency-Key` header -> pass through unchanged,
+// same as today (opt-in, not a new requirement). A header present and
+// previously seen for this business -> replay the cached response
+// verbatim, the actual provider is never called again. A header
+// present and new -> proceed as normal, then cache whatever response
+// the route sends, but only a "the request completed" response
+// (`statusCode < 500`) — a `5xx` is this server's own unexpected
+// failure, not a stable, safe-to-replay outcome, so it's deliberately
+// never cached (mirrors Task 65/d's own still-to-document "not every
+// failure is idempotency-safe" caveat).
+function idempotencyCache(routeName, getBusinessId) {
+  return async (req, res, next) => {
+    const idempotencyKey = req.headers['idempotency-key'];
+    if (!idempotencyKey || typeof idempotencyKey !== 'string') return next();
+
+    let businessId;
+    try {
+      businessId = getBusinessId(req);
+    } catch (err) {
+      // Let the route's own existing validation (getVtuBusinessId's
+      // own 400) handle a missing/invalid business id exactly as it
+      // does today — this wrapper doesn't duplicate that check.
+      return next();
+    }
+
+    const cached = await getCachedIdempotentResponse(businessId, idempotencyKey);
+    if (cached) {
+      log(`♻️  Idempotency-Key hit for ${routeName} (business ${businessId}) — replaying cached response, not re-calling the provider`, 'info');
+      return res.status(cached.response_status).json(cached.response_body);
+    }
+
+    const requestHash = hashRequestBody(req.body);
+    const originalJson = res.json.bind(res);
+    res.json = (body) => {
+      if (res.statusCode < 500) {
+        recordIdempotentResponse({
+          business_id: businessId,
+          idempotency_key: idempotencyKey,
+          request_hash: requestHash,
+          response_status: res.statusCode,
+          response_body: body,
+        }).catch((err) => {
+          log(`idempotencyCache: failed to cache response for ${routeName}: ${err.message}`, 'warn');
+        });
+      }
+      return originalJson(body);
+    };
+
+    next();
+  };
+}
+
 // c-1's "first call to any /api/vtu/* route" activation trigger,
 // applied uniformly to all five routes below — not just the two
 // purchase routes — since every one of them needs an authenticated
@@ -1300,7 +1362,7 @@ router.get('/vtu/wallet', requireInternalApiKey, async (req, res) => {
 
 // POST /api/vtu/data
 // Body: { businessId, planId, phoneNumber, network, registration? }
-router.post('/vtu/data', requireInternalApiKey, async (req, res) => {
+router.post('/vtu/data', requireInternalApiKey, idempotencyCache('vtu/data', getVtuBusinessId), async (req, res) => {
   try {
     const businessId = getVtuBusinessId(req);
     const { planId, phoneNumber, network } = req.body;
@@ -1404,7 +1466,7 @@ router.post('/vtu/data', requireInternalApiKey, async (req, res) => {
 
 // POST /api/vtu/airtime
 // Body: { businessId, network, phoneNumber, amount, registration? }
-router.post('/vtu/airtime', requireInternalApiKey, async (req, res) => {
+router.post('/vtu/airtime', requireInternalApiKey, idempotencyCache('vtu/airtime', getVtuBusinessId), async (req, res) => {
   try {
     const businessId = getVtuBusinessId(req);
     const { network, phoneNumber, amount } = req.body;

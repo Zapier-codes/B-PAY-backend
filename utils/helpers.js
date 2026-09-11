@@ -62,6 +62,27 @@ export function requireInternalApiKey(req, res, next) {
   next();
 }
 
+// Deterministic JSON serialization — same value always produces the
+// same string regardless of property insertion order, unlike
+// `JSON.stringify` alone. Task 65/b needs this so `request_hash`
+// (migration 0021) is stable across two logically-identical requests
+// whose body properties just happen to be in a different order (a
+// real possibility across different HTTP clients/JSON libraries).
+export function stableStringify(value) {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`;
+  const keys = Object.keys(value).sort();
+  return `{${keys.map((k) => `${JSON.stringify(k)}:${stableStringify(value[k])}`).join(',')}}`;
+}
+
+// sha256 of a request body's stable serialization — stored by Task
+// 65/b's caching wrapper for Task 65/c's future use (deciding what to
+// do when a reused key comes with a genuinely different body), not
+// compared anywhere yet. See migration 0021's own header comment.
+export function hashRequestBody(body) {
+  return crypto.createHash('sha256').update(stableStringify(body || {})).digest('hex');
+}
+
 // ==================================================
 // 📝 LOGGING UTILITIES
 // ==================================================

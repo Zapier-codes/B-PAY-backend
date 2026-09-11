@@ -4,6 +4,21 @@
 > task's own section. Nothing else in this file is required reading to
 > start work.**
 >
+> **Task 65/a+b is DONE (2026-09-11)** — caller-supplied
+> `Idempotency-Key` header caching, mirroring Stripe's own confirmed
+> real behavior, built via `idempotencyCache()` (routes.js) +
+> `idempotency_keys` table (migrations `0021`/`0022`). **Scoped to
+> `POST /vtu/data` and `POST /vtu/airtime` only, not `/pay`/`/payout`**
+> — checked first, those two routes have no `business_id` in scope at
+> all today (same underlying gap Task 72 also touches), so there was
+> nothing correct to key a per-business cache on for them; not
+> invented around. `request_hash` is stored for Task 65/c's still-open
+> decision but not compared yet; a `5xx` is never cached. Verified via
+> two throwaway scripts (hash stability across key order; five
+> end-to-end control-flow cases against fake cache functions, no live
+> Supabase available) — full detail in Task 65's own section (search
+> "Task 65/a+b — DONE").
+>
 > **Task 72 is a new proposal (2026-09-11), discovery only, no code —
 > needs product-owner confirmation before any migration is written.**
 > Raised while scoping Task 63/b: B-Pay's `transactions.reference`
@@ -14701,6 +14716,71 @@ Closes §2. Natural parts:
   support their own native idempotency key B-Pay could simply pass
   through, vs. which need B-Pay's own new layer (b) to compensate for
   having none. Needs its own discovery pass per provider, not assumed.
+
+**Task 65/a+b — DONE (2026-09-11).** Built `idempotencyCache()`
+(routes.js) + `idempotency_keys` table (migrations `0021`/`0022`),
+wired into `POST /vtu/data` and `POST /vtu/airtime`. No `Idempotency-Key`
+header → unchanged behavior (opt-in). A previously-seen
+`(business_id, key)` pair → the exact original response is replayed,
+the provider is never called a second time. Mirrors Stripe's own real
+behavior, confirmed directly against `docs.stripe.com` while
+researching Task 63/b/Task 72 this same session: a repeated request
+with the same key returns the original response instead of
+reprocessing.
+
+**Scope, deliberately narrower than this leaf's own text — checked,
+not guessed:** wired into the two VTU purchase routes only, **not**
+`/pay`/`/payout`. Read `routes.js` directly first: `/pay` and
+`/payout` have no `business_id` in scope at all today (Task 61/b's own
+comment on both routes: "`business_id`/`transaction_id` are both left
+unset here" — their only caller is the internal Edge Function via one
+shared `requireInternalApiKey` secret, not a per-business credential).
+There's nothing correct to key a per-business cache on for those two
+routes yet — building around that gap by inventing a fake business_id
+would have been guessing, not wiring. This is real, related territory
+to Task 72's own open questions, flagged there too.
+
+**`business_id` is `text`, not `uuid references businesses(id)`,
+unlike `api_keys`/`balance_transactions` — deliberate, not an
+oversight:** `getVtuBusinessId()`'s own header comment already
+establishes `businessId` as "a plain, required, caller-supplied
+field" with no format or FK validation; this migration matches that
+exact, already-decided posture rather than silently imposing a
+stricter constraint nothing else in this codebase enforces yet.
+
+**`request_hash` (sha256 of `hashRequestBody()`'s stable, sorted-key
+serialization) is stored but not compared anywhere.** Task 65/c
+(deciding what happens when a reused key comes with a genuinely
+different body) is explicitly its own open decision — Stripe's own
+documented answer is "still return the cached original, don't
+re-validate the new body," but this leaf's own text asks for that to
+be proposed for confirmation rather than assumed, so it's stored for
+later use, not acted on now.
+
+**A `5xx` response is never cached, on purpose.** Only a completed
+request — success or a clean, provider-communicated failure — is
+treated as a stable, safe-to-replay outcome. This is this session's
+own reading of Task 65/d's still-undocumented "not every failure is
+idempotency-safe" caveat, applied in code now even though writing that
+caveat up as its own doc (65/d itself) hasn't happened yet.
+
+**Verified:** `node --check` on all three touched files
+(`routes.js`, `utils/helpers.js`, `utils/supabase.js`). Two throwaway
+scripts (deleted after use, not committed): one confirmed
+`hashRequestBody()` produces the same hash regardless of key order and
+a different hash for genuinely different content; a second
+re-implemented `idempotencyCache()`'s exact control flow against fake
+cache functions (no live Supabase available from this sandbox) and
+exercised five cases end-to-end — no header (passes through), a fresh
+key (caches), a replayed key (cache hit, the wrapped handler is never
+called a second time), the same key under a *different* business
+(correctly treated as a separate, fresh key — no cross-business
+leak), and a `5xx` response (never cached, retried normally). All five
+matched the design above. `getCachedIdempotentResponse()`/
+`recordIdempotentResponse()` mirror `isWebhookEventProcessed()`/
+`recordWebhookEvent()`'s exact "never throws, fail-open on any
+Supabase error" posture — read directly from those functions before
+writing the new ones, not assumed from memory of the pattern.
 
 #### Task 66 — Metadata field, scoped API keys, rate-limit-aware outbound wrapper (lower priority, batched together because each is small)
 

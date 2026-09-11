@@ -312,6 +312,28 @@ before doing anything else.
 
 **Row Level Security:** enabled (migration `0020`). One explicit policy, `routing_fallbacks_service_role_all`, scoped to `service_role` only — same pattern as every other table in this schema.
 
+### `idempotency_keys` (migrations `0021`/`0022`) — Task 65/a+b's caller-supplied idempotency-key cache
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `uuid` | primary key |
+| `business_id` | `text` | `not null` — plain caller-supplied string, same posture as `getVtuBusinessId()` (routes.js) — NOT `uuid references businesses(id)`, since that function has no format/FK validation either |
+| `idempotency_key` | `text` | `not null` — the caller-supplied `Idempotency-Key` header value |
+| `request_hash` | `text` | `not null` — sha256 of a stable (sorted-key) JSON serialization of the request body (`hashRequestBody()`, utils/helpers.js); stored for Task 65/c's future use, not compared anywhere yet |
+| `response_status` | `integer` | `not null` |
+| `response_body` | `jsonb` | `not null` — the exact response replayed verbatim on a cache hit |
+| `created_at` | `timestamptz` | default `now()` — no `updated_at`/trigger, same reasoning as `balance_transactions`: insert-once, never updated |
+
+**Constraints:** unique `(business_id, idempotency_key)`.
+
+**Scope, narrower than Task 65/a's own text:** wired into the two VTU purchase routes only (`POST /vtu/data`, `POST /vtu/airtime`, via `idempotencyCache()` in `routes.js`) — **not** `/pay`/`/payout`. Checked first: those two routes have no `business_id` in scope at all today (their only caller is the internal Edge Function via a single shared `requireInternalApiKey` secret), so there's nothing correct to key this table's cache on for them yet. Flagged as a real, separate gap in Task 65's own write-up (handover.md), touching similar ground to Task 72's open questions.
+
+**Behavior:** no `Idempotency-Key` header → route behaves exactly as before (opt-in). A previously-seen `(business_id, key)` → the original cached response is replayed verbatim, the provider is never called again. A `5xx` response is never cached — only a completed request (successful or a clean, provider-communicated failure) is treated as a stable, safe-to-replay outcome.
+
+**Not yet built:** Task 65/c (what to do when a reused key comes with a genuinely different request body — `request_hash` exists for exactly this, unused so far) and Task 65/d (documenting which failure classes aren't idempotency-safe) are both still open.
+
+**Row Level Security:** enabled (migration `0022`). One explicit policy, `idempotency_keys_service_role_all`, scoped to `service_role` only — same pattern as every other table in this schema.
+
 ## Not yet in this schema
 
 Task 56/d (a through e) is fully built. Task 57 (a through e,

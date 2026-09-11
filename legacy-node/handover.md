@@ -19435,3 +19435,94 @@ cd ~/B-PAY-backend
 git am ~/storage/downloads/<patch-file-name>
 git push
 ```
+
+### Task 73/a — per-call-site TTL/atomicity audit, first pass: `revenue_recovery/retry_stats/record.rs` (1 of the 39 locking sites, read in full) (2026-09-11, new session)
+
+**Confirmed the prior session's patch landed:** `origin/main` is
+`0d48d17ae`, content byte-identical to the handed-over patch (`git diff`
+against the pre-`git am` local commit came back empty). Unauthenticated
+GitHub API is rate-limited from this sandbox right now, so the actual next
+CI run's result on that commit isn't checkable this session — noted, not
+worked around.
+
+**Picking up the real, currently-open, no-toolchain-needed task named in
+the New-Clone Checklist: the per-call-site TTL/atomicity audit of the 63
+Redis call sites.** This pass is one site, read in full, not a survey of
+all 39 locking sites — scoped honestly rather than claimed as complete.
+
+**Site: `crates/router/src/core/revenue_recovery/retry_stats/record.rs`,
+`with_retry_stats_lock` + `release_lock`.** Real mechanics, read directly:
+- Acquire: `SETNX <lock_key> <random_uuid_v4> EX <redis_lock_expiry_seconds>`
+  (`set_key_if_not_exists_with_expiry`), in a bounded loop —
+  `lock_retries` attempts, sleeping `delay_between_retries_in_milliseconds`
+  between each. If never acquired, returns `Ok(None)` and the caller skips
+  the write entirely (this is explicitly best-effort stats, not a
+  correctness-critical path — `record`'s own doc comment says so).
+- Release: reads the key back, deletes it **only if** the stored value
+  still equals the token this call acquired with — guards against deleting
+  a lock that expired and was already re-acquired by someone else.
+
+**Against what `pg_lock.rs` actually provides:**
+1. **Retry loop — clean fit, no gap.** `pg_lock.rs`'s `try_acquire`/
+   `try_acquire_multiple` are single-attempt, non-blocking
+   (`pg_try_advisory_lock`), per its own doc comment. This call site's
+   retry-with-delay loop lives entirely on the *caller* side already (the
+   `for _retry in 0..lock_retries { ... sleep ... }` loop is in
+   `record.rs`, not inside the Redis client) — porting this site means
+   swapping the `SETNX` call inside that same loop for `try_acquire`,
+   nothing structural changes. Not a gap.
+2. **Token-owned release — moot for advisory locks, in a good way.** The
+   "delete only if I still hold my own token" check exists in the Redis
+   version specifically because Redis's `SETNX`/`DEL` has no built-in
+   notion of *who* holds a key — the token is a hand-rolled ownership
+   check to avoid deleting a lock that expired-then-was-re-acquired by
+   someone else. Postgres session advisory locks don't have this race at
+   all: `pg_advisory_unlock` is scoped to the calling backend/connection,
+   and `pg_lock.rs`'s own doc comment already establishes `PgLock` holds
+   one dedicated connection for the acquire→release span — a different
+   caller acquiring the same key does so on a *different* backend, so
+   there's structurally no way for this session's release call to affect
+   another session's lock. The token-check code doesn't need a PgLock
+   equivalent; it needs to just not exist after the port. Worth recording
+   as a real simplification the migration gets for free, not just a
+   ported-over concept.
+3. **Fixed-duration TTL — a real, unresolved gap, not papered over.** This
+   site's `EX <redis_lock_expiry_seconds>` is a hard wall-clock expiry from
+   the moment of acquisition (default config value, not re-derived from
+   this pass — not yet looked up), independent of whether the connection
+   stays active. `pg_lock.rs`'s own doc comment already flags its
+   `idle_session_timeout` mechanism as bounding only the
+   genuinely-idle-and-forgotten case, explicitly *not* a fixed acquire-time
+   expiry — "each query resets the idle timer" is `pg_lock.rs`'s own
+   language. For *this* call site specifically the risk is low (`work()`
+   here is one read + one merge + one write, not a long-held lock), but
+   the gap is real and general: any call site relying on Redis's
+   acquire-time TTL as a hard ceiling (as opposed to a
+   forgotten-lock safety net) does not yet have an equivalent in
+   `pg_lock.rs`. Flagging, not fixing — a fixed-expiry mode for `PgLock`
+   (e.g. a background task that force-unlocks past a deadline, or a
+   `pg_cron`-swept "lock leases" table alongside the advisory lock) is
+   real, separate follow-up work, same category as the async-drop-guard
+   gap `pg_lock.rs`'s own doc comment already names as not done.
+
+**Not done, still open:** the other ~38 locking call sites and ~29 caching
+call sites, not yet read this pass; `redis_lock_expiry_seconds`'s actual
+configured value for this specific site (not looked up); whether any other
+locking site relies on the fixed-TTL behavior more heavily than this one
+does (the real reason Finding 3 above matters enough to resolve before
+wiring anything real into `RedisStore`); the storage_impl CI result on
+`0d48d17ae` (blocked on the sandbox's GitHub API rate limit this session,
+not on anything code-side).
+
+**Per the Patch Handoff Convention: `handover.md` only, no code touched —
+this was a reading/audit pass. Base confirmed against real `origin/main`
+(`0d48d17ae`) via `git fetch origin` immediately before this entry (rule
+8) — no drift, this branch was cut from that exact commit.**
+
+**Exact command(s) for the product owner, per rule 7 — Patch Handoff only
+this pass:**
+```
+cd ~/B-PAY-backend
+git am ~/storage/downloads/<patch-file-name>
+git push
+```

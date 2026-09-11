@@ -19800,3 +19800,51 @@ git push
 - This does not relax rule 4: CI going green is a precondition for *trusting* a change, never a substitute for the product owner's own review-and-`git am` step. Sessions still never push to `main`, CI status notwithstanding.
 
 **Per the Patch Handoff Convention rule 6: folded into the same still-unapplied commit as this session's pub/sub-count entry above, not stacked -- one patch covers both.**
+
+### CI — `storage_impl`'s real `cargo check` error is finally in hand from run `34637047745` (job `103387376944`); previous "fixed via --features v1" was wrong -- this is a genuine trait-bound bug in Task 73/a's own new code, root cause hypothesized (not fixed, not compiled) -- exact next command recorded so this doesn't need rediscovering (2026-09-11, new session)
+
+**Correction, stated plainly, not silently fixed:** the prior entry (`0d48d17ae`, "root cause is missing `--features v1`, not Task 73/a code") is now known to be incomplete. That fix landed, and on the very next real run this same job failed again -- with a completely different error, nothing to do with feature flags. Whether the `v1`-feature fix was itself wrong, or genuinely fixed one error and unmasked a second, later one, isn't known and isn't claimed either way -- only that "fixed" was premature.
+
+**The real error, pulled via the per-job log endpoint (the run-level `--log-failed` bundle doesn't assemble until every job in the run completes, including the slow/still-running `Nix CI` and `MSRV` jobs -- the per-job endpoint below has no such wait):**
+```
+gh api --allow-escape-sequences repos/Zapier-codes/B-Pay-backend/actions/jobs/103387376944/logs > storage_impl.log
+grep -n "^error" storage_impl.log
+```
+Output, one distinct error repeated ~20 times (once per call site, same shape each time):
+```
+error[E0277]: the trait bound `bb8::PooledConnection<'_, async_bb8_diesel::ConnectionManager<PgConnection>>: AsyncConnection<_>` is not satisfied
+```
+
+**Root cause, hypothesized from reading our own code plus `async-bb8-diesel` 0.2.1's public API (docs.rs -- `async_bb8_diesel::AsyncConnection`'s own doc line: "An async variant of `diesel::connection::Connection`"; its `Connection` struct: "An async-safe analogue of any connection that implements `diesel::Connection`") -- NOT verified against a real compiler, no `rustc` in this sandbox, same standing caveat as every other `.rs`-adjacent finding in this file:**
+`pg_lock.rs`'s `PgLock<'a>` stores `conn: PooledConnection<'a, async_bb8_diesel::ConnectionManager<diesel::PgConnection>>` -- i.e. the *raw* `bb8::PooledConnection` type -- and then calls `AsyncRunQueryDsl` methods on it directly. But `async_bb8_diesel::AsyncConnection` (the trait `AsyncRunQueryDsl`'s methods actually require) is implemented for the crate's own `Connection<C>` wrapper struct, not for a bare `bb8::PooledConnection`. Same shape almost certainly applies to `pg_kv_store.rs` and `pg_pub_sub.rs`, both of which also `use async_bb8_diesel::AsyncRunQueryDsl` against the same raw pooled-connection type (grep: `grep -n "async_bb8_diesel\|PooledConnection" crates/storage_impl/src/pg_{kv_store,lock,pub_sub}.rs`). **Likely fix shape** (stated as a hypothesis to try, not prescribed as correct): stop storing/passing the raw `bb8::PooledConnection` and instead get connections back out as `async_bb8_diesel::Connection<PgConnection>` (check whether this crate's `Pool`/`ConnectionManager` already hands that back from `.get()`, or whether an explicit wrap is needed) -- or route every query through the pool's own `.run()`/`.transaction()` entry points instead of holding a raw pooled connection at all. **This needs a real `cargo check` to actually confirm or refute, same as everything else here — do not treat this hypothesis as fixed.**
+
+**Two other real failures on the same run, not yet pulled -- exact commands so the next session doesn't have to rediscover them either:**
+```
+gh api --allow-escape-sequences repos/Zapier-codes/B-Pay-backend/actions/jobs/103387376641/logs > wasm_check.log   # "Check wasm build"
+gh api --allow-escape-sequences repos/Zapier-codes/B-Pay-backend/actions/jobs/103387376769/logs > spell_check.log  # "Spell check"
+```
+Neither log has been read yet this session -- do not assume either one is related to the `storage_impl` finding above until actually read.
+
+**`check-msrv` (job `103387376881`) was still `in_progress` (stuck mid `Cargo hack (canonical push only)`, i.e. `just ci_hack` / `scripts/ci-checks.sh`) as of this entry -- status not yet known. Check it before doing anything else:**
+```
+gh run view 34637047745 --repo Zapier-codes/B-Pay-backend --json status,conclusion,jobs --jq '.jobs[] | select(.name | startswith("Check compilation on MSRV")) | {status, conclusion}'
+```
+If `completed`/`failure`, pull its log the same per-job way:
+```
+gh api --allow-escape-sequences repos/Zapier-codes/B-Pay-backend/actions/jobs/103387376881/logs > check_msrv.log
+```
+
+**The exact single command to pick this up from here, for whoever (or whichever session) goes next -- this is the one line that matters if nothing else in this entry is read:**
+```
+gh api --allow-escape-sequences repos/Zapier-codes/B-Pay-backend/actions/jobs/103387376944/logs > storage_impl.log && grep -n "^error" storage_impl.log
+```
+That reproduces the E0277 finding above from scratch, in one command, without needing to re-run `gh run list`/re-discover job IDs. The two `wasm_check.log`/`spell_check.log` commands above are the same pattern for the other two known-red jobs on this same run (`34637047745`).
+
+**Per the Patch Handoff Convention: `handover.md` only, no `.rs` file touched -- the hypothesis above is written up, not applied, precisely because it's unverified. Base confirmed against real `origin/main` (`b3139fc99`) via `git fetch origin` immediately before this entry (rule 8) -- no drift, prior patch confirmed landed first.**
+
+**Exact command(s) for the product owner, per rule 7 — Patch Handoff only this pass:**
+```
+cd ~/B-PAY-backend
+git am ~/storage/downloads/<patch-file-name>
+git push
+```

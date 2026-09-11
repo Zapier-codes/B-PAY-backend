@@ -122,6 +122,32 @@
 > fraud-counter increment is GET-then-SET, not atomic, in production
 > today. **9 of 63 files now read in depth; 54 remain open.**
 >
+> **✅ AUDIT CONTINUED, EIGHTH PASS (2026-09-11, same session, unapplied
+> patch — not yet handed to product owner) — 6 more files read (45 of
+> 63 now, 18 remain); Finding #11 (new) found and fixed.** `pg_kv_
+> store.rs`'s `set_key_if_not_exist` had no way to accept a per-call TTL
+> override — `utils/currency.rs`'s `acquire_redis_lock` (a distributed
+> lock around refreshing the forex-rate cache) passes its own configured
+> lock-timeout, not this store's default cache TTL. Fixed via a new
+> `set_key_if_not_exist_with_expiry` method, same additive pattern as
+> Findings #6–#10 (no existing method changed). Toolchain wall
+> re-confirmed unchanged (apt candidate `1.75.0`, `sh.rustup.rs` real
+> `403`). Full detail: search "Task 73/a — per-call-site audit, eighth
+> pass" at the end of the file. **This pass's commit was combined into
+> the still-unapplied seventh-pass commit per rule 6, not stacked — one
+> patch covers both passes.**
+>
+> **✅ AUDIT CONTINUED, SEVENTH PASS (2026-09-11, newest) — Findings
+> #6-#10 patch confirmed on `origin/main` (`7108320a3`, `git am`
+> succeeded cleanly on the product owner's device this time, no stale
+> state); 6 more files read (39 of 63 now, 24 remain); no new API gaps
+> found this pass.** `rust-check.yml`'s Actions run is **still
+> unconfirmed** — this sandbox's shared egress IP is still rate-limited
+> (`x-ratelimit-remaining: 0`, real response header, re-checked this
+> pass) — needs someone with an unthrottled GitHub session. Full detail:
+> search "Task 73/a — per-call-site audit, seventh pass" at the end of
+> the file.
+>
 > **✅ LANDED + AUDIT CONTINUED, SIXTH PASS (2026-09-11, newest) — the
 > Findings #6–#9 patch is confirmed on `origin/main` (`1a2ca7550`), via
 > the product owner's own `git reset --hard origin/main` matching an
@@ -18200,3 +18226,112 @@ into the still-unapplied landing-confirmation commit from earlier this
 same session rather than stacked as a second commit, since that commit
 had not yet been applied by the product owner when this pass began —
 one combined patch, not two, is handed over for this session.**
+
+### Task 73/a — per-call-site audit, seventh pass (2026-09-11, same session, continued): Findings #6-#10 patch confirmed landed clean this time; 6 more files read (39/63); no new gaps -- all six confirm already-fixed shapes are sufficient
+
+**Landing confirmed the same way as every prior pass:** `git fetch
+origin` shows `origin/main` at `7108320a3`. This time the product
+owner's own `git am` succeeded cleanly (no stale `.git/rebase-apply`,
+no "patch does not apply") — worth noting since the prior two handoffs
+both hit friction on their end; nothing about this session's patch
+process changed, so it's most likely just a clean local state on their
+device this time, not a fix to anything on this side.
+
+**`rust-check.yml` Actions run re-checked, still blocked the same way:**
+`GET /repos/Zapier-codes/B-Pay-backend/actions/workflows/rust-check.yml/runs`
+returned a real `403` with `x-ratelimit-remaining: 0` on this sandbox's
+shared egress IP — same wall as every prior session's attempt, not a
+new problem, not independently re-diagnosed as anything different.
+
+**63-file canonical list reproduced fresh again, still 63, no drift in
+the codebase's own call-site surface.** **6 more files read in depth**
+(bringing the running total to 39 of 63, 24 remain): `core/payments/
+helpers.rs` (sampled at its three redis touch points, not read start-
+to-end — an 8000+ line file, same treatment as `core/payments.rs` got
+in the fifth pass), `core/routing.rs` (imports `storage_impl::redis::
+cache` but has no direct redis method call of its own in this file —
+same "not a real call site" shape as `utils/storage_partitioning.rs`
+from the sixth pass, noted so it isn't mistaken for an unread gap
+later), `core/pm_auth.rs`, `services/openidconnect.rs`, `utils/oidc.rs`,
+`utils/user.rs`.
+
+**No new findings this pass — first audit pass to come back clean.**
+Every redis call site in these six files uses a shape this module
+already covers: `get_key` / `set_key_with_expiry` (via `serialize_and_
+set_key_with_expiry`) / `get_and_deserialize_key` (→ `get_key`) /
+`exists` (Finding #10, already fixed — `core/pm_auth.rs`'s two
+`LinkTokenCreateRequest`/`ExchangeTokenCreateRequest` handlers both use
+it, one more confirmed real-usage site) / `delete_key` (`utils/oidc.rs`'s
+`delete_auth_code_from_redis`). Nothing here needed a new `pg_kv_store.rs`
+method — logged as a genuine null result, not a skipped pass.
+
+**Not done, still open:** 24 of 63 files still unread; Finding #1
+(`pg_lock.rs` multi-key locking) still the one open, unfixed API gap;
+nothing in `pg_kv_store.rs`/`pg_lock.rs`/`pg_pub_sub.rs` wired into any
+real call site yet; `rust-check.yml`'s first real Actions run still
+unconfirmed.
+
+**Per the Patch Handoff Convention: `handover.md` only, no `.rs` file
+touched, no migration. Base confirmed against real `origin/main`
+(`7108320a3`) immediately before this entry (rule 8) — no drift, prior
+patch fully applied, so this is a fresh commit rather than a rebuild.**
+
+### Task 73/a — per-call-site audit, eighth pass (2026-09-11, same session, continued): Finding #11 (set_key_if_not_exist_with_expiry) found and fixed; 6 more files read (45/63)
+
+**Toolchain wall re-confirmed before this pass, unchanged:** apt
+candidate still `1.75.0`; `curl -sI https://sh.rustup.rs` still a real
+`403`, `x-deny-reason: host_not_allowed`. No new path found. Same
+non-Rust-requiring audit work as every prior pass.
+
+**63-file canonical list reproduced fresh again, still 63.** **6 more
+files read in depth** (bringing the running total to 45 of 63, 18
+remain): `core/payments/conditional_configs.rs` (imports `storage_impl::
+redis::cache::DECISION_MANAGER_CACHE` but has no direct redis method
+call of its own — not a real call site, same shape as `core/routing.rs`
+and `utils/storage_partitioning.rs` from prior passes), `core/
+surcharge_decision_config.rs` (same: `storage_impl::redis::cache` import
+only, both occurrences inside test modules), `core/unified_
+authentication_service.rs` (two real call sites, both already-covered
+shapes), `routes/app.rs` (the one `redis` mention here is a route
+handler name — `revenue_recovery_redis::get_revenue_recovery_redis_data`
+— not a redis method call; not a real call site), `utils/currency.rs`,
+`utils/user/theme.rs`.
+
+**Finding #11 (new) — `pg_kv_store.rs`'s `set_key_if_not_exist` had no
+way to accept a per-call TTL override.** `utils/currency.rs`'s
+`acquire_redis_lock` — a distributed lock guarding a refresh of the
+forex-rate cache — calls `set_key_if_not_exists_with_expiry` with its
+own configured `redis_lock_timeout_in_seconds`, not the store's default
+cache TTL. The existing `set_key_if_not_exist` always uses this store's
+one shared `ttl_seconds` (by design, matching `RedisStore`'s own
+convention for every other method) — reusing it here would silently
+apply the wrong lock duration in either direction: too short risks two
+callers racing the refresh, too long risks a crashed holder blocking
+every other caller well past the intended timeout. **Fixed this same
+pass**, via a new `set_key_if_not_exist_with_expiry` method taking
+`expiry_seconds: Option<i64>` — `None` falls back to the store's own
+`ttl_seconds`, same default as every other method here, so existing
+callers of the plain SETNX shape are unaffected.
+
+**Two more real-usage confirmations, not new findings:**
+`utils/currency.rs`'s `release_redis_lock` (`delete_key`),
+`save_forex_data_to_redis` (`serialize_and_set_key_with_expiry` →
+`set_key_with_expiry`), and `retrieve_forex_data_from_redis`
+(`get_and_deserialize_key` → `get_key`) are all already-covered shapes.
+`utils/user/theme.rs`'s three functions (`get_key`,
+`set_key_with_expiry`, `delete_key`) are the same.
+
+**Not done, still open:** 18 of 63 files still unread; Finding #1
+(`pg_lock.rs` multi-key locking) still the one open, unfixed API gap;
+nothing in `pg_kv_store.rs`/`pg_lock.rs`/`pg_pub_sub.rs` wired into any
+real call site yet; `rust-check.yml`'s first real Actions run still
+unconfirmed (not re-attempted this pass).
+
+**Per the Patch Handoff Convention: one `.rs` file touched
+(`crates/storage_impl/src/pg_kv_store.rs`), plus `handover.md`; no
+migration, DB-Ops block not owed. Base confirmed against real
+`origin/main` (`7108320a3`) via `git fetch origin` immediately before
+this entry (rule 8) — no drift. Per rule 6: folded into the still-
+unapplied seventh-pass commit from earlier this same session rather
+than stacked as a second commit — one combined patch covers both
+passes.**

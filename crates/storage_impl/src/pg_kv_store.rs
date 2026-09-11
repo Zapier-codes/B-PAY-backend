@@ -40,6 +40,15 @@
 //!   Not wired into any real call site, not compiled — same caveats as
 //!   Findings #6–#9 above.
 //!
+//! - **Finding #11 — fixed this session (eighth audit pass), same
+//!   additive pattern as #6–#10.** `set_key_if_not_exist_with_expiry`,
+//!   for `utils/currency.rs`'s forex-refresh distributed lock, which
+//!   passes its own lock-timeout duration rather than this store's
+//!   default `ttl_seconds` — a real per-call TTL override
+//!   `set_key_if_not_exist` had no way to accept. Not wired into any
+//!   real call site, not compiled — same caveats as every other finding
+//!   above.
+//!
 //! Not done, left for the per-call-site review Task 73/a explicitly calls
 //! out as separate follow-up work:
 //! - **Expiry sweep — fixed this session, via `pg_cron`, not the
@@ -362,6 +371,59 @@ impl PgKvStore {
                     .change_context(StorageError::DeserializationFailed)
             })
             .collect()
+    }
+
+    /// Analog of `set_key_if_not_exists_with_expiry` — same single-round-
+    /// trip SETNX atomicity as `set_key_if_not_exist` above, but with an
+    /// explicit per-call TTL override instead of this store's own
+    /// `ttl_seconds`. Found in the per-call-site audit's eighth pass:
+    /// `utils/currency.rs`'s `acquire_redis_lock` (a distributed lock
+    /// guarding a refresh of the forex-rate cache) passes its own
+    /// configured lock-timeout duration, not the store's default cache
+    /// TTL. Reusing `set_key_if_not_exist`'s fixed `ttl_seconds` here
+    /// would silently hold the lock for the wrong duration — wrong in
+    /// either direction: too short risks two callers racing the refresh,
+    /// too long risks a crashed holder blocking every other caller until
+    /// the store's unrelated default cache TTL happens to lapse. `None`
+    /// falls back to this store's own `ttl_seconds`, matching
+    /// `set_key_if_not_exist`'s existing behaviour for callers that don't
+    /// need an override.
+    pub async fn set_key_if_not_exist_with_expiry<S: Serialize + Sync>(
+        &self,
+        key: &str,
+        value: &S,
+        expiry_seconds: Option<i64>,
+    ) -> error_stack::Result<PgSetnxReply, StorageError> {
+        let conn = self
+            .pool
+            .get()
+            .await
+            .change_context(StorageError::DatabaseConnectionError)?;
+        let bytes =
+            serde_json::to_vec(value).change_context(StorageError::SerializationFailed)?;
+        let expires_at = match expiry_seconds {
+            Some(secs) => common_utils::date_time::now() + time::Duration::seconds(secs),
+            None => self.expiry_from_now(),
+        };
+
+        let rows: Vec<InsertedRow> = sql_query(
+            "INSERT INTO pg_kv_cache (cache_key, field, value, expires_at) \
+             VALUES ($1, '', $2, $3) \
+             ON CONFLICT (cache_key, field) DO NOTHING \
+             RETURNING id",
+        )
+        .bind::<Text, _>(key)
+        .bind::<diesel::sql_types::Binary, _>(bytes)
+        .bind::<diesel::sql_types::Timestamp, _>(expires_at)
+        .load_async(&conn)
+        .await
+        .map_err(StorageError::from)?;
+
+        Ok(if rows.is_empty() {
+            PgSetnxReply::KeyNotSet
+        } else {
+            PgSetnxReply::KeySet
+        })
     }
 
     // ---- overwrite-with-TTL variants (Finding #6) -----------------------

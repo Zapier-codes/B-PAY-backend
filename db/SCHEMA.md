@@ -6,8 +6,8 @@ is a short, current index so a session doesn't have to reconstruct the
 schema by reading every migration in order. **Update this file in the
 same session as any migration that changes it.**
 
-**Migrations `0001`, `0003`, `0004`, `0016`, `0017`, `0019`, and `0020`
-are confirmed live** — `0001` applied by the product owner via `psql -f`
+**Migrations `0001`, `0003`, `0004`, `0016`, `0017`, `0019`, `0020`,
+`0021`, and `0022` are confirmed live** — `0001` applied by the product owner via `psql -f`
 (2026-09-08), from the second (proot-distro Ubuntu) environment,
 against project ref `mfekzzwsoiezqkovabmp`; `0003`/`0004` applied the
 same way, same session (`CREATE TABLE` / `CREATE TRIGGER` / `ALTER
@@ -21,7 +21,12 @@ all confirmed, no errors); `0019`/`0020` applied the same way,
 session has no network path to the live Supabase project from its own
 sandbox to independently re-run `\dt`/`\d routing_fallbacks` itself,
 same limitation as every prior migration recorded in this file; taken
-at the product owner's own word, same as every entry above it). Every
+at the product owner's own word, same as every entry above it).
+`0021`/`0022` applied the same way, 2026-09-11, via `\i` at the live
+`psql` prompt against a Postgres 17 server (`CREATE TABLE` /
+`CREATE INDEX` / `ALTER TABLE` / `CREATE POLICY` all confirmed, no
+errors — product-owner-reported to this session the same way `0019`/
+`0020` were, same limitation on independent re-verification). Every
 migration in `db/migrations/` not
 listed here still needs its own confirmation the same way before this
 file should be treated as describing live state for it — check
@@ -334,6 +339,52 @@ before doing anything else.
 
 **Row Level Security:** enabled (migration `0022`). One explicit policy, `idempotency_keys_service_role_all`, scoped to `service_role` only — same pattern as every other table in this schema.
 
+### `payment_intents` (migrations `0023`/`0024`) — Task 72's stable, caller-facing handle
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `uuid` | primary key |
+| `business_id` | `uuid` | nullable, `references businesses(id)` — see migration `0023`'s own note on why this table uses the `uuid`/FK convention (`balance_transactions`), not the plain-`text` convention (`idempotency_keys`) |
+| `reference` | `text` | `not null`, unique — the stable, caller-facing handle; same value the caller already supplies today |
+| `type` | `text` | `'payment'` \| `'payout'`, mirrors `transactions.type` |
+| `currency` | `text` | |
+| `amount` | `numeric` | |
+| `status` | `text` | `'pending'` \| `'success'` \| `'failed'`, default `'pending'` — aggregate across this intent's `payment_attempts`; the aggregation logic itself is not built here |
+| `created_at` | `timestamptz` | default `now()` |
+| `updated_at` | `timestamptz` | default `now()`, auto-updated via `set_updated_at()` trigger |
+
+**Indexes:** `payment_intents_reference_key` (unique, on `reference`), `payment_intents_business_id_idx`.
+
+**Purpose:** resolves Task 72's confirmed proposal — mirrors Stripe's `PaymentIntent`. `transactions.reference` currently does double duty as both the caller-facing handle and the per-provider value forwarded on each attempt, which blocks Task 63/b's cross-processor retry from giving a caller one stable handle across attempts against different providers. This table is that stable handle; `payment_attempts` below is where each individual attempt's own provider-facing reference lives.
+
+**Not duplicated here:** `amount`/`currency` are not repeated per-attempt on `payment_attempts` — no current scenario in this repo has a retry change the requested amount; add it there if that need is ever confirmed, not guessed at now.
+
+**Row Level Security:** enabled (migration `0024`). One explicit policy, `payment_intents_service_role_all`, scoped to `service_role` only — same pattern as every other table in this schema.
+
+**Not yet wired into the running application.** Nothing in `routes.js` creates or reads a `payment_intents` row yet — that's Task 63/b's own scope, same "storage only" division of labor every prior create-table migration in this schema has used.
+
+### `payment_attempts` (migrations `0025`/`0026`) — Task 72's per-attempt record, Stripe `PaymentRecord`-shaped
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `uuid` | primary key |
+| `payment_intent_id` | `uuid` | `not null references payment_intents(id)` |
+| `provider` | `text` | `not null` |
+| `reference` | `text` | `not null`, unique — the value actually forwarded to this specific attempt's provider; deliberately cannot reuse `payment_intents.reference` (that's the entire problem this table exists to solve) |
+| `provider_reference` | `text` | nullable — mirrors `transactions.provider_reference` (migration `0009`) exactly |
+| `status` | `text` | `'pending'` \| `'success'` \| `'failed'`, default `'pending'` |
+| `error_type` / `error_code` / `error_decline_code` / `error_param` | `text`, all nullable | Task 62's confirmed `ApiError` taxonomy (`ERROR_HANDLING.md`) — stored per-attempt, not yet populated by anything (Task 62/e is still open), internal-only, same as `ApiError`'s own fields |
+| `created_at` | `timestamptz` | default `now()` |
+| `updated_at` | `timestamptz` | default `now()`, auto-updated via `set_updated_at()` trigger |
+
+**Indexes:** `payment_attempts_reference_key` (unique, on `reference`), `payment_attempts_payment_intent_id_idx`.
+
+**Real, unresolved overlap with `transactions` — flagged, not decided here:** `transactions` (migration `0001`) already records one row per actual provider call today, which is structurally what this table also does. This migration does not touch `transactions`, migrate its data, or decide how the two relate going forward. That reconciliation is Task 63/b's own scope — see migration `0025`'s own header comment for the full reasoning on why this wasn't decided unilaterally here.
+
+**Row Level Security:** enabled (migration `0026`). One explicit policy, `payment_attempts_service_role_all`, scoped to `service_role` only — same pattern as every other table in this schema.
+
+**Not yet wired into the running application.** Same as `payment_intents` above — no route creates or reads a row here yet; Task 63/b's scope.
+
 ## Not yet in this schema
 
 Task 56/d (a through e) is fully built. Task 57 (a through e,
@@ -377,4 +428,12 @@ create-table migration in this schema used. Beyond that, nothing
 currently queued needs a further migration; the next schema change is
 whatever a future task actually requires (e.g. Task 46's dashboard,
 once its own auth design is decided, Task 61/b, or Task 60/b, once a
-session picks one of them up).
+session picks one of them up). **Not yet built for `payment_intents`/
+`payment_attempts` (migrations `0023`–`0026`, Task 72):** anything
+that writes to or reads from either table (Task 63/b's own scope),
+and the unresolved `payment_attempts`/`transactions` overlap flagged
+in migration `0025`'s own header — this migration pair is storage
+only, same division of labor as every prior create-table migration in
+this schema. Migrations `0023`–`0026` are **not yet confirmed live** —
+same "check before assuming" caveat this file's own top note already
+states for every migration not explicitly listed there.

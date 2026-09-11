@@ -4,6 +4,25 @@
 > task's own section. Nothing else in this file is required reading to
 > start work.**
 >
+> **Task 72's three open questions are now confirmed (2026-09-11),
+> against Stripe's own actual documented behavior, and the migration
+> is built — `payment_intents` (`0023`/`0024`) + `payment_attempts`
+> (`0025`/`0026`), both new, additive, `transactions` untouched.**
+> Decisions: additive not a replace/rename (matches Stripe's own
+> `PaymentRecord`-next-to-`PaymentIntent` precedent); non-breaking to
+> the Edge Function caller (top-level reference unchanged, per-attempt
+> layer added underneath); build the stable handle before Task 63/b,
+> not after. **A real, unresolved overlap between the new
+> `payment_attempts` table and the existing `transactions` table was
+> found and flagged, not silently resolved** — both now structurally
+> record "one row per provider call"; reconciling that is explicitly
+> left as Task 63/b's own scope. Full detail in Task 72's own section
+> (search "All three open questions confirmed") and each migration
+> file's own header comment. **Not built:** any code that actually
+> creates/reads either table — that's Task 63/b's job, storage only
+> here, same division of labor every prior create-table migration in
+> this schema has used.
+>
 > **Task 65/a+b is DONE (2026-09-11)** — caller-supplied
 > `Idempotency-Key` header caching, mirroring Stripe's own confirmed
 > real behavior, built via `idempotencyCache()` (routes.js) +
@@ -15680,7 +15699,7 @@ drift immediately before generating the patch (local was already at
 
 ---
 
-## Task 72 — Persisted payment-intent object (Stripe `PaymentIntent`/`PaymentRecord` pattern) — closes `STRIPE_DISCOVERY.md`'s gap #1 [ ]
+## Task 72 — Persisted payment-intent object (Stripe `PaymentIntent`/`PaymentRecord` pattern) — closes `STRIPE_DISCOVERY.md`'s gap #1 [x] (decisions confirmed + migration built 2026-09-11; wiring is Task 63/b's own scope, not started)
 
 **Discovery + proposal only, no code, no migration written — same
 "propose, needs product-owner sign-off before code" convention as
@@ -15766,5 +15785,54 @@ docs are exactly the kind of moving target this repo's own "confirm,
 don't guess" discipline exists for. `transactions_reference_key`'s
 existence and scope were confirmed by reading migration `0001`
 directly, not assumed from its own comment.
+
+**All three open questions confirmed (2026-09-11), against Stripe's
+own actual documented behavior, independently re-verified this
+session (not reused from the citations above without re-checking):**
+
+1. **Additive, not a replace/rename.** Stripe's own precedent is
+   unambiguous — `PaymentRecord` was built as a new object sitting
+   next to `PaymentIntent`, not a reshape of it. `transactions` is not
+   touched by the migration below.
+2. **Non-breaking to the caller.** The caller-facing ID
+   (`PaymentIntent`) is exactly the thing that stays stable across
+   Stripe's own retries; per-attempt detail lives underneath it. Maps
+   directly onto "the Edge Function keeps its top-level reference,
+   B-Pay adds the per-attempt layer underneath" — confirmed
+   non-breaking to Task 23's already-audited caller.
+3. **Sequencing: build the stable handle first.** Stripe's own
+   architecture builds the stable-handle object first, then layers
+   retry/orchestration logic on top of it — this task before Task
+   63/b, per the direct instruction already recorded above.
+
+**Migration built (2026-09-11): `payment_intents`
+(migrations `0023`/`0024`) + `payment_attempts`
+(migrations `0025`/`0026`).** Two new, additive tables, built exactly
+as this leaf's own "proposed shape" described — no redesign beyond
+what was proposed. Full column-level detail in each migration file's
+own header comment and `db/SCHEMA.md`'s new entries for both tables —
+not repeated here. Two things worth surfacing at this level rather
+than only in the migration files:
+
+- **A real, unresolved overlap with `transactions` was found and
+  flagged, not silently resolved.** `transactions` already records
+  one row per provider call today — structurally close to what
+  `payment_attempts` now also does. Reconciling the two (does Task
+  63/b write to both, does one eventually retire, something else) is
+  explicitly left as Task 63/b's own scope, not decided in this
+  migration — full reasoning in migration `0025`'s own header.
+- **`business_id` on `payment_intents` uses the `uuid references
+  businesses(id)` convention (`balance_transactions`'s), not the
+  plain-`text` convention `idempotency_keys` uses** — a deliberate,
+  flagged choice (this table is meant to be general-purpose across
+  `/pay`/`/payout`/VTU, unlike `idempotency_keys`'s VTU-only scope),
+  not picked silently. Full reasoning in migration `0023`'s own
+  header.
+
+**Not built, not this leaf's scope:** any code that creates or reads
+a row in either new table — that's Task 63/b's actual retry logic,
+same "storage only" division of labor every prior create-table
+migration in this schema has used. `node --check` not run — no `.js`
+file touched, migration + `db/SCHEMA.md` + this write-up only.
 
 ---

@@ -99,6 +99,7 @@ Corse-du-Sud = "Corse-du-Sud" # Is a state in France
 Haute-Corse = "Haute-Corse" # Is a state in France
 Fram = "Fram" # Is a state in Slovenia
 typ = "typ" # Token.io JWT header required parameter
+acct_3epxuNyAtNd77zShIaaL1 = "acct_3epxuNyAtNd77zShIaaL1" # example Stripe connected-account id in a cypress fixture, not a real word
 
 
 [default.extend-words]
@@ -117,6 +118,7 @@ nin = "nin" # National identification number, a field used by PayU connector
 requestor = "requestor" #Used in external 3ds flows
 substituters = "substituters" # Present in `flake.nix`
 unsuccess = "unsuccess" # Used in cryptopay request
+mis = "mis" # prefix in hyphenated words like "mis-routed" (storage_impl/src/utils.rs), not a typo on its own
 automatico = "automatico" # Pix Automático (Portuguese for Automatic) - payment method name
 iof = "iof" # Financial operations tax in Brazil / Imposto sobre Operações Financeiras
 cooperativo = "cooperativo" # Italian for "cooperative", used in Italian bank names

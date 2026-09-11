@@ -503,6 +503,16 @@ jobs:
           save-if: ${{ env.IS_CANONICAL_RUN == 'true' }}
           cache-on-failure: true
 
+      # This job never installed sccache at all, yet still inherits the
+      # workflow-level RUSTC_WRAPPER: sccache / SCCACHE_GHA_ENABLED: "true"
+      # env vars -- so `cargo metadata` (invoked by wasm-pack) tried to
+      # exec a `sccache` binary that was never on PATH ("No such file or
+      # directory"). See the "Check compilation on MSRV toolchain" job
+      # for why mozilla-actions/sccache-action rather than
+      # taiki-e/install-action.
+      - name: Install sccache
+        uses: mozilla-actions/sccache-action@v0.0.9
+
       - name: Install wasm-pack
         uses: taiki-e/install-action@v2
         with:

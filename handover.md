@@ -62,12 +62,15 @@
 > scope unchanged from the original proposal (Rust fork of
 > `Zapier-codes/hyperswitch`, this repo's own Supabase for Postgres,
 > Render hosting, fork's own `control-center` dashboard kept and
-> upgraded). **Sub-task allocation still deliberately NOT done** —
-> next session splits this using the file's own existing six-level
-> Task Numbering & Workflow Convention (a–e/1–4/i–iii/zi–zo/X, defined
-> before Task 0) — same mechanism as every other task here, nothing
-> new invented. Patch Handoff Convention unchanged. Full detail in all
-> of Task 73's sections, end of file.
+> upgraded). **Sub-task allocation now begun this session (search
+> "sub-task allocation, begun this session")** — using the file's own
+> existing six-level Task Numbering & Workflow Convention
+> (a–e/1–4/i–iii/zi–zo/X, defined before Task 0), same mechanism as
+> every other task here, nothing new invented. Current single `X` for
+> the combined Task 73+74 board: **`a/1/i/zi` — scaffold the Korapay
+> connector crate** (file layout + auth/config wiring only). Patch
+> Handoff Convention unchanged. Full detail in all of Task 73's
+> sections, end of file.
 >
 > **Task 72's migration is DONE, pushed (part of PR #3, not yet merged
 > by Phoenix-Boss), AND confirmed live against the real Supabase
@@ -16109,14 +16112,22 @@ reusable (e.g. the DodoPayments/Remita/Xixapay/PaymentPoint discovery
 passes feed directly into their Task 73 connector-crate work) but no
 session should pick up a non-Task-73 `X` node until Task 73 itself is
 complete or a future session explicitly un-pauses something else.
-**Sub-task allocation across sessions still deliberately NOT done
-here** — the next session splits Task 73 using this file's own
-existing six-level Task Numbering & Workflow Convention
-(a–e/1–4/i–iii/zi–zo/X, defined above, before Task 0) — the same
-splitting mechanism already governing every other task in this file,
-not a new one invented for this task. The existing Patch Handoff
-Convention (below) governs how each resulting `X` gets handed off,
-unchanged.
+**Sub-task allocation now begun (search "sub-task allocation, begun
+this session," both under Task 73 and under Task 74) — this note's
+own prior "still deliberately NOT done" framing is superseded, not
+deleted, per this file's own correct-in-place convention.** The split
+uses this file's own existing six-level Task Numbering & Workflow
+Convention (a–e/1–4/i–iii/zi–zo/X, defined above, before Task 0) — the
+same splitting mechanism already governing every other task in this
+file, not a new one invented for this task. **Any pre-existing `X`
+elsewhere on the board (Task 0's track, Task 61/d, or any other
+lingering marker) is superseded by the one `X` now designated on the
+combined Task 73+74 board — `a/1/i/zi` under Task 73, scaffold the
+Korapay connector crate — per the convention's own "exactly one `X`
+on the whole board" rule; a future un-pause of a non-Task-73/74 thread
+would need to explicitly move `X` there first, not run two `X`s at
+once.** The existing Patch Handoff Convention (below) governs how each
+resulting `X` gets handed off, unchanged.
 
 ### Task 73 — provider count corrected to 9, not 10 (2026-09-11, same session, second correction after the Prestmit one above)
 
@@ -16156,6 +16167,109 @@ every earlier count in this task's own prior notes:**
   written before this correction) refers to the pre-correction count
   and should be read as 9 going forward for any work that touches
   Task 73 specifically.
+
+### Task 73 — sub-task allocation, begun this session (2026-09-11) — supersedes "sub-task allocation still deliberately NOT done"
+
+**This is the split that Task 73's own prior notes explicitly deferred
+("Sub-task allocation still deliberately NOT done" — search that
+phrase above) — done now, using the six-level Task Numbering &
+Workflow Convention already defined for this file (a–e/1–4/i–iii/
+zi–zo/X), no new mechanism invented.** Task 74's own board is split
+separately, immediately below — the "exactly one `X` on the whole
+board" rule spans both.
+
+**a. Provider connector crates** (port 5 existing forward + build 4
+new — definitive list per the correction directly above)
+1. **Port already-coded providers forward as connector crates**
+   (Korapay, Paystack, JuicyWay, Flutterwave, `telcos.opik.net`) —
+   these establish the port pattern the new crates in `a/2` can then
+   follow, so they're sequenced first.
+   i. **Korapay** (picked to go first: it's this repo's default
+      fallback provider per `ROUTING_RULES` — Task 51/a already
+      repointed `bank_transfer` to it — so it's the most-exercised
+      code path and the one most worth validating the port pattern
+      against first).
+      - zi. Scaffold the crate: `crates/hyperswitch_connectors/src/
+        connectors/korapay.rs` +
+        `connectors/korapay/transformers.rs`, mirroring an existing
+        connector's file layout (confirmed pattern this session:
+        every connector in that directory is a `<name>.rs` +
+        `<name>/` pair, e.g. `aci.rs` + `aci/transformers.rs`) — auth/
+        request-signing config wired to Hyperswitch's own connector
+        trait, no payment logic yet.
+      - zo. Implement the actual payment/refund/payout/webhook
+        operations against Korapay's real API inside that scaffold,
+        cross-checked line-by-line against the existing Node
+        `providers/korapay.js` so behavior is preserved, not
+        reinvented from the raw Korapay API docs alone.
+   ii. Paystack — same two-step (scaffold, then port logic from
+       `providers/paystack.js`) once Korapay's pattern is validated.
+   iii. JuicyWay — same, from `providers/juicyway.js`.
+      *(Flutterwave and `telcos.opik.net` don't fit under the i/ii/iii
+      cap (max 3) for this sub-part — carried as an explicit overflow
+      note here rather than forced into a non-existent iv/v: they
+      follow the same two-step pattern from `providers/
+      flutterwave.js` and `providers/telcosOpik.js` respectively,
+      picked up immediately after JuicyWay, before moving to `a/2`.)*
+2. **Build new connector crates** (DodoPayments, Remita, Xixapay,
+   PaymentPoint) — each already has a full API-discovery pass on
+   record (search each name's own "FULL API discovery pass" heading);
+   that research is the direct input here, not fresh discovery work.
+   Sequencing among these 4 deliberately left open — no technical
+   reason found this session to prefer one over another, unlike `a/1`
+   where Korapay's already-live default-fallback role justified going
+   first.
+
+**b. Redis → Postgres-native locking/caching** (86-file scope,
+flagged as real engineering work, not a config toggle) — deliberately
+sequenced *after* `a`'s first provider port lands, not before: `a/1/i`
+gives a small, low-risk, already-scoped win to validate the fork
+checkout and CI/build pipeline before touching 86 files in the core
+payment path.
+
+**c. Kafka/ClickHouse → Postgres materialized views + `pg_cron` +
+Supabase Edge Functions** (32-file scope, events-sink role) — no hard
+dependency on `a` or `b`, genuinely parallelizable with either once a
+session is free to pick it up; listed after `b` here only because it
+was confirmed as the easier of the two infra swaps, not because it's
+gated on `b` finishing.
+
+**d. mavins-web cutover** — dual-run old Node + new Rust behind a
+versioned endpoint, per the closed decision above. Genuinely gated on
+`a`, `b`, and `c` having enough of the rewrite live to actually serve
+real traffic in parallel; not actionable as a first move.
+
+**e. PCI vault/locker config** — point the fork's `[locker]` config at
+an external certified vault/tokenization provider for production,
+`mock_locker = true` for sandbox/dev, per the closed decision above.
+Small, config-only, no code dependency on `a`–`d` — genuinely
+schedulable any time, held to last here only because it's the
+lowest-risk, easiest-to-slot-in-anywhere leaf on this board, not
+because something blocks it.
+
+**Current single `X` for the whole board (Task 73 + Task 74
+combined) — the next session's actual work item:**
+
+> **`a/1/i/zi` — scaffold the Korapay connector crate** (file
+> layout + auth/config wiring only, per the `zi` description above;
+> `zo`'s actual operation logic is explicitly not part of this `X`).
+
+Picked as the starting `X` for three concrete reasons, not
+arbitrarily: (1) it's the smallest fully-scoped atomic unit on either
+board — a file-layout-and-config scaffold, not a full connector; (2)
+it validates the fork's own build pipeline (does `cargo build` even
+succeed with a new connector wired into the trait plumbing) before
+any session commits to the much larger `b`/`c` infra swaps; (3) it
+carries the least risk of the whole board — a non-functional scaffold
+touching real money in no way — appropriate for the very first leaf
+taken off a board this large. When `zi` is solved and its patch is
+applied, per the convention, `zo` (same `a/1/i`) becomes the new `X`.
+
+**Not done this session:** no crate scaffolded, no code written for
+`a/1/i/zi` itself — this entry is the split and the `X` designation
+only, per the convention's own "only the patch file for the current
+`X` node is ever produced" rule (a documentation/decision node, this
+one, still counts and is what this session's patch actually contains).
 
 ### Task 74 — `control-center` forked as its own separate project, UI/branding only; the API-docs half corrected to use the fork's own existing Mintlify-rendered reference, not a from-scratch Swagger UI (2026-09-11, revised same session) [ ]
 
@@ -16311,6 +16425,39 @@ session (or whichever session splits Task 73/74 together into
 sub-tasks) has the full, corrected decision on record rather than
 having to reconstruct it from a verbal instruction or from this
 entry's own superseded first draft.
+
+### Task 74 — sub-task allocation, begun this session (2026-09-11)
+
+**Own board, same six-level convention as Task 73's split above — the
+"exactly one `X` on the whole board" rule spans both tasks' boards
+together, not per-task.**
+
+**a. `control-center` fork mechanics**
+1. Stand up the actual fork at `Zapier-codes/control-center` from
+   upstream `juspay/hyperswitch-control-center` (repo already exists
+   per this session's own read of it — this sub-part is about the
+   fork *relationship*: confirming `upstream` remote, not creating the
+   repo itself).
+2. Build the white-label configuration layer on top of the existing
+   `branding` feature flag (`config/config.toml`) — per-deployment
+   logo/colors/copy, not the one-time rebrand the flag supports today.
+
+**b. API documentation**
+1. Add B-Pay's own custom routes (VTU, webhook-gateway) to
+   `crates/openapi/` in `Zapier-codes/hyperswitch` as each one is
+   ported over by Task 73/a's connector-crate work — genuinely gated
+   on Task 73/a, not independently startable before at least one route
+   exists in the Rust fork to document.
+2. Auth/access-control model for the API-as-a-product offering (API
+   keys, per-tenant scoping) — no code dependency on `b/1`, could
+   start independently, but no design work done yet this session.
+
+**Not yet a candidate for `X`:** every leaf under Task 74 is either
+gated on Task 73 work landing first (`a/1` needs nothing from Task 73
+but is itself just a remote-confirmation step with near-zero scope;
+`b/1` explicitly needs Task 73/a's ported routes to exist) or
+undesigned (`a/2`, `b/2`). Task 73's `a/1/i/zi` (see above) remains
+the single `X` for the combined board — nothing here supersedes it.
 
 **Per the Patch Handoff Convention, this revision is folded into the
 same not-yet-applied Task 74 patch, per rule 6 (combine, don't stack

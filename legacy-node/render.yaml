@@ -4,8 +4,8 @@ services:
     env: node
     region: oregon  # Choose region closest to your users/providers
     plan: starter   # Free tier to start
-    buildCommand: npm install
-    startCommand: node index.js
+    buildCommand: npm --prefix legacy-node install
+    startCommand: node legacy-node/index.js
     envVars:
       - key: NODE_ENV
         value: production

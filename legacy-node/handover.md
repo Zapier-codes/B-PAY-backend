@@ -19771,3 +19771,32 @@ cd ~/B-PAY-backend
 git am ~/storage/downloads/<patch-file-name>
 git push
 ```
+
+### Task 73/b — 15-vs-18 pub/sub count discrepancy CLOSED: independently re-reproduced from a cold clone, "18" has no recoverable origin in this file, 15 stands confirmed (2026-09-11, new session)
+
+**Toolchain wall independently re-verified, not just re-read, before touching anything:** `which rustc cargo` → not found; `apt-cache policy rustc` → candidate `1.75.0+dfsg0ubuntu1-0ubuntu7.4`, install `(none)`; root `Cargo.toml` confirmed pinned at `package.rust-version = "1.85.0"`; `Cargo.lock` confirmed `version = 4`. Same wall, independently re-run this session rather than trusted from the file alone. Also independently re-checked: `api.github.com` (unauthenticated) currently returns `403 rate limit exceeded` for this sandbox's egress IP — consistent with, though not identical in wording to, the log-download auth wall recorded in the CI entries above; either way, not a route to the real `storage_impl` compiler error from this sandbox. No `.rs` work possible or attempted this session for either reason — this entry is read-only, same as the original first-pass audit.
+
+**The count discrepancy itself, closed rather than left open:** re-ran the exact pattern recorded in the "Task 73/b — pub/sub call-site audit, first pass" entry (`\.publish\(|\.subscribe\(|redact_from_redis_and_publish|CacheKind::|redis_pub_sub|pub_sub::`, `crates/router/src` + `crates/storage_impl/src`) against a fresh `git clone` of `origin/main` (not the same working tree that produced the original 15 — a true independent reproduction). Result: identical 15 files, byte-for-byte the same list already on record. Searched this file for every prior mention of "18" (`grep -n "18-file\|18 pub/sub\|18 files"`) to find where the figure originated: every hit is either the same recurring "15-vs-18" discrepancy callout or the eleventh-pass entry that names "18 pub/sub call sites" without itself enumerating them — there is no earlier entry anywhere in this file that lists 18 files or documents the broader pattern that would produce that count. **Conclusion, stated plainly rather than hedged further: "18" is not reconstructable from this file's own history and should be treated as a stale/incorrect figure, not a gap in this pass's methodology.** 15 is confirmed, independently, twice now (this session's cold-clone reproduction plus the original first-pass reproduction), by two different sessions using the same documented pattern.
+
+**Not done, still open, unchanged by this entry:** `pg_pub_sub.rs`'s dedicated-connection gap for a real `LISTEN` loop; wiring Findings #6–#14 into any real call site (still blocked on the toolchain wall, re-confirmed above — this is a *closure* of the count question only, not a new claim that wiring is unblocked); `check-msrv`/wasm CI failures still untriaged; the actual `cargo check -p storage_impl` error text still requires an authenticated `gh`/PAT session, not this sandbox.
+
+**Per the Patch Handoff Convention: `handover.md` only, no `.rs`/`.sql` file touched — read-only audit/documentation pass. Base confirmed against real `origin/main` via `git fetch origin` immediately before this entry (rule 8) — no drift. Per rule 4: not pushed to `main` by this session under any phrasing of that instruction — left as a patch for the product owner's own `git am` + push, same as every other entry in this file.**
+
+**Exact command(s) for the product owner, per rule 7 — Patch Handoff only this pass:**
+```
+cd ~/B-PAY-backend
+git am ~/storage/downloads/<patch-file-name>
+git push
+```
+
+### Decision — GitHub Actions is the sole source of truth for `storage_impl` (and any Rust) compiler verification; local sandbox review is "read-only, unverified" by definition, not a lesser form of verified (2026-09-11, same session, continued)
+
+**Why, stated plainly:** every session in this file that touched `.rs` code did so against a sandbox with no working `rustc` >= 1.85.0 (`apt` only offers 1.75.0; no route to `rustup`/`static.rust-lang.org` on the network allowlist) -- independently re-confirmed by this session too, not just carried forward from the file. Every "reviewed by reading, not compiled" caveat already in this file exists because of that one fact. `ci.yml`'s `storage-impl` job, on a GitHub-hosted runner with real internet and the correctly pinned Rust 1.85.0, is the only environment in this entire workflow that has ever actually run `cargo check` against this workspace to completion (confirmed above, the `fdf15dcd8` run).
+
+**The rule, so no future session has to re-derive it:**
+- A sandbox session's own read of `.rs` code is never "verified," "confirmed compiling," or "safe to wire into a real call site" -- regardless of how carefully it was read, or how many audit passes a finding has survived. "Reviewed by reading only" stays in every such entry; it is not dropped just because a finding is old.
+- A change counts as compiler-verified only once a real `ci.yml` run -- `storage-impl`, `check-msrv`, and `wasm-check` as applicable -- has gone green against it on `origin`. Not "should compile." Not "matches the shape of a fix that compiled elsewhere in this file." A completed, green Actions run, or nothing.
+- Getting the actual compiler error text back out of a run (still open above -- GitHub's job-log endpoint needs the product owner's own authenticated `gh`/PAT, not this sandbox) is therefore not a nice-to-have; it is the only path this repo has to ever closing a `.rs` finding as done rather than "reviewed by reading."
+- This does not relax rule 4: CI going green is a precondition for *trusting* a change, never a substitute for the product owner's own review-and-`git am` step. Sessions still never push to `main`, CI status notwithstanding.
+
+**Per the Patch Handoff Convention rule 6: folded into the same still-unapplied commit as this session's pub/sub-count entry above, not stacked -- one patch covers both.**

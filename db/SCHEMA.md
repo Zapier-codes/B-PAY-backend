@@ -6,8 +6,8 @@ is a short, current index so a session doesn't have to reconstruct the
 schema by reading every migration in order. **Update this file in the
 same session as any migration that changes it.**
 
-**Migrations `0001`, `0003`, `0004`, `0016`, and `0017` are confirmed
-live** — `0001` applied by the product owner via `psql -f`
+**Migrations `0001`, `0003`, `0004`, `0016`, `0017`, `0019`, and `0020`
+are confirmed live** — `0001` applied by the product owner via `psql -f`
 (2026-09-08), from the second (proot-distro Ubuntu) environment,
 against project ref `mfekzzwsoiezqkovabmp`; `0003`/`0004` applied the
 same way, same session (`CREATE TABLE` / `CREATE TRIGGER` / `ALTER
@@ -16,7 +16,13 @@ TABLE` / `CREATE POLICY` all confirmed — the `DROP TRIGGER IF EXISTS`
 same as `0001` saw for `transactions`); `0016`/`0017` applied the same
 way, 2026-09-10, via `\i` at the live `psql` prompt (`CREATE TABLE` /
 `CREATE TRIGGER` / `CREATE INDEX` / `ALTER TABLE` / `CREATE POLICY`
-all confirmed, no errors). Every migration in `db/migrations/` not
+all confirmed, no errors); `0019`/`0020` applied the same way,
+2026-09-11 (product-owner-reported to this session as deployed — this
+session has no network path to the live Supabase project from its own
+sandbox to independently re-run `\dt`/`\d routing_fallbacks` itself,
+same limitation as every prior migration recorded in this file; taken
+at the product owner's own word, same as every entry above it). Every
+migration in `db/migrations/` not
 listed here still needs its own confirmation the same way before this
 file should be treated as describing live state for it — check
 `handover.md`'s per-migration notes, or run `\dt`/`\d <table>`

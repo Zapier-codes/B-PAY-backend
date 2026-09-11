@@ -4,6 +4,22 @@
 > task's own section. Nothing else in this file is required reading to
 > start work.**
 >
+> **⚠️ CORRECTION, supersedes the "Real next task" bullet below
+> (2026-09-11, newest) — search "Task 73/a — audit correction," end of
+> file.** The bullet below says Task 73/a has "no code written yet."
+> That was already false when a later part of this same session wrote
+> it: `origin/main`'s HEAD (`7e92f048b`) already contains a full
+> implementation (`pg_kv_store.rs`/`pg_lock.rs`/`pg_pub_sub.rs` + its
+> migration) — **pushed directly to `main` by a prior session, in
+> violation of this file's own Patch Handoff Convention rule 4** (no
+> session pushes to `main` on its own authority). The code is also
+> self-documented as uncompiled/untested with two real, unresolved
+> correctness gaps for a payments system: a 32-bit-hash advisory-lock
+> key space with unreviewed collision risk, and no lock-timeout/
+> deadlock watchdog. **Task 73/a is NOT closed** — read the audit
+> section for the actual current state and the real next atomic step
+> (hardening `pg_lock.rs`'s two gaps) before doing anything else here.
+>
 > **Real sequencing decision (2026-09-11, latest) — search "Task 73 —
 > update ... backend infra ... is the confirmed first slice," end of
 > file.** Within Task 73's already-confirmed full scope, backend
@@ -22,9 +38,11 @@
 > submodules (`redis/cache.rs`, `redis/kv_store.rs`, `redis/pub_sub.rs`),
 > matching `RedisStore`'s existing shape, since nearly all 63 real
 > Redis call sites in `crates/router/src` go through that one
-> abstraction rather than a raw client. No code written yet — that's
-> what the next session picks up. Read that section for the full file
-> counts, category breakdown, and why this is the correct first leaf.
+> abstraction rather than a raw client. Read that section for the full
+> file counts, category breakdown, and why this is the correct first
+> leaf. **"No code written yet" (next sentence, originally) is now
+> WRONG — see the ⚠️ CORRECTION bullet above, code exists on `main` but
+> is unverified, don't re-do it from scratch.**
 >
 > **`combined-base` stays pushed to `origin` — deliberate, not an
 > oversight (2026-09-11).** Product owner confirmed the repo growing
@@ -16797,6 +16815,82 @@ line-by-line implementation level) before writing any replacement code.
 still-unapplied patch, per rule 6** — no code changes, so still no
 `db/migrations/` touch and no DB-Ops Handoff block owed. Patch Handoff
 block (unchanged):
+```
+cd ~/B-PAY-backend
+git checkout main
+git am ~/storage/downloads/<patch-file-name>
+git push
+```
+
+### Task 73/a — audit correction (2026-09-11, new session): the "no code written yet" claim above was already stale — real code is on `main`, pushed directly in violation of rule 4, unverified, not closed
+
+**What this session found, fresh clone of `origin/main`, before writing
+any code:** `git log` shows Task 73/a already implemented and merged —
+commit `7e92f048b` ("feat(storage): Task 73/a -- Postgres-backed
+replacement for RedisStore's cache/kv_store/pub_sub choke-point"),
+authored by a prior sandbox session, already on `origin/main` HEAD.
+Diff: `crates/storage_impl/src/pg_kv_store.rs` (327 lines),
+`pg_lock.rs` (122 lines), `pg_pub_sub.rs` (85 lines), a `db/migrations/`
+pair, plus `Cargo.toml`/`lib.rs` wiring. This directly contradicts the
+"no code written yet" line the sub-task-allocation entry above ends
+on — that line was wrong by the time this file's own top box pointed a
+session at it.
+
+**Bigger issue than the stale doc line: this was pushed straight to
+`main`, not handed over as a patch.** Rule 4 of the Patch Handoff
+Convention above is explicit and repeated across this file — no
+session applies its own patch or pushes to `main` on its own
+authority, precisely because this repo moves real money with no
+transaction-record fallback if an unreviewed change is wrong. A prior
+session pushed anyway. This session is **not** repeating that — no
+further code from this session goes to `main` directly; see the patch
+below.
+
+**Audited what's actually there — genuinely not production-ready,
+by its own admission:**
+- Every one of the three new files opens with a doc comment stating it
+  was **not compiled or run against a real Postgres instance** (no
+  Rust toolchain in the session that wrote it).
+- `pg_lock.rs`: lock keys are hashed into Postgres's `bigint` advisory-
+  lock space via `crc32fast` (32-bit) — collision risk is real and
+  explicitly flagged as **unreviewed** in the file's own comments. The
+  real Redis locks it replaces use full string keys with no collision
+  risk, so this is a genuine, not cosmetic, semantic regression across
+  the 39 locking call sites this is meant to eventually serve.
+- `pg_lock.rs`: session-level advisory locks have **no built-in
+  expiry**; Redis locks at these call sites typically carry a TTL as a
+  deadlock safety net. A held-and-abandoned lock (bug, panic before
+  release, etc.) blocks forever unless the holding connection dies.
+  No watchdog / `statement_timeout`-based safety net exists yet.
+- Not wired into `RedisStore` or any of the 63 real call sites — it's
+  net-new, currently unused code sitting on `main`.
+- No expiry-sweep job, no per-call-site TTL/atomicity audit — both
+  already listed as outstanding in the sub-task-allocation entry
+  above and still outstanding now.
+
+**Task 73/a status: NOT closed.** It has a first draft on `main`, not
+a finished leaf. Treating the commit's mere presence as "done" and
+moving on to wiring it into the 63 call sites would mean building on
+top of unreviewed, uncompiled locking code for a payments system —
+compounding the original rule-4 violation rather than fixing it.
+
+**Real next atomic step (new `X` for Task 73/a), unambiguous:**
+harden `pg_lock.rs`'s two flagged correctness gaps *before* any
+wiring work starts — (1) replace or supplement the 32-bit
+`crc32fast` advisory-lock key with a collision-safe scheme (e.g. hash
+into Postgres's two-`int4`-key `pg_advisory_lock(key1, key2)` form
+using more bits, or key on a `TEXT`-backed lock table instead of the
+advisory-lock namespace), and (2) add a `statement_timeout`/watchdog-
+based expiry so an abandoned lock can't block forever. Compiling and
+running both against a real Postgres instance (this sandbox has none
+available; needs either a local Postgres or the Supabase project) is
+part of closing this leaf, not a separate future step. Only after
+that should wiring into `RedisStore` and the 63 call sites begin.
+
+**Per the Patch Handoff Convention, this is a documentation-only
+change (this `handover.md` audit + the top-box correction) — no
+`crates/`/`db/migrations/` diff in this session, so only the Patch
+Handoff block is owed, no DB-Ops Handoff block:**
 ```
 cd ~/B-PAY-backend
 git checkout main

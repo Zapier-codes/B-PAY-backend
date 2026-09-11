@@ -19615,3 +19615,159 @@ cd ~/B-PAY-backend
 git am ~/storage/downloads/<patch-file-name>
 git push
 ```
+
+### Task 73/a — audit, third pass: `services/authentication/blacklist.rs` (caching category) — found the same class of TTL bug `pg_kv_store.rs`'s own Finding #11 already fixed for `set_key_if_not_exist_with_expiry`, but not yet applied to `set_key_with_expiry` (2026-09-11, same session, continued)
+
+**Site: `crates/router/src/services/authentication/blacklist.rs`** — the
+JWT/role/email-token revocation blacklist (logout-all-tokens-issued-
+before-this-time pattern: `check_user_in_blacklist` compares a stored
+revocation timestamp against the token's own issue time). Caching
+category, not locking — maps to `pg_kv_store.rs`, not `pg_lock.rs`. Read
+in full.
+
+**Two different TTLs, same underlying Redis call, both unconditional
+overwrites:**
+- `insert_user_in_blacklist` / `insert_role_in_blacklist`: `redis_conn
+  .set_key_with_expiry(&key, timestamp, JWT_TOKEN_TIME_IN_SECS)`
+- `insert_email_token_in_blacklist`: `redis_conn.set_key_with_expiry(&key,
+  true, EMAIL_TOKEN_TIME_IN_SECS)`
+
+Redis's `set_key_with_expiry` takes the TTL as an explicit per-call
+argument, so these three call sites already coexist fine against one
+shared Redis client with two different expiry durations.
+
+**Checked `pg_kv_store.rs`'s `set_key_with_expiry` (the unconditional-
+overwrite analog these three sites would map onto) against that —
+it does not accept a TTL argument at all:**
+```rust
+pub async fn set_key_with_expiry<S: Serialize + Sync>(
+    &self,
+    key: &str,
+    value: &S,
+) -> error_stack::Result<(), StorageError> {
+    ...
+    let expires_at = self.expiry_from_now();   // store's own fixed ttl_seconds, always
+    ...
+}
+```
+`expiry_from_now()` always uses `self.ttl_seconds` — a single value fixed
+at `PgKvStore::new()` construction time, not a per-call parameter.
+
+**This is not a new category of bug — it's the same one `pg_kv_store.rs`'s
+own Finding #11 already found and fixed, just for the *other* method.**
+That finding's doc comment (search "Finding #11" in this file) describes
+exactly this shape for `set_key_if_not_exist_with_expiry` (the
+conditional/SETNX variant): `utils/currency.rs`'s forex-refresh lock
+needed its own TTL, not the store's default, and reusing the fixed
+`ttl_seconds` "would silently hold the lock for the wrong duration —
+wrong in either direction." The fix there was an `expiry_seconds:
+Option<i64>` parameter that falls back to `self.expiry_from_now()` when
+`None`. **`set_key_with_expiry` (the unconditional-overwrite sibling used
+by this pass's blacklist site, `db/payment_method_session.rs`, and
+`core/payment_methods.rs`'s three sites per this module's own Finding #6
+comment) was never given the same treatment** — it's still fixed-TTL-only,
+and this pass found a real call site (three, actually — blacklist's own
+two different constants) that needs the override Finding #11 already
+proved was necessary for the conditional variant.
+
+**Consequence if wired in as-is, stated plainly:** a `PgKvStore` instance
+configured with one `ttl_seconds` (presumably `JWT_TOKEN_TIME_IN_SECS`,
+matching the more security-critical of the two constants, though this
+pass didn't check what the intended default actually is) would silently
+apply that same duration to `insert_email_token_in_blacklist` too,
+overwriting `EMAIL_TOKEN_TIME_IN_SECS`. Getting this wrong in the
+short-TTL direction for the JWT/role blacklist specifically would be a
+real security regression (a revoked token treated as valid again once the
+undersized TTL lapses, before the token itself would have expired) — the
+same "wrong in either direction" framing Finding #11's own comment already
+uses, just for a call site that comment didn't cover.
+
+**Not done, still open — flagged, not fixed, no code touched this pass**
+(read-only audit, no `rustc` to verify a fix against anyway): adding the
+same `expiry_seconds: Option<i64>` parameter to `set_key_with_expiry`
+(and checking whether `update_key_preserving_ttl` needs the same
+treatment — not checked this pass) is real, concrete follow-up work,
+same additive pattern as Findings #6–#12 already use. Also not done: the
+~36 remaining locking sites, ~27 remaining caching sites (2 read across
+the two prior passes... correction, retry_stats was locking-category, so
+this is the first caching-category site read); confirming what
+`PgKvStore`'s intended default `ttl_seconds` actually is/would be
+(not looked up this pass).
+
+**Per the Patch Handoff Convention: `handover.md` only, no code touched —
+read-only audit pass, third of this session. Base confirmed against real
+`origin/main` via `git fetch origin` immediately before this entry (rule
+8) — no drift.**
+
+**Exact command(s) for the product owner, per rule 7 — Patch Handoff only
+this pass:**
+```
+cd ~/B-PAY-backend
+git am ~/storage/downloads/<patch-file-name>
+git push
+```
+
+### Task 73/a — CORRECTION: this session's first two "audit passes" duplicated already-complete work; Finding #14 (real, new) found and fixed (2026-09-11, same session, continued)
+
+**Recorded as a correction, not silently fixed, per this file's own
+standing practice.** This session's first two entries today (the
+`retry_stats/record.rs` "first pass" and `core/api_locking.rs` "second
+pass") were framed as continuing an in-progress 63-file audit. That
+premise was wrong: the audit was already marked **complete (63/63)**
+several sessions ago (search "audit complete (63/63)"), and both of those
+sites were already read in that completed pass — this was missed because
+this session only read the first ~150 lines of the pointer box before
+starting work, not the full "🔖 NEXT TASK" correction further down that
+already says so plainly.
+
+**Specifically, what duplicated existing material:**
+- `retry_stats/record.rs`'s token-ownership-is-moot-for-advisory-locks
+  conclusion: already on record, already explicitly tagged "Confirmed,
+  not a new finding" in an earlier pass.
+- `api_locking.rs`'s `HoldMultiple` atomicity/rollback reasoning: already
+  Finding #1, already fixed in `pg_lock.rs::try_acquire_multiple`
+  (deadlock-avoidance via non-blocking locks, rollback-on-partial-failure,
+  key sorting) — this session's write-up re-derived the same conclusion
+  independently rather than reading the existing fix first.
+
+**What held up as genuinely new, checked against the actual completed-
+audit record before trusting it, not just re-asserted:** `set_key_with_
+expiry` (unconditional overwrite) never got the per-call TTL override
+Finding #11 gave its SETNX sibling (`set_key_if_not_exist_with_expiry`).
+Confirmed by reading Finding #6 and Finding #11's exact original scope —
+#6 only added the method's existence, #11 only touched the conditional
+variant, `blacklist.rs`'s two-different-TTLs-on-one-method shape was never
+called out even though the file itself was read in a prior pass. **Fixed
+this pass** — new additive method `set_key_with_expiry_override` in
+`pg_kv_store.rs` (Finding #14), same `Option<i64>` fallback-to-store-
+default pattern as Finding #11, existing `set_key_with_expiry` untouched
+so no existing caller's behaviour changes. Not compiled — same standing
+toolchain-wall caveat as every other `.rs` change in this file.
+
+**Lesson recorded so it doesn't repeat: read the full "🔖 NEXT TASK" box
+(including any "POINTER CORRECTION" subsection) before picking a task,
+not just its first screenful** — this file has corrected itself in place
+before specifically because a session acted on a stale pointer; this
+session nearly did the same thing by not reading its own correction.
+
+**Not done, still open:** `set_key_with_expiry_override` not wired into
+`blacklist.rs`'s three call sites yet — still blocked on the same
+toolchain wall as every other wiring step in this file; whether
+`update_key_preserving_ttl` needs the same per-call-override treatment
+(flagged, not checked); the actually-still-open items from the correct
+pointer box (`check-msrv`/wasm CI failures untriaged, 15-vs-18 pub/sub
+count discrepancy) remain untouched by this session.
+
+**Per the Patch Handoff Convention: one `.rs` file touched
+(`crates/storage_impl/src/pg_kv_store.rs`), plus this `handover.md` entry.
+No migration, DB-Ops block not owed. Base confirmed against real
+`origin/main` via `git fetch origin` immediately before this entry (rule
+8) — no drift.**
+
+**Exact command(s) for the product owner, per rule 7 — Patch Handoff only
+this pass:**
+```
+cd ~/B-PAY-backend
+git am ~/storage/downloads/<patch-file-name>
+git push
+```

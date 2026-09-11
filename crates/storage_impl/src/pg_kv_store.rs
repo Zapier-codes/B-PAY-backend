@@ -481,6 +481,65 @@ impl PgKvStore {
         Ok(())
     }
 
+    /// Finding #14 (per-call-site audit, post-63/63 follow-up): same
+    /// unconditional overwrite-plus-TTL-reset as `set_key_with_expiry`
+    /// above, but with an explicit per-call `expiry_seconds` override —
+    /// the same shape Finding #11 already added for the conditional/SETNX
+    /// sibling (`set_key_if_not_exist_with_expiry`), just never carried
+    /// over to this unconditional-overwrite method.
+    ///
+    /// Concrete need: `services/authentication/blacklist.rs` calls the
+    /// Redis analog of this method with two different TTLs against the
+    /// same client — `JWT_TOKEN_TIME_IN_SECS` for
+    /// `insert_user_in_blacklist`/`insert_role_in_blacklist`,
+    /// `EMAIL_TOKEN_TIME_IN_SECS` for `insert_email_token_in_blacklist`.
+    /// A `PgKvStore` instance has exactly one fixed `ttl_seconds`, so
+    /// wiring these call sites onto the store-default-only
+    /// `set_key_with_expiry` would silently apply one of those two
+    /// durations to both — wrong in either direction, same risk framing
+    /// as Finding #11's own reasoning (too short: a revoked token/role
+    /// blacklist entry could lapse before every token that predates the
+    /// revocation has actually expired, letting a revoked credential work
+    /// again — a real security regression, not just a cache-freshness
+    /// issue; too long: unrelated storage held well past its intended
+    /// window). `None` falls back to this store's own `ttl_seconds`,
+    /// same default-preserving convention `set_key_if_not_exist_with_expiry`
+    /// already established, so `set_key_with_expiry` itself is untouched
+    /// and every existing caller keeps its current behaviour.
+    pub async fn set_key_with_expiry_override<S: Serialize + Sync>(
+        &self,
+        key: &str,
+        value: &S,
+        expiry_seconds: Option<i64>,
+    ) -> error_stack::Result<(), StorageError> {
+        let conn = self
+            .pool
+            .get()
+            .await
+            .change_context(StorageError::DatabaseConnectionError)?;
+        let bytes = serde_json::to_vec(value).change_context(StorageError::SerializationFailed)?;
+        let expires_at = match expiry_seconds {
+            Some(secs) => common_utils::date_time::now() + time::Duration::seconds(secs),
+            None => self.expiry_from_now(),
+        };
+
+        sql_query(
+            "INSERT INTO pg_kv_cache (cache_key, field, value, expires_at) \
+             VALUES ($1, '', $2, $3) \
+             ON CONFLICT (cache_key, field) \
+             DO UPDATE SET value = EXCLUDED.value, expires_at = EXCLUDED.expires_at, \
+                            updated_at = now()",
+        )
+        .bind::<Text, _>(key)
+        .bind::<diesel::sql_types::Binary, _>(bytes)
+        .bind::<diesel::sql_types::Timestamp, _>(expires_at)
+        .execute_async(&conn)
+        .await
+        .map_err(StorageError::from)?;
+
+        Ok(())
+    }
+
     /// TTL-*preserving* counterpart to `set_key_with_expiry`, for the
     /// session-expiry security boundary in `db/payment_method_session.rs`
     /// (third pass): overwrites the value without touching `expires_at`.

@@ -4,6 +4,18 @@
 > task's own section. Nothing else in this file is required reading to
 > start work.**
 >
+> **Task 72's migration is DONE, pushed (part of PR #3, not yet merged
+> by Phoenix-Boss), AND confirmed live against the real Supabase
+> instance (2026-09-11)** — re-confirmed via `git ls-remote` against
+> both `Zapier-codes/B-Pay-backend` (`origin/main` at `e07767f`,
+> content-identical to the pre-push commit) and
+> `Phoenix-Boss/B-PAY-backend` (`refs/pull/3/head` at that same
+> `e07767f`); `upstream/main` unchanged at `63f72e2`, PR #3 still open.
+> All four `CREATE TABLE`/`CREATE INDEX`/`CREATE TRIGGER`/
+> `ALTER TABLE`/`CREATE POLICY` outputs came back clean via `\i` at the
+> live `psql` prompt, same pattern `0021`/`0022` saw. `db/SCHEMA.md`'s
+> confirmed-live list updated accordingly.
+>
 > **Task 72's three open questions are now confirmed (2026-09-11),
 > against Stripe's own actual documented behavior, and the migration
 > is built — `payment_intents` (`0023`/`0024`) + `payment_attempts`
@@ -3874,6 +3886,11 @@ re-confirmed 2026-09-09: `refs/pull/3/head` at `d997785`, Task 58 step
 pre-push commit (`git diff` empty); `refs/pull/3/head` at that same
 `4722cd7`, auto-joined as expected; `upstream/main` still `63f72e2`,
 unchanged — **PR #3 remains open and unmerged**, same steady state.
+**Re-confirmed again 2026-09-11** (Task 72's payment_intents/
+payment_attempts migration push): `origin/main` at `e07767f`,
+content-identical; `refs/pull/3/head` at that same `e07767f`,
+auto-joined as expected; `upstream/main` still `63f72e2` — same
+steady state, PR #3 still the correct target.
 
 ---
 

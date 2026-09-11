@@ -7,7 +7,8 @@ schema by reading every migration in order. **Update this file in the
 same session as any migration that changes it.**
 
 **Migrations `0001`, `0003`, `0004`, `0016`, `0017`, `0019`, `0020`,
-`0021`, and `0022` are confirmed live** — `0001` applied by the product owner via `psql -f`
+`0021`, `0022`, `0023`, `0024`, `0025`, and `0026` are confirmed
+live** — `0001` applied by the product owner via `psql -f`
 (2026-09-08), from the second (proot-distro Ubuntu) environment,
 against project ref `mfekzzwsoiezqkovabmp`; `0003`/`0004` applied the
 same way, same session (`CREATE TABLE` / `CREATE TRIGGER` / `ALTER
@@ -26,7 +27,13 @@ at the product owner's own word, same as every entry above it).
 `psql` prompt against a Postgres 17 server (`CREATE TABLE` /
 `CREATE INDEX` / `ALTER TABLE` / `CREATE POLICY` all confirmed, no
 errors — product-owner-reported to this session the same way `0019`/
-`0020` were, same limitation on independent re-verification). Every
+`0020` were, same limitation on independent re-verification).
+`0023`–`0026` applied the same way, 2026-09-11, via `\i` at the live
+`psql` prompt, same session as the code push (`CREATE TABLE` /
+`CREATE INDEX` (×2 per table) / `CREATE TRIGGER` / `ALTER TABLE` /
+`CREATE POLICY` all confirmed, no errors — the `DROP TRIGGER ...
+does not exist, skipping` notice on both new tables is expected on a
+brand-new table, same as `0001` saw for `transactions`). Every
 migration in `db/migrations/` not
 listed here still needs its own confirmation the same way before this
 file should be treated as describing live state for it — check
@@ -434,6 +441,5 @@ that writes to or reads from either table (Task 63/b's own scope),
 and the unresolved `payment_attempts`/`transactions` overlap flagged
 in migration `0025`'s own header — this migration pair is storage
 only, same division of labor as every prior create-table migration in
-this schema. Migrations `0023`–`0026` are **not yet confirmed live** —
-same "check before assuming" caveat this file's own top note already
-states for every migration not explicitly listed there.
+this schema. **Migrations `0023`–`0026` are confirmed live
+(2026-09-11)** — see this file's own top note.

@@ -17,7 +17,12 @@
 > two throwaway scripts (hash stability across key order; five
 > end-to-end control-flow cases against fake cache functions, no live
 > Supabase available) — full detail in Task 65's own section (search
-> "Task 65/a+b — DONE").
+> "Task 65/a+b — DONE"). **Migrations `0021`/`0022` now confirmed run
+> clean against the product owner's real Supabase instance
+> (2026-09-11 follow-up)** — closes the "no live Supabase available"
+> gap for the schema itself only, not for `idempotencyCache()`'s
+> control-flow behavior end-to-end (still throwaway-script-only) —
+> see Task 65's own section for that distinction.
 >
 > **Task 72 is a new proposal (2026-09-11), discovery only, no code —
 > needs product-owner confirmation before any migration is written.**
@@ -14781,6 +14786,22 @@ matched the design above. `getCachedIdempotentResponse()`/
 `recordWebhookEvent()`'s exact "never throws, fail-open on any
 Supabase error" posture — read directly from those functions before
 writing the new ones, not assumed from memory of the pattern.
+
+**Live-Supabase gap above now closed (2026-09-11, same session's
+follow-up) — not re-verified against the throwaway-script behavior
+above, just confirming the schema itself is real:** migrations `0021`
+(`create_idempotency_keys_table`) and `0022`
+(`idempotency_keys_rls`) were run directly against the product
+owner's actual Supabase instance via `psql` — `CREATE TABLE`,
+`CREATE INDEX`, `ALTER TABLE`, `CREATE POLICY` all returned clean, no
+errors. The table and its RLS policy exist in production now. This
+confirms the migration files themselves are valid SQL against a real
+Postgres 17 instance; it does not re-confirm `idempotencyCache()`'s
+control-flow behavior end-to-end against that live table — that's
+still only covered by the throwaway-script re-implementation above,
+not a real integration test. Flagging that distinction rather than
+letting "migrations ran clean" read as "the whole feature is
+integration-tested."
 
 #### Task 66 — Metadata field, scoped API keys, rate-limit-aware outbound wrapper (lower priority, batched together because each is small)
 

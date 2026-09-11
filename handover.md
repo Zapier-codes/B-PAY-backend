@@ -4,8 +4,41 @@
 > task's own section. Nothing else in this file is required reading to
 > start work.**
 >
-> **Task 73 — ALL 5 OPEN QUESTIONS NOW CLOSED. This is the SOLE ACTIVE
-> PRIORITY — every other in-flight task thread in this file is PAUSED**
+> **Task 74 (2026-09-11, new, supersedes Task 73 point 4 only) — is now
+> the SOLE ACTIVE PRIORITY, layered on top of Task 73, which otherwise
+> stands unchanged.** Product-owner decision, this session: `control-
+> center` is no longer "kept and upgraded in place" inside the
+> Hyperswitch fork — it is forked as its own separate top-level project
+> (`Zapier-codes/control-center`), because the dashboard's own scope
+> has grown beyond an in-place branding pass: full white-label support
+> for the dashboard UI itself, so it's not just re-skinned once but
+> re-brandable per deployment. **Corrected same session, after an
+> initial mix-up between the two fork repos:** the API-documentation
+> half is a separate concern in a separate repo — `Zapier-codes/
+> hyperswitch` (the same fork Task 73 already targets) already ships a
+> full Mintlify-rendered API-reference site generated from its own
+> OpenAPI spec, which is more than a bare Swagger UI page and does not
+> need building from scratch; `control-center` itself is UI/branding
+> only. This backend's API being offered out as a product still applies,
+> against that existing Mintlify setup, once B-Pay's own custom routes
+> are added to it as Task 73 ports them over — not yet done. Render
+> hosting is already provisioned for the `control-center` instance.
+> Everything is to be kept modular — the fork stays a separate,
+> independently-versioned project rather than a subtree/vendored copy
+> inside `B-Pay-backend` or the Hyperswitch fork. Full detail in Task
+> 74's own section, end of file (search "Task 74 —"). Per the Patch
+> Handoff Convention, and per direct instruction this session, this is
+> handed over as **a single new patch file** — the product owner has
+> already applied the prior (Task 73) patch, so this is not combined
+> with it per rule 6, it stands on its own; the correction above was
+> folded into this same not-yet-applied Task 74 patch, not a further
+> separate one.
+>
+> **Task 73 — ALL 5 OPEN QUESTIONS NOW CLOSED, still fully in scope
+> except point 4 of its "new scope added this session" list, which
+> Task 74 above now supersedes (control-center is forked separately,
+> not upgraded in place). This remains a SOLE ACTIVE PRIORITY alongside
+> Task 74 — every other in-flight task thread in this file is PAUSED**
 > (search "all 5 open questions now CLOSED" for full detail). Closed:
 > (1) schema — Hyperswitch's own wins, `routing_fallbacks`/
 > `payment_intents`/`payment_attempts` confirmed empty, dropped, no
@@ -15964,6 +15997,13 @@ file touched, migration + `db/SCHEMA.md` + this write-up only.
    `docker-compose.yml`, confirmed present in the earlier service list)
    — this stays in the architecture and gets branded/extended for our
    use, rather than building a separate custom dashboard.
+   **Superseded 2026-09-11 by Task 74 (search "Task 74 —", end of
+   file): "upgrade it in place" is no longer the plan — `control-
+   center` is now forked as its own separate top-level project so that
+   white-labelling, a complete Swagger/OpenAPI UI, and an offered-out
+   API can all be modular rather than baked into one shared checkout.
+   The decision to keep-and-extend rather than rebuild-from-scratch
+   still holds; only "in place inside this fork" is what changed.**
 
 5. **All of our providers must be wired in as connector crates,
    explicitly including providers not yet in this repo at all** — e.g.
@@ -16116,3 +16156,172 @@ every earlier count in this task's own prior notes:**
   written before this correction) refers to the pre-correction count
   and should be read as 9 going forward for any work that touches
   Task 73 specifically.
+
+### Task 74 — `control-center` forked as its own separate project, UI/branding only; the API-docs half corrected to use the fork's own existing Mintlify-rendered reference, not a from-scratch Swagger UI (2026-09-11, revised same session) [ ]
+
+**Scope note, read first:** this is a direct amendment to Task 73's
+"new scope added this session" point 4 (search "Use the fork's
+existing `control-center` UI/dashboard"), not a reopening of Task 73's
+five closed questions and not a reversal of any of them. Task 73's
+own scope — Rust rewrite of this repo as a fork of
+`Zapier-codes/hyperswitch`, Redis/Kafka/ClickHouse stripped for
+Postgres-native equivalents, 9 providers, Render hosting — is
+unchanged and still the priority alongside this task. Only the
+"keep `control-center` and upgrade it in place inside the fork" half
+of point 4 is what changed. **Revision note, same session:** this
+entry's first draft conflated two separate repos and wrote the
+Swagger/API-docs decision under the wrong one; corrected below after
+the product owner pointed to the actual repo. Nothing about part (a)
+below (the `control-center` fork itself) changed — only part (b)
+(the API-docs tooling) did.
+
+**a. `control-center` fork — UI/branding only, unchanged from the
+first draft of this entry.** `control-center`
+(`https://github.com/Zapier-codes/control-center`, the same
+`hyperswitch-control-center` dashboard named in Task 73 point 4) is no
+longer treated as one piece of the `hyperswitch` fork's own checkout
+to be branded and extended in place. It is now **forked as its own
+separate, standalone top-level project**, versioned and released
+independently of the `hyperswitch`/`B-Pay-backend` fork it originated
+from. Editing files inside the existing fork's checkout is explicitly
+**not** what's wanted here — a real fork of `control-center` itself is
+the deliverable. **Confirmed, this session's correction:** this
+repo's own job is the control-center **UI** — white-label
+branding/theming of the dashboard (logo, colors, copy) — nothing more.
+It is not where any API-reference/Swagger decision lives; the first
+draft of this entry was wrong to fold that in here. Checked directly
+against the `control-center` repo's own `package.json`, `src/` tree,
+and `docs/` this session: no Swagger/Redoc/Scalar/Stoplight tooling of
+any kind exists in it, confirming it was never the right place to look
+for that piece — it's a pure dashboard-UI codebase (ReScript/React),
+with its own existing `branding` feature flag (`config/config.toml`)
+already available for the white-labelling this task wants extended.
+
+**b. API documentation — corrected: not a from-scratch Swagger UI
+build. The right repo is `Zapier-codes/hyperswitch` (the Rust fork
+Task 73 already targets for the rewrite, confirmed same remote used
+throughout Task 73's own sections), and it already ships something
+better than a bare Swagger UI page.** Verified directly against that
+repo's own `api-reference/` directory and its `README.md` this
+session:
+- The OpenAPI spec itself is still generated the same way this file
+  already assumed (from the codebase, via `cargo r -p openapi
+  --features v1` / `--features v2`, crate at `crates/openapi/`) —
+  that part of the original Task 46/c plan was never wrong.
+- What's different: instead of serving that spec through a bare
+  Swagger UI page, this fork already renders it through
+  **[Mintlify](https://mintlify.com/)** (`mint dev`, config at
+  `api-reference/docs.json`) — a full documentation site, not just an
+  interactive spec viewer. Confirmed present and already populated:
+  per-endpoint MDX pages organized by resource (`v1/payments`,
+  `v1/refunds`, `v1/disputes`, `v1/customers`, `v1/mandates`,
+  `v1/routing`, `v1/payouts`, etc., mirrored under `v2/`), full
+  `openapi_spec_v1.json` / `openapi_spec_v2.json`, and "essentials"
+  guides (`authentication.mdx`, `rate_limit.mdx`, `error_codes.mdx`,
+  `go-live.mdx`) that a raw Swagger UI page doesn't provide out of the
+  box. `docs.json` itself also carries its own `colors`/`logo`/
+  `navbar`/`footer` config — Mintlify's own theming layer, separate
+  from and in addition to `control-center`'s `branding` flag from (a).
+- **This supersedes Task 46/c's "Swagger/OpenAPI UI" framing and this
+  entry's own first-draft "complete Swagger UI" language** (search the
+  struck note left at Task 46/c itself, and see the corrected note (d)
+  below) — the tooling to build essentially already exists upstream in
+  the correct fork; it is not a from-scratch build.
+- **Confirmed gap, checked directly, not assumed either way:** `grep`
+  across `crates/openapi/src` and `api-reference/` for B-Pay-specific
+  route names (`vtu`, `airtime`, `webhookGateway`) returns nothing —
+  none of this backend's own custom routes
+  (`/vtu/data`/`/vtu/airtime`/webhook-gateway routes, per
+  `routes.js`/`webhookGateway.js`) are represented in the fork's
+  OpenAPI spec today. That is expected (those routes don't exist in
+  the Rust fork yet — Task 73's rewrite hasn't ported them), but it
+  means the "complete API" half of this task is not automatically
+  satisfied by the tooling already existing; it still requires adding
+  each ported B-Pay route to the `openapi` crate as Task 73's
+  connector/route work lands, same "storage/tooling exists, content
+  still has to be added" pattern this file has flagged before (e.g.
+  Task 72's payment_intents/payment_attempts: table built, nothing
+  populates it yet).
+
+**c. "Everything is modular," as instructed this session — read as
+the following concrete decisions, not left as a vague goal:**
+- `control-center` lives at its own repo, `Zapier-codes/control-
+  center`, forked from Hyperswitch's own upstream `control-center`
+  the same way `B-Pay-backend` itself is a fork of `Zapier-codes/
+  hyperswitch` — a sibling fork, not a subtree or vendored copy
+  inside either the payments backend or the `hyperswitch` fork.
+- White-labelling/branding is a configuration layer on top of that
+  fork (theme/logo/copy swappable per deployment), not a one-time
+  hardcoded rebrand — same "per-deployment, not fixed" framing as
+  point (a) above.
+- The API documentation lives in `Zapier-codes/hyperswitch`'s own
+  `api-reference/` (Mintlify-rendered, per (b) above), independent of
+  whichever checkout `control-center` itself lives in — the two are
+  separate concerns in separate repos, not one shared deliverable.
+- Render hosting for the new `control-center` fork's own instance is
+  **already provisioned**, per the product owner this session — not a
+  future to-do for whoever picks up the sub-tasks. (Whether a separate
+  Render/hosting target is also needed for the Mintlify docs site
+  itself is a new, genuinely open question — see below, not addressed
+  this session.)
+
+**d. Relationship to Task 73's own `control-center` line, and to Task
+46/c, made explicit:** Task 73 point 4 is not deleted from this file
+— it's left in place with an inline superseding note (search
+"Superseded 2026-09-11 by Task 74") pointing here, matching this
+file's own convention elsewhere of correcting in place rather than
+silently rewriting history (e.g. the Prestmit/Payscribe provider-count
+corrections above). Task 46/c (search "Swagger UI, decided this
+session," Task 46) is similarly left in place, not deleted — read
+together with this entry's part (b), its "no Swagger route added yet"
+close-out now points at the fork's existing Mintlify setup as the
+mechanism, not a from-scratch build.
+
+**Genuinely open, not decided this session, deliberately left for
+whoever splits this into sub-tasks (same Task Numbering & Workflow
+Convention as Task 73, no new mechanism invented):**
+- Exact repo-fork mechanics for `control-center` — hard fork via
+  GitHub's own "Fork" action vs. a fresh repo seeded from upstream's
+  history; which remote is treated as `upstream` for pulling future
+  Hyperswitch `control-center` updates.
+- How many white-label brand profiles are wanted at launch vs. just
+  the mechanism to add more later.
+- Whether "API given too" means the existing Hyperswitch-fork API
+  surface plus B-Pay's custom VTU/webhook routes once ported, or a
+  distinct externally-facing subset/versioned API — this session
+  confirmed the docs *tooling* but not the final external-facing
+  route set.
+- Auth/access-control model for third parties consuming the API as a
+  product (API keys, per-tenant scoping) — not addressed this session.
+- Whether the already-provisioned Render instance covers the
+  Mintlify docs site as well as the `control-center` dashboard, or
+  whether the docs site needs its own separate hosting target
+  (Mintlify's own hosting vs. self-hosted `mint dev` output) — not
+  addressed this session.
+- Whether the already-provisioned Render instance (for `control-
+  center`) is meant for production, staging, or both.
+
+**Not yet done, this session, deliberately — documentation and
+decision-recording only, same closing pattern as Task 46 and Task 73
+above:** no code forked, no white-label config layer built, no
+B-Pay-specific routes added to the `openapi` crate, no Render/Mintlify
+deploy configured beyond the `control-center` provisioning already
+done directly by the product owner. This entry exists so the next
+session (or whichever session splits Task 73/74 together into
+sub-tasks) has the full, corrected decision on record rather than
+having to reconstruct it from a verbal instruction or from this
+entry's own superseded first draft.
+
+**Per the Patch Handoff Convention, this revision is folded into the
+same not-yet-applied Task 74 patch, per rule 6 (combine, don't stack
+while a prior patch is unapplied)** — this correction was made before
+the product owner applied the first version of this patch, so it's a
+fixup on that same local commit, not a second independent patch.
+Patch Handoff block for this repo (unchanged):
+```
+cd ~/B-PAY-backend
+git am ~/storage/downloads/<patch-file-name>
+git push
+```
+No `db/migrations/` changes in this session's diff, so no DB-Ops
+Handoff block is owed alongside it.

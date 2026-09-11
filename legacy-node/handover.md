@@ -19526,3 +19526,92 @@ cd ~/B-PAY-backend
 git am ~/storage/downloads/<patch-file-name>
 git push
 ```
+
+### Task 73/a — audit, second pass: `core/api_locking.rs` (`LockAction::Hold`/`HoldMultiple`) — the site `pg_lock.rs`'s own Finding #1 was written for; found a real, currently-shipped atomicity gap in the Redis code itself (2026-09-11, same session, continued)
+
+**Site: `crates/router/src/core/api_locking.rs`, `perform_locking_action` /
+`free_lock_action`.** This is the main payment-API idempotency lock —
+called from `services/api.rs` (the generic API wrapper) and three webhook
+entry points (`core/webhooks/{incoming.rs, incoming_v2.rs}`). Read in
+full, both directions (acquire and release), plus every caller of
+`perform_locking_action` to check error-path handling — not just the
+happy path.
+
+**`Hold` (single key): SETNX with request_id as the value, `EX
+redis_lock_expiry_seconds`, bounded retry-with-sleep loop, same shape as
+the retry_stats site from the first pass. `free_lock_action` checks the
+stored value equals this request's own `request_id` before deleting — same
+token-ownership pattern, same conclusion as before: moot once ported to
+`PgLock`, for the same structural reason (connection-scoped advisory
+locks don't have the "expired-then-reacquired-by-someone-else" race a
+bare `SETNX`/`DEL` pair needs a token to guard against).**
+
+**`HoldMultiple` — this is the one `pg_lock.rs`'s own module doc comment
+names directly ("Finding #1 ... `try_acquire_multiple` ... rolling back
+anything already acquired the instant one key in the batch is
+unavailable"). Read `set_multiple_keys_if_not_exists_and_get_values`
+itself (`crates/redis_interface/src/module/{redis_rs,fred}/commands.rs`)
+to check what "atomic" actually means here, rather than trusting the
+name:** it's `futures::future::try_join_all` over **independent**
+per-key `SETNX`+`GET` calls (each individually atomic via its own
+MULTI/EXEC), run concurrently — **not a single atomic multi-key
+operation.** There is no Lua script / single transaction spanning the
+whole key set.
+
+**Traced the real consequence through to the actual caller code, not
+assumed:** in `perform_locking_action`'s `HoldMultiple` arm, when
+`lock_acquired` comes back `false` (some other caller already holds one
+or more of the keys), the loop just sleeps and retries — **it never calls
+`delete_multiple_keys` on the keys this same call *did* manage to `SETNX`
+in that iteration.** Checked every caller of `perform_locking_action`
+(`services/api.rs:273`, `webhooks/incoming.rs:908,1086`,
+`webhooks/incoming_v2.rs:441`) for any cleanup on the error path:
+`services/api.rs` does `.perform_locking_action(...).await.switch()?` —
+propagates `Err(ResourceBusy)` immediately via `?`, and `free_lock_action`
+is only reached afterward, on the *success* path, after `func` runs. So
+when the retry budget is exhausted and `HoldMultiple` finally returns
+`Err(ResourceBusy)`, any keys this failed request *did* acquire along the
+way are left set, still holding this request's `request_id`, unreleased —
+bounded only by `redis_lock_expiry_seconds` TTL, not released
+immediately. **This is a real atomicity gap in the currently-shipped
+Redis code itself**, not something introduced by a Postgres port — the
+system has been running with "all-or-nothing" as the *intended* semantic
+(per `pg_lock.rs`'s own doc comment describing what it exists to fix) but
+not the *actual* one for the failure-to-fully-acquire case.
+
+**What this means for the port, stated plainly:** `pg_lock.rs`'s
+`try_acquire_multiple`, per its own doc comment, already rolls back
+partial acquisitions the instant one key in the batch is unavailable —
+so porting `HoldMultiple` onto it isn't just a lateral Redis→Postgres
+swap, it's a genuine correctness fix for a gap that exists in production
+today. Worth stating explicitly in whatever eventually wires this call
+site into `PgLock`/`RedisStore`, so it's recorded as an intentional
+behavior change (a fix), not silently absorbed as a side effect of the
+migration.
+
+**Not verified against a live cluster (no Postgres or Redis instance
+reachable from this sandbox either) — this is read-only static analysis
+of both the Redis and Postgres-replacement code, same caveat as every
+other finding in this file's audit sections.**
+
+**Not done, still open:** the ~37 remaining locking sites and ~29 caching
+sites; whether `webhooks/incoming.rs`/`incoming_v2.rs`'s call sites have
+their own error-path cleanup that differs from `services/api.rs`'s (not
+checked this pass — only confirmed `services/api.rs` explicitly, the
+others were checked for *presence* of `perform_locking_action` calls, not
+read line-by-line for their own error handling); whether the partial-key
+leak above has ever caused an observed incident (not investigated,
+out of scope for a static read).
+
+**Per the Patch Handoff Convention: `handover.md` only, no code touched —
+read-only audit pass, second of this session. Base confirmed against real
+`origin/main` via `git fetch origin` immediately before this entry (rule
+8) — no drift.**
+
+**Exact command(s) for the product owner, per rule 7 — Patch Handoff only
+this pass:**
+```
+cd ~/B-PAY-backend
+git am ~/storage/downloads/<patch-file-name>
+git push
+```

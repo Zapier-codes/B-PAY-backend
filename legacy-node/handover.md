@@ -122,6 +122,19 @@
 > fraud-counter increment is GET-then-SET, not atomic, in production
 > today. **9 of 63 files now read in depth; 54 remain open.**
 >
+> **✅ AUDIT CONTINUED, THIRD PASS (2026-09-11, newest) — 6 more files
+> read (15 of 63 now, 48 remain); one new concrete `pg_kv_store.rs` API
+> gap found.** `db/payment_method_session.rs` needs an unconditional
+> overwrite-set-with-TTL and a TTL-*preserving* update; `pg_kv_store.rs`
+> has neither today (only `set_key_if_not_exist`, which is the wrong
+> semantics for both). Same risk class as the `card_testing_guard.rs`
+> finding above, but on a session-expiry security boundary rather than
+> a fraud counter. Full detail: search "Task 73/a — per-call-site
+> audit, third pass" at the end of the file. `rust-check.yml`'s first
+> real Actions run is **still unconfirmed** — not re-attempted this
+> pass, still needs someone with an unthrottled GitHub session to check
+> the Actions tab.
+>
 > **⚠️ SUPERSEDED — CI ADDED (2026-09-11) — `.github/workflows/rust-check.yml`
 > now exists, pinned to `rustc` 1.85.0 (matching the workspace's own
 > `package.rust-version`), running `cargo check -p storage_impl` +
@@ -17708,3 +17721,89 @@ cd ~/B-PAY-backend
 git am ~/storage/downloads/<patch-file-name>
 git push
 ```
+
+### Task 73/a — per-call-site audit, third pass (2026-09-11, new session): 6 more files read, one new concrete `pg_kv_store.rs` API gap (no unconditional set, no TTL-preserving update); pattern count for the shared HGet/Hset/HSetNx shape now at 9 confirmed sites
+
+**Base re-confirmed against real `origin/main` before touching anything
+(rule 8): `git fetch origin` + comparing `origin/main`'s HEAD to this
+session's own clone HEAD came back identical at `e7844995b`.** No drift
+since the previous session's handoff. Rust toolchain not re-tried this
+session — the last two sessions each independently reconfirmed the
+`403`/`host_not_allowed` wall on `sh.rustup.rs` and
+`static.rust-lang.org`, and re-running the identical `curl -sI` a third
+time in a row without new information would just burn a step already
+on record twice. Per the checklist's own step 5, went straight to the
+audit.
+
+**6 more files read in depth this pass** (bringing the running total to
+15 of 63, 48 remain): `db/address.rs`, `db/capture.rs`,
+`db/reverse_lookup.rs`, `db/ephemeral_key.rs`, `db/organization.rs`,
+`db/payment_method_session.rs`.
+
+**Pattern confirmation, not a new finding — now 9 sites, not 3:**
+`db/address.rs`, `db/capture.rs`, and `db/reverse_lookup.rs` all go
+through the identical `decide_storage_scheme` + `kv_wrapper` +
+`KvOperation::{HGet,Hset,HSetNx,SetNx}` + `PartitionKey` shape already
+established by `db/refund.rs`/`db/dispute.rs`/`db/mandate.rs`. Same
+caveat as before applies unchanged: "looks compatible" is not
+"confirmed compatible" without either the toolchain or a full
+line-by-line signature trace, neither done yet. `db/organization.rs`
+does **not** hit this shape at all — its only Redis touch is
+`storage_impl::redis::cache::{CacheKind, ACCOUNTS_CACHE}` for
+invalidation, same fan-out-broadcast category already flagged as
+Finding #5 against `db/api_keys.rs`, not a new category.
+
+**Finding #6 (new, concrete, same shape as Finding #1) —
+`pg_kv_store.rs` has no unconditional overwrite-set and no
+TTL-preserving update; `db/payment_method_session.rs` needs both and
+neither exists today.** `db/payment_method_session.rs` does two
+distinct writes that Redis's real API supports and `pg_kv_store.rs`
+does not yet mirror:
+- **Create**, via `serialize_and_set_key_with_expiry(key, value,
+  validity_in_seconds)` — an unconditional set-with-TTL, not
+  set-if-not-exists. `pg_kv_store.rs`'s only key-level write method is
+  `set_key_if_not_exist` (`INSERT ... ON CONFLICT DO NOTHING`) — there
+  is no plain "set this value, TTL X, overwrite whatever was there"
+  method at all.
+- **Update**, via `serialize_and_set_key_without_modifying_ttl(key,
+  value)` — deliberately does *not* touch the existing expiry when the
+  session payload changes. `pg_kv_store.rs` has no method that updates
+  a row's `value` while leaving `expires_at` untouched; every write
+  path that exists sets `expires_at` fresh.
+
+**Why this matters beyond "missing method," same class of risk as the
+`card_testing_guard.rs` finding:** a payment-methods session's TTL is
+a security boundary — it's what bounds how long a stored payment
+method stays retrievable via that session id. If a naive port reused
+`set_key_if_not_exist` (wrong — it wouldn't overwrite) or reused a
+generic "set + apply full TTL" method for the update path (available
+once someone adds one, easy mistake), every session update would
+silently *extend* the session's effective lifetime, the same sliding-
+window-instead-of-fixed-window bug already flagged in `card_testing_
+guard.rs`, but here on a security-sensitive expiry rather than a
+fraud-counter window. **Not fixed this session** (new Rust,
+unverifiable without the toolchain, same discipline as every other
+finding on record) — flagged as a second concrete `pg_kv_store.rs` API
+gap alongside Finding #1's multi-key locking gap, for whoever next
+extends that file.
+
+**`db/ephemeral_key.rs` noted but not fully resolved this pass:** it
+uses `get_redis_conn()` directly (raw connection, not the `kv_wrapper`
+KV-store abstraction the other 9 pattern-confirmed files use) with its
+own `generate_redis_key()`/`HsetnxReply` shape. Whether it needs
+`pg_kv_store.rs`'s hash-field methods or the plain key methods (or
+both — it appears to touch more than one key per operation) was not
+traced field-by-field this pass; carrying it forward as still-open
+rather than guessing.
+
+**Not done, still open:** 48 of 63 files still unread; `PgLock`'s
+multi-key gap (Finding #1) and `pg_kv_store.rs`'s TTL/overwrite gap
+(Finding #6, this entry) both unfixed — neither should be fixed as new
+Rust without a working toolchain, same standing discipline as every
+prior entry; `rust-check.yml`'s first real Actions run still
+unconfirmed by any session as of this entry (still worth the product
+owner checking the Actions tab directly, per the top box).
+
+**Per the Patch Handoff Convention: `handover.md` only, no `.rs` file
+touched, no migration. Base confirmed against real `origin/main`
+immediately before this session started (rule 8).**

@@ -1,7 +1,19 @@
 use hyperswitch_masking::{Maskable, Secret};
-use reqwest::multipart::Form;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
+
+#[cfg(not(target_arch = "wasm32"))]
+use reqwest::multipart::Form;
+
+/// Stand-in for `reqwest::multipart::Form` on `wasm32` targets, where the
+/// `reqwest` dependency (and the `tokio`/`mio` stack it pulls in for its
+/// async HTTP client) isn't compiled — `mio` has no `wasm32-unknown-unknown`
+/// support. `RequestContent::FormData` still needs a concrete type here so
+/// downstream crates (e.g. `api_models`, via `euclid_wasm`) keep compiling
+/// on this target; nothing in the wasm build path ever constructs one.
+#[cfg(target_arch = "wasm32")]
+#[derive(Debug, Default)]
+pub struct Form;
 
 /// Default XML version
 pub const DEFAULT_XML_VERSION: &str = "1.0";

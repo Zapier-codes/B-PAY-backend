@@ -48,7 +48,6 @@ phonenumber = "0.3.7"
 quick-xml = { version = "0.31.0", features = ["serialize"] }
 rand = "0.8.5"
 regex = "1.11.1"
-reqwest = { version = "0.11.27", features = ["json", "native-tls", "gzip", "multipart"] }
 ring = { version = "0.17.14", features = ["std", "wasm32_unknown_unknown_js"] }
 rsa = {version = "0.9.8", features = ["sha2"]}
 rust_decimal = "1.37"
@@ -76,6 +75,14 @@ router_env = { version = "0.1.0", path = "../router_env", features = ["log_extra
 [target.'cfg(target_arch = "wasm32")'.dependencies.uuid]
 version = "1.17.0"
 features = ["v7", "js"]
+
+# `reqwest`'s async client pulls in `tokio` with its `net` feature, which
+# pulls in `mio` — and `mio` does not support `wasm32-unknown-unknown`
+# (only `wasi` targets). Nothing reachable from a wasm32 build actually
+# makes an HTTP call through this crate (see `request.rs`), so the real
+# HTTP client is scoped out of that target rather than patched around.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+reqwest = { version = "0.11.27", features = ["json", "native-tls", "gzip", "multipart"] }
 
 [target.'cfg(not(target_os = "windows"))'.dependencies]
 signal-hook-tokio = { version = "0.3.1", features = ["futures-v0_3"], optional = true }

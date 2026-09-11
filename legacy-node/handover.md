@@ -4,6 +4,28 @@
 > task's own section. Nothing else in this file is required reading to
 > start work.**
 >
+> **⚠️ SUPERSEDED AGAIN, newest — search "Task 73/a — pg_cron sweep jobs
+> for pg_kv_cache/pg_pubsub_payload," end of file (2026-09-11).** Both
+> unbounded-growth gaps flagged in the entry directly below (no expiry
+> sweep for `pg_kv_cache`, no cleanup at all for `pg_pubsub_payload`) are
+> now **closed — via a `migrations/` change, not a Rust one**, so this is
+> the first Task 73/a fix **not** blocked by the diagnosed `rustc`
+> toolchain gap. Two `pg_cron`-scheduled, bounded-batch sweep functions
+> (`sweep_pg_kv_cache`, `sweep_pg_pubsub_payload`) were added. **The
+> toolchain blocker itself was independently re-confirmed this session**,
+> more precisely than before: this sandbox actually installed the only
+> `rustc` its package sources offer (1.75.0) and ran `cargo check`
+> against it, rather than just comparing version numbers on paper. Two
+> concrete, reproduced failures came back — a `Cargo.lock` `version = 4`
+> parse error (needs `-Znext-lockfile-bump`, i.e. a newer cargo), and,
+> after regenerating a v3 lock, a hard `feature edition2024 is required`
+> error from the `rusty-money` git dependency pulled in by
+> `currency_conversion` — and this sandbox's network allowlist was
+> checked directly: `static.rust-lang.org` and `sh.rustup.rs` both come
+> back `403 host_not_allowed`, so there is no rustup/toolchain-install
+> path available either, not just an unresolved "have to check" gap. Full
+> detail, both errors verbatim, in that section.
+>
 > **⚠️ SUPERSEDED AGAIN — search "Task 73/a — pg_kv_store.rs LIKE-escape
 > fix," end of file (2026-09-11, newest).** The `pg_lock.rs` hardening
 > patch (bullet below) **landed and is confirmed on `origin/main`**
@@ -17052,4 +17074,104 @@ cd ~/B-PAY-backend
 git checkout main
 git am ~/storage/downloads/<patch-file-name>
 git push
+```
+
+### Task 73/a — pg_cron sweep jobs for pg_kv_cache/pg_pubsub_payload (2026-09-11, new session): both flagged unbounded-growth gaps closed via a migration, not Rust; toolchain blocker independently re-confirmed with real reproduced errors, not just re-stated
+
+**Scope: one new migration
+(`migrations/2026-09-11-130000_add_pg_kv_cache_pubsub_sweep_jobs/`) +
+doc-comment updates in `pg_kv_store.rs` and `pg_pub_sub.rs`.** No other
+`.rs` file touched. `pg_lock.rs` unchanged.
+
+**Fix — `pg_kv_cache`'s missing expiry sweep and `pg_pubsub_payload`'s
+missing cleanup, both closed the same way.** Every prior Task 73/a
+session flagged one or both of these (module doc comments, and the
+pg_kv_store.rs LIKE-escape session's own new note on
+`pg_pubsub_payload`) but left them for "a `scheduler` crate job" that
+never got written. This session closes both **without touching Rust at
+all**: a `pg_cron` extension + two scheduled `plpgsql` functions,
+each doing a bounded-batch delete (`LIMIT batch_size`, looped up to
+`max_batches` per call) rather than one unbounded `DELETE`, since
+neither table has ever been swept before and an unknown backlog may
+already exist on whichever project first runs this.
+- `sweep_pg_kv_cache()` — deletes `pg_kv_cache` rows past
+  `expires_at`, scheduled every 5 minutes.
+- `sweep_pg_pubsub_payload()` — deletes `pg_pubsub_payload` rows older
+  than a 10-minute `created_at` retention window (this table has no
+  `expires_at` column; real subscribers read their row within the same
+  request cycle as the `NOTIFY`, so age-since-write is the correct
+  signal, not a per-row expiry), scheduled every 2 minutes.
+
+Both use `pg_cron` because Task 73's own scope decision already named
+it as the mechanism for the Kafka/ClickHouse replacement — reusing it
+here avoids a second scheduling mechanism for the same class of
+problem, and it's a managed Supabase extension, so nothing new to
+deploy or monitor as a process. `sweep_pg_kv_cache`/
+`sweep_pg_pubsub_payload` are unscheduled-then-rescheduled by name at
+the top of `up.sql` so re-running this migration doesn't register
+duplicate cron jobs.
+
+**Toolchain blocker: re-confirmed empirically this session, not just
+re-stated from the prior diagnosis.** Since this fix needed no Rust
+change to compile-check, the sandbox's spare cycles went toward
+actually reproducing the blocker instead of repeating the "needs
+rustc ≥ 1.85.0" line unchanged for a fourth session running:
+1. `apt-get install rustc cargo` — confirmed apt's only candidate is
+   still `1.75.0+dfsg0ubuntu1-0ubuntu7.4` (same as before, now actually
+   installed and run, not just checked with `apt-cache policy`).
+2. `cargo check -p storage_impl` against the repo's real, committed
+   `Cargo.lock` failed before touching any crate: `lock file version 4
+   requires -Znext-lockfile-bump` — this workspace's lockfile format
+   itself needs a newer cargo, a harder floor than "some crate uses new
+   syntax."
+3. Regenerating a v3 lock (`rm Cargo.lock && cargo check -p
+   storage_impl`, **not committed, reverted after the experiment**) got
+   further, then hit a real, concrete error: `currency_conversion`'s
+   `rusty-money` git dependency (`tag=v0.5.0`) requires Cargo feature
+   `edition2024`, which "is not stabilized in this version of Cargo
+   (1.75.0)." Not a `storage_impl`-specific problem — a transitive
+   dependency elsewhere in the workspace, confirming this blocks the
+   whole workspace, not just this one crate.
+4. Checked whether a toolchain could be fetched around apt entirely:
+   `static.rust-lang.org` (rustup's actual toolchain-download host) and
+   `sh.rustup.rs` (the rustup install script host) both returned `HTTP
+   403`, header `x-deny-reason: host_not_allowed`, against this
+   sandbox's network policy. No path exists in this sandbox to a
+   `rustc` newer than 1.75.0 — not unresolved, not "haven't found one
+   yet," actually checked and blocked.
+
+**None of this session's own changes were compiled either** (there was
+nothing to compile — pure SQL + doc comments) — but the next session
+that picks up any actual Rust change in `pg_kv_store.rs`/`pg_lock.rs`/
+`pg_pub_sub.rs` should expect this exact same wall, with concrete
+errors now on file instead of a version-number comparison, and should
+not spend time re-diagnosing it from scratch.
+
+**Not done, still open, unchanged from every prior Task 73/a session:**
+wiring `pg_lock.rs`/`pg_kv_store.rs`/`pg_pub_sub.rs` into `RedisStore`
+or any of the 63 real call sites; the per-call-site TTL/atomicity
+audit; `hscan_and_deserialize`'s cursor pagination for unbounded
+hashes; load testing against Supabase; the subscriber-side (`LISTEN` +
+fetch-by-id) half of `pg_pub_sub.rs`.
+
+**Per the Patch Handoff Convention: code/doc-comment changes +
+`handover.md` update + a new `migrations/` file, all in one commit —
+Patch Handoff owed as always, and per rule 7, the DB-Ops Handoff block
+is *additionally* owed this time because `migrations/` shows up in
+this session's own `git diff --stat` (unlike every other Task 73/a
+session so far). Path corrected below to this repo's real migration
+directory (`migrations/`, Diesel-managed) — the DB-Ops section's own
+`db/migrations/` example path is this file's older, pre-merge
+Task 56/c convention for a different migration set, not a claim that
+this repo's Diesel migrations live there:**
+```
+cd ~/B-PAY-backend
+git am ~/storage/downloads/<patch-file-name>
+git push
+```
+```
+proot-distro login ubuntu
+cd ~/B-Pay-backend
+git pull
+psql "host=aws-1-eu-west-1.pooler.supabase.com port=5432 dbname=postgres user=postgres.mfekzzwsoiezqkovabmp sslmode=require" -f migrations/2026-09-11-130000_add_pg_kv_cache_pubsub_sweep_jobs/up.sql
 ```

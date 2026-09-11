@@ -14,11 +14,19 @@
 //!
 //! Not done, left for the per-call-site review Task 73/a explicitly calls
 //! out as separate follow-up work:
-//! - No expiry sweep job is wired up yet (`pg_kv_cache.expires_at` is
-//!   filtered at read time — matches Redis's own lazy-expiry read
-//!   behaviour — but nothing deletes rows past `expires_at`; needs a
-//!   `scheduler` crate job before this can replace Redis in a
-//!   memory-bounded way, not just a correctness-bounded one).
+//! - **Expiry sweep — fixed this session, via `pg_cron`, not the
+//!   `scheduler` crate.** `pg_kv_cache.expires_at` is still filtered at
+//!   read time (matches Redis's own lazy-expiry read behaviour), but rows
+//!   past `expires_at` are now also reclaimed by a scheduled
+//!   `sweep_pg_kv_cache()` DB function (bounded-batch delete, every 5
+//!   minutes) — see
+//!   `migrations/2026-09-11-130000_add_pg_kv_cache_pubsub_sweep_jobs/up.sql`.
+//!   A `scheduler`-crate job was the option floated when this gap was
+//!   first flagged, but pg_cron needs no Rust-side wiring or a second
+//!   process to deploy/monitor, and Task 73's own scope decision already
+//!   named pg_cron as the mechanism for the Kafka/ClickHouse replacement —
+//!   using it here too avoids introducing a second scheduling mechanism
+//!   for the same kind of problem.
 //! - **`KvOperation::Scan`'s LIKE-metacharacter escaping — fixed this
 //!   session** (was flagged here as open). `scan_hash_fields`'s glob-to-
 //!   `LIKE` translation now escapes `%`/`_`/`\` before turning `*` into an

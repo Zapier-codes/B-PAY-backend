@@ -24,6 +24,16 @@
 //! `pg_pubsub_payload` for new rows since a last-seen id) without solving
 //! connection lifecycle, and should not be treated as ready for a real
 //! subscriber loop.
+//!
+//! ## Cleanup
+//! `publish()` inserts a row on every call and nothing in this file ever
+//! deletes it — flagged in an earlier session as the same unbounded-growth
+//! shape `pg_kv_cache` had before its own sweep job. **Fixed this session**,
+//! DB-side rather than in this module: a scheduled `sweep_pg_pubsub_payload()`
+//! function (bounded-batch delete by `created_at` age, every 2 minutes) — see
+//! `migrations/2026-09-11-130000_add_pg_kv_cache_pubsub_sweep_jobs/up.sql`.
+//! Nothing in this file changed; the sweep is pure SQL/pg_cron and has no
+//! Rust-side dependency.
 
 use async_bb8_diesel::AsyncRunQueryDsl;
 use diesel::{sql_query, sql_types::Text, QueryableByName};

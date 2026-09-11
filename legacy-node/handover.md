@@ -19916,3 +19916,24 @@ cd ~/B-PAY-backend
 git am ~/storage/downloads/<patch-file-name>
 git push
 ```
+
+### CI — root cause of `test`/`check-v2`/`nix-check` queuing forever, found and fixed: no self-hosted runner registered under this account at all (2026-09-11, new session)
+
+**The question that started this:** why were `Run tests on stable toolchain`, `Check compilation for V2 features`, and both `Nix CI` matrix legs stuck `queued` indefinitely on run `34640874665`, while `formatting`/`check-msrv`/`storage-impl`/`wasm-check`/`typos` all completed (pass or fail) on the same push. That's the tell: a credentials failure shows up as a job that *starts* then fails; a job that never starts means nothing is claiming it.
+
+**Root cause, confirmed rather than guessed:** `gh api repos/Zapier-codes/B-Pay-backend/actions/runners --jq '...'` returned an empty list — no self-hosted runner registered under this account, at all. `test`/`check-v2` request `hyperswitch-runners`/`hyperswitch-runners-merge`; `nix-check`'s matrix requests `x86_64-linux`/`aarch64-darwin` — all four are self-hosted-only labels (checked `ci.yml` directly), none of which are default GitHub-hosted labels. Self-hosted runner registration is per-account and doesn't travel with a fork or a repo-ownership transfer — this repo was forked then transferred into this account per the product owner, and whatever pool those labels pointed to originally never came along. Consistent with the two prior full runs both landing `cancelled` rather than `success`/`failure` (GitHub eventually gives up on a job nothing can ever claim).
+
+**Fix:** `test`/`check-v2` → `runs-on: ubuntu-latest`. `nix-check`'s matrix split into `system` (kept, still fed to `om ci run --systems` unchanged) and a new `runner` key (`x86_64-linux` → `ubuntu-latest`, `aarch64-darwin` → `macos-latest`, confirmed via web search that `macos-latest` is currently arm64/Apple Silicon — a real architecture match, not assumed). Checked both `test` and `check-v2`'s full step lists first: both already install every tool fresh via actions (`dtolnay/rust-toolchain`, `arduino/setup-protoc`, `mozilla-actions/sccache-action`, `rui314/setup-mold`) — identical pattern to the four jobs already running fine on `ubuntu-latest` — so there's no self-hosted-specific pre-installed dependency either job was relying on.
+
+**Explicitly NOT claimed:** that the canonical-push-only `just ci_hack` full feature-matrix sweep in `test` actually fits a public-repo GitHub-hosted runner's 4 vCPU/16 GB. That's a real risk only a real run resolves — same standing caveat as everything else here. If it times out/OOMs, split it into more/smaller jobs next, not a revert to self-hosted (which isn't actually available under this account regardless).
+
+**Also surfaced, not yet acted on:** `test`'s "Generate a token" step (PR-only, not triggered by our push) uses `secrets.HYPERSWITCH_BOT_APP_ID`/`HYPERSWITCH_BOT_APP_PRIVATE_KEY` — org-scoped secrets that, per the same fork/transfer logic, may not exist under this account either. Not this push's blocker, but worth checking before the first real PR run.
+
+**Per the Patch Handoff Convention: one file touched (`.github/workflows/ci.yml`), plus this `handover.md` entry. Base confirmed against real `origin/main` (`07ea13613`) via `git fetch origin` immediately before this entry (rule 8) — no drift.**
+
+**Exact command(s) for the product owner, per rule 7 — Patch Handoff only this pass:**
+```
+cd ~/B-PAY-backend
+git am ~/storage/downloads/<patch-file-name>
+git push
+```

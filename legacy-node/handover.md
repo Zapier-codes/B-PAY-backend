@@ -4,21 +4,35 @@
 > task's own section. Nothing else in this file is required reading to
 > start work.**
 >
-> **⚠️ CORRECTION, supersedes the "Real next task" bullet below
-> (2026-09-11, newest) — search "Task 73/a — audit correction," end of
-> file.** The bullet below says Task 73/a has "no code written yet."
-> That was already false when a later part of this same session wrote
-> it: `origin/main`'s HEAD (`7e92f048b`) already contains a full
-> implementation (`pg_kv_store.rs`/`pg_lock.rs`/`pg_pub_sub.rs` + its
-> migration) — **pushed directly to `main` by a prior session, in
-> violation of this file's own Patch Handoff Convention rule 4** (no
-> session pushes to `main` on its own authority). The code is also
-> self-documented as uncompiled/untested with two real, unresolved
-> correctness gaps for a payments system: a 32-bit-hash advisory-lock
-> key space with unreviewed collision risk, and no lock-timeout/
-> deadlock watchdog. **Task 73/a is NOT closed** — read the audit
-> section for the actual current state and the real next atomic step
-> (hardening `pg_lock.rs`'s two gaps) before doing anything else here.
+> **⚠️ SUPERSEDED AGAIN — search "Task 73/a — pg_lock.rs hardening,"
+> end of file (2026-09-11, newest).** The ⚠️ CORRECTION bullet
+> immediately below this one flagged two gaps in the already-pushed
+> `pg_lock.rs`: a 32-bit collision-prone lock-key hash, and no lock-
+> timeout/deadlock watchdog. **Both are now fixed in a new, not-yet-
+> applied patch** (FNV-1a 64-bit key hashing; a `SET
+> idle_session_timeout` safety net on acquire, reset on release) —
+> read that section, not just this box, before touching `pg_lock.rs`
+> again, since it explains a real remaining caveat the fix doesn't
+> cover (a lock held while the pool keeps actively reusing its
+> connection isn't bounded by the idle timeout, only the genuinely-
+> forgotten case is). **Still not compiled** — this session actually
+> tried (network access to `crates.io` is available in-sandbox), and
+> hit a diagnosed, not assumed, blocker: the workspace requires
+> `rust-version = 1.85.0`, this sandbox's only installable toolchain
+> (Ubuntu apt) is `1.75.0`, and there's no network path here to a
+> newer one. `pg_kv_store.rs` and `pg_pub_sub.rs` are untouched this
+> session and still carry their original caveats unchanged.
+>
+> **⚠️ CORRECTION (2026-09-11, earlier this same session) — search
+> "Task 73/a — audit correction," end of file.** The bullet below says
+> Task 73/a has "no code written yet." That was already false when a
+> later part of this same session wrote it: `origin/main`'s HEAD
+> (`7e92f048b`) already contains a full implementation
+> (`pg_kv_store.rs`/`pg_lock.rs`/`pg_pub_sub.rs` + its migration) —
+> **pushed directly to `main` by a prior session, in violation of this
+> file's own Patch Handoff Convention rule 4** (no session pushes to
+> `main` on its own authority). **Task 73/a is still NOT closed** —
+> read the two sections above/below for the actual current state.
 >
 > **Real sequencing decision (2026-09-11, latest) — search "Task 73 —
 > update ... backend infra ... is the confirmed first slice," end of
@@ -16891,6 +16905,77 @@ that should wiring into `RedisStore` and the 63 call sites begin.
 change (this `handover.md` audit + the top-box correction) — no
 `crates/`/`db/migrations/` diff in this session, so only the Patch
 Handoff block is owed, no DB-Ops Handoff block:**
+```
+cd ~/B-PAY-backend
+git checkout main
+git am ~/storage/downloads/<patch-file-name>
+git push
+```
+
+### Task 73/a — pg_lock.rs hardening (2026-09-11, new session): both flagged correctness gaps fixed; compile attempt made and diagnosed, not just assumed; still not wired in
+
+**Scope: `pg_lock.rs` only**, per the prior audit's identified single
+next atomic step. `pg_kv_store.rs` and `pg_pub_sub.rs` are unchanged
+this session and still carry every caveat their own doc comments
+already listed.
+
+**Fix 1 — collision-prone lock key, closed.** Replaced the
+`crc32fast`-widened-to-`i64` hash (32-bit space, unreviewed collision
+risk) with FNV-1a, 64-bit: a fully specified, dependency-free
+algorithm using the *full* `bigint` advisory-lock key space, computed
+in `lock_key_to_bigint`. Deliberately not `std`'s `DefaultHasher` —
+its output is only promised stable within one build, which FNV-1a
+doesn't need to rely on. Still probabilistic like any fixed-space
+hash, just ~2^32 times less likely to collide than the draft it
+replaces — worth a one-line mention in the eventual per-call-site
+audit, not a blocker on its own anymore.
+
+**Fix 2 — no lock-timeout/deadlock watchdog, partially closed, caveat
+stated plainly in the code itself.** `try_acquire` now runs `SET
+idle_session_timeout = '30s'` on the connection once a lock is
+actually acquired (Postgres 14+/Supabase-supported GUC); `release`
+runs `RESET idle_session_timeout` before returning the connection to
+the pool so the setting doesn't leak onto an unrelated future
+borrower. Session-level advisory locks release automatically when
+their owning backend terminates (documented Postgres behaviour), so a
+caller that forgets `.release()` now leaks the lock for at most 30s
+of genuine idle time instead of the connection's entire remaining
+pooled lifetime. **What this does NOT cover, same caveat as in the
+code:** a lock held while the pool keeps actively reusing that same
+connection for other queries isn't bounded by this — each query
+resets the idle timer. The real fix is a `PgLockGuard` with an
+async-drop shim that force-releases regardless of reuse, which needs
+an owned/`'static` connection type — bb8 0.8's `Pool::get()` only
+hands out a `PooledConnection<'_, M>` borrowing the pool, and this
+workspace `forbid`s `unsafe_code` at the lint level, so there's no
+self-referential-struct escape hatch either. That redesign is real,
+separate follow-up work, not attempted here — flagging it honestly
+rather than papering over it with a partial fix presented as complete.
+
+**Compile status: still not compiled, but this session actually tried
+instead of repeating the "no toolchain" note unchanged.** This
+sandbox's network allowlist includes `crates.io`/`index.crates.io`/
+`static.crates.io`, so a real attempt was made: `apt-cache policy
+rustc` offers `1.75.0` (Ubuntu noble); this workspace's root
+`Cargo.toml` pins `package.rust-version = "1.85.0"`. No network path
+exists from this sandbox to install a toolchain newer than apt's, so
+`cargo check -p storage_impl` was not run. This is now a diagnosed,
+concrete blocker (exact required vs. available versions) instead of
+an assumed one — whoever next has a `rustc` ≥ 1.85 available should
+run `cargo check -p storage_impl` (scoped to this crate, not the full
+workspace) as the actual next step before trusting this file further,
+same "real next atomic step" framing as before.
+
+**Not done, still explicitly open, unchanged from the prior audit:**
+wiring `pg_lock.rs`/`pg_kv_store.rs`/`pg_pub_sub.rs` into
+`RedisStore` or any of the 63 real call sites; the per-call-site
+TTL/atomicity audit; the expiry-sweep job for `pg_kv_cache`; load
+testing against Supabase. None of this session's changes touch
+`db/migrations/`.
+
+**Per the Patch Handoff Convention: code change (`pg_lock.rs`) +
+`handover.md` update, folded into one patch, no `db/migrations/`
+diff, so Patch Handoff only, no DB-Ops block:**
 ```
 cd ~/B-PAY-backend
 git checkout main

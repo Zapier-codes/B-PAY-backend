@@ -181,11 +181,18 @@ jobs:
           save-if: ${{ env.IS_CANONICAL_RUN == 'true' }}
           cache-on-failure: true
 
+      # sccache's GHA cache backend (SCCACHE_GHA_ENABLED above) needs the
+      # Actions cache service URL/token exported into the job's env --
+      # those aren't visible to a plain `run:` step or to a generic
+      # tool-installer action, only to an action that explicitly requests
+      # them. mozilla-actions/sccache-action installs sccache and performs
+      # that export in one step; taiki-e/install-action (still used for
+      # the other tools below) does not, which is why sccache's own
+      # health check ("sccache --start-server" / the first `rustc -vV`
+      # call through the wrapper) fails with "cache url for ghac not
+      # found" even though this *is* a GitHub Actions run.
       - name: Install sccache
-        uses: taiki-e/install-action@v2
-        with:
-          tool: sccache
-          checksum: true
+        uses: mozilla-actions/sccache-action@v0.0.9
 
       - name: Install cargo-hack
         uses: taiki-e/install-action@v2
@@ -269,11 +276,10 @@ jobs:
           save-if: ${{ env.IS_CANONICAL_RUN == 'true' }}
           cache-on-failure: true
 
+      # See the "Check compilation on MSRV toolchain" job for why this
+      # is mozilla-actions/sccache-action rather than taiki-e/install-action.
       - name: Install sccache
-        uses: taiki-e/install-action@v2
-        with:
-          tool: sccache
-          checksum: true
+        uses: mozilla-actions/sccache-action@v0.0.9
 
       - name: Install cargo-hack
         uses: taiki-e/install-action@v2
@@ -394,11 +400,10 @@ jobs:
           save-if: ${{ env.IS_CANONICAL_RUN == 'true' }}
           cache-on-failure: true
 
+      # See the "Check compilation on MSRV toolchain" job for why this
+      # is mozilla-actions/sccache-action rather than taiki-e/install-action.
       - name: Install sccache
-        uses: taiki-e/install-action@v2
-        with:
-          tool: sccache
-          checksum: true
+        uses: mozilla-actions/sccache-action@v0.0.9
 
       - name: Install just
         uses: taiki-e/install-action@v2
@@ -460,11 +465,10 @@ jobs:
           save-if: ${{ env.IS_CANONICAL_RUN == 'true' }}
           cache-on-failure: true
 
+      # See the "Check compilation on MSRV toolchain" job for why this
+      # is mozilla-actions/sccache-action rather than taiki-e/install-action.
       - name: Install sccache
-        uses: taiki-e/install-action@v2
-        with:
-          tool: sccache
-          checksum: true
+        uses: mozilla-actions/sccache-action@v0.0.9
 
       # storage_impl (pg_lock.rs / pg_kv_store.rs / pg_pub_sub.rs, the Task
       # 73/a Postgres-backed Redis replacement) checked explicitly and

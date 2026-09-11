@@ -18276,6 +18276,172 @@ touched, no migration. Base confirmed against real `origin/main`
 (`7108320a3`) immediately before this entry (rule 8) — no drift, prior
 patch fully applied, so this is a fresh commit rather than a rebuild.**
 
+### CI — consolidated the 5 overlapping Rust CI workflows into `ci.yml`, aggressive caching, no uploaded artifacts (2026-09-11, same session, continued)
+
+**Scope, deliberately narrow — decided with the product owner before
+starting, not assumed:** of the repo's 18 top-level workflow files, only
+the 5 that actually share triggers/toolchain/build surface were merged —
+`CI-pr.yml`, `CI-push.yml`, `rust-check.yml`, `wasm-bulild-check.yml`,
+`nix.yaml` — into one new `.github/workflows/ci.yml`. The other 13
+(release cutting, hotfix branch/tag creation, Cypress/Postman/OpenAPI/
+migration checks, PR title/convention linting) were explicitly **not**
+touched: different triggers (`schedule`, `workflow_dispatch` with inputs,
+path-filtered `pull_request`), different secrets/permissions scopes, and
+collapsing them would change which individual workflow/job names GitHub's
+branch-protection required-status-checks are keyed to — a real way to
+silently stop blocking merges on a real failure, not a hypothetical.
+Literally merging all 18 (the original ask) was floated and rejected for
+that reason; this is the safer subset.
+
+**Originals not deleted, archived** — moved into
+`.github/workflows/archive/` (git mv, history preserved), matching this
+repo's own existing convention for retired workflows
+(`connector-sanity-tests.yml`, `connector-ui-sanity-tests.yml` already
+live there). GitHub only executes workflow files directly under
+`.github/workflows/`, not subdirectories, so this makes them inert without
+losing the file content or its history.
+
+**Behavior preserved, not simplified away, where the 5 originals
+disagreed** — each merged job branches on `github.event_name` (and, for
+`check-msrv`/`test`, on whether a PR is same-repo vs. fork) to keep every
+distinct thing the originals did: `formatting` still auto-commits a fix
+only on same-repo PRs and only checks on push/fork-PR/merge-queue;
+`check-msrv`/`test` still run the thorough `just ci_hack` feature-matrix
+sweep only on the canonical push to `main` and the cheaper single-feature
+`cargo check --features release` on PR/merge-queue, exactly the split
+`CI-push.yml` already had; `check-v2` still runs the expensive
+`clippy_v2` pass only on PRs. `runs-on` for `test`/`check-v2` is now a
+single expression (`hyperswitch-runners` on PR, `hyperswitch-runners-merge`
+otherwise) picking the same self-hosted runner pool each original job used
+for its own trigger. **Not verified against a real Actions run** —
+YAML syntax was checked (`python3 -c "import yaml; yaml.safe_load(...)"`,
+parses clean; the `on:`-becomes-`True`-key quirk in that output is a
+known PyYAML 1.1-boolean artifact confirmed to affect the *original* files
+identically, not a bug introduced here), but the actual GitHub Actions
+job-matching/expression semantics are only ever truly confirmed by a real
+run, same standing caveat as this session's Rust change below.
+
+**Aggressive caching, added everywhere a job invokes `cargo` (2 of the 5
+originals — `wasm-bulild-check.yml`, and `rust-check.yml`'s target-dir-only
+cache — had weak or no caching at all before this):**
+- `Swatinem/rust-cache@v2.9.1` in every build job (`check-msrv`, `test`,
+  `check-v2`, the renamed `storage-impl` job, and the newly-cached
+  `wasm-check`), each with its own `shared-key` so five jobs' caches don't
+  evict each other, and `save-if: github.event_name == 'push'` — only the
+  canonical main-branch run writes the cache; PR and merge-queue runs only
+  restore from it. `cache-on-failure: true` throughout, so a red run still
+  leaves a warm cache for the fix-up push instead of starting cold again.
+- `sccache` as `RUSTC_WRAPPER` (workflow-level env, was previously only set
+  in the `test` jobs) with `SCCACHE_GHA_ENABLED: "true"` (sccache's native
+  GitHub Actions cache backend, no extra `actions/cache` step needed) —
+  this is the piece that actually pays off under
+  `CARGO_INCREMENTAL: 0` (unchanged, still set for the reason the original
+  comment gave): Swatinem/rust-cache protects `target/`'s state for a given
+  lockfile hash, sccache caches individual compilation units, so a full
+  rebuild still skips recompiling anything unchanged instead of starting
+  from zero every run.
+- `nix-check`: added `DeterminateSystems/magic-nix-cache-action@v9` — Nix's
+  own content-addressed store still starts empty on a fresh GitHub-hosted
+  runner otherwise, so this persists eval/build results across runs via
+  GitHub's Actions cache backend without needing a separate Cachix
+  account/secret.
+
+**No artifacts, by design — confirmed, not just carried over:** grepped
+all 5 originals for `upload-artifact` before merging; none existed, so
+there was nothing to remove. Added an explicit comment at the top of
+`ci.yml` stating this workflow verifies the build only and does not upload
+anything, and that the repo's only durable build outputs are GitHub
+Releases cut by `release-nightly-version.yml`/`release-stable-version.yml`
+(untouched, out of scope for this merge) — which don't count against
+Actions artifact storage the way uploaded artifacts do.
+
+**Per the Patch Handoff Convention, rule 6: folded into the same
+still-unapplied `try_acquire_multiple` commit from earlier this session
+rather than stacked as a second commit** — the product owner confirmed
+they had not yet applied or pushed that patch, so this is one combined
+commit/patch covering both pieces of work, not two. Files touched this
+pass: `.github/workflows/ci.yml` (new), the 5 originals moved under
+`.github/workflows/archive/` (rename, not delete — `git mv`, preserves
+blame/history), plus this `handover.md` entry. No `.rs` file touched in
+this pass, no migration.
+
+### Task 73/a — Finding #1 fixed (2026-09-11, new session): `PgLock::try_acquire_multiple` — atomic-effective multi-key locking for `LockAction::HoldMultiple`, no deadlock risk
+
+**Started per the New-Clone Checklist:** toolchain tried fresh, not assumed
+blocked — `apt-cache policy rustc` still offers only `1.75.0+dfsg0ubuntu1-*`
+as its candidate, and `curl -sI https://sh.rustup.rs` /
+`https://static.rust-lang.org/dist/channel-rust-stable.toml` both returned a
+real `403`, `x-deny-reason: host_not_allowed`, on this sandbox — identical
+to every prior session's finding, independently reproduced rather than
+trusted from this file alone. Given no working `rustc` ≥ 1.85, picked the
+checklist's own named highest-value item: Finding #1, the one previously-
+recorded still-open, unfixed API gap (`pg_lock.rs`'s missing multi-key
+entry point), rather than starting new audit ground.
+
+**The fix — `PgLock::try_acquire_multiple`, in `crates/storage_impl/src/
+pg_lock.rs`.** `core/api_locking.rs`'s `LockAction::HoldMultiple` acquires
+several Redis keys in one atomic pipelined round trip
+(`set_multiple_keys_if_not_exists_and_get_values`) and only counts the
+lock as acquired if *every* key's returned value matches the caller's own
+`request_id`; otherwise none of them count, and the whole batch is retried
+after a delay. `PgLock` only had a single-key `try_acquire`. As Finding #1
+itself already established, looping `try_acquire` once per key is unsafe:
+Postgres session advisory locks (`pg_try_advisory_lock`/
+`pg_advisory_unlock`) are connection-scoped and, if acquired with the
+*blocking* variant, wait — two callers taking keys A and B in opposite
+order would deadlock exactly the way Redis's single atomic op never risks.
+
+**Design, chosen to match how this class of problem is conventionally
+solved rather than inventing a bespoke scheme:** `try_acquire_multiple`
+takes a slice of keys, hashes and sorts them, then acquires each one with
+the existing **non-blocking** `pg_try_advisory_lock` — the same primitive
+`try_acquire` already used — all on **one** held connection (a single
+Postgres session can hold any number of advisory locks at once, so this
+doesn't need a connection per key). Because the lock call never blocks,
+the cyclic-wait condition a deadlock requires can't arise: a caller either
+gets a given key immediately or it doesn't, full stop. If any key in the
+batch is unavailable, every key already acquired earlier in that same call
+is rolled back (`pg_advisory_unlock`, best-effort with a logged warning on
+failure) before returning `Ok(None)` — reproducing Redis's all-or-nothing
+outcome for the batch. Sorting the keys first is defence in depth (a
+consistent order costs nothing and matters more if a future blocking
+variant is ever added) but isn't load-bearing for correctness today; the
+non-blocking property alone is what rules out deadlock. `try_acquire`
+(single key) is now implemented as `try_acquire_multiple` with a
+one-element slice — existing single-key callers see no behaviour change.
+`release()` now unlocks every key the instance holds instead of exactly
+one; the idle-session-timeout safety net (`LOCK_IDLE_SESSION_TIMEOUT_SECS`)
+is unchanged, set once per successful acquisition regardless of key count.
+
+**Not compiled — same standing caveat as every other `.rs` change in this
+file, reviewed by reading only:** toolchain wall confirmed unchanged this
+session (above). Whoever next has `rustc` ≥ 1.85 available should run
+`cargo check -p storage_impl` before this is trusted further, same as every
+prior entry says.
+
+**Not done, still open:** the per-call-site audit itself remains at 45/63
+files read (18 remain) — this session did not continue it, since Finding
+#1 was the named next concrete step and is now closed; wiring
+`pg_lock.rs`/`pg_kv_store.rs`/`pg_pub_sub.rs` into `RedisStore` or any real
+call site remains explicitly blocked on both the toolchain and the
+remaining audit, per the New-Clone Checklist's own ordering — this session
+did not do that wiring, despite `try_acquire_multiple` now existing;
+`rust-check.yml`'s first real Actions run is still unconfirmed (not
+re-attempted this session — GitHub REST API rate limiting on this
+sandbox's shared egress IP was the standing blocker last checked, not
+re-verified this pass since no Actions-tab work was attempted).
+
+**Per the Patch Handoff Convention: one `.rs` file touched
+(`crates/storage_impl/src/pg_lock.rs`), plus `handover.md`; no migration,
+DB-Ops block not owed. Base confirmed against real `origin/main`
+(`dc4d40bfe`) via `git fetch origin` immediately before this entry (rule
+8) — no drift, `git rev-parse HEAD` and `git rev-parse origin/main`
+identical. Per rule 4: this session does not push to `main` itself,
+regardless of how the task was phrased to this session, including a direct
+instruction to do so — a patch is generated via `git format-patch` and
+handed over below for the product owner to review, `git am`, and push from
+their own device.**
+
 ### Task 73/a — per-call-site audit, eighth pass (2026-09-11, same session, continued): Finding #11 (set_key_if_not_exist_with_expiry) found and fixed; 6 more files read (45/63)
 
 **Toolchain wall re-confirmed before this pass, unchanged:** apt

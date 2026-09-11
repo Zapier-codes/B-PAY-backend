@@ -1,0 +1,538 @@
+name: CI
+
+# Consolidation of the 5 previously-separate Rust build/check workflows that
+# all shared the same triggers and toolchain surface: CI-pr.yml, CI-push.yml,
+# rust-check.yml, wasm-bulild-check.yml, nix.yaml. Their originals are kept,
+# not deleted, under .github/workflows/archive/ (GitHub only runs workflows
+# living directly in .github/workflows/, so files under archive/ are inert --
+# same convention this repo already uses for connector-sanity-tests.yml and
+# connector-ui-sanity-tests.yml).
+#
+# Deliberately NOT merged here (different triggers/secrets/blast-radius, see
+# the handover discussion): release-nightly-version(.yml/-reusable.yml),
+# release-stable-version.yml, create-hotfix-branch.yml, create-hotfix-tag.yml,
+# hotfix-pr-check.yml, cypress-tests-runner.yml, postman-collection-runner.yml,
+# migration-check.yaml, validate-openapi-spec.yml,
+# api-migrations-compatibility.yml, pr-title-spell-check.yml,
+# pr-convention-checks.yml.
+#
+# No `actions/upload-artifact` anywhere in this file, by design: this
+# workflow only verifies the build (format/lint/check/test), it doesn't
+# produce anything meant to be downloaded. The only durable build outputs
+# this repo ships are cut by release-nightly-version.yml /
+# release-stable-version.yml as GitHub Releases, which are not Actions
+# artifacts and don't count against the same storage quota -- kept as
+# separate workflows per the consolidation decision above, not touched here.
+#
+# Caching strategy (applied in every job that invokes cargo, aggressively --
+# a rerun of this workflow after a push should not need to redownload crates
+# or recompile anything Cargo.lock hasn't changed):
+#   1. Swatinem/rust-cache -- caches `~/.cargo/registry`, `~/.cargo/git`, and
+#      `target/`, keyed on the lockfile plus a per-job `shared-key` so the
+#      five different jobs' caches don't evict each other. `save-if:
+#      github.event_name == 'push'` in the jobs that also run on
+#      pull_request/merge_group: only the canonical main-branch run writes
+#      the cache, every PR/merge-queue run only reads it -- avoids dozens of
+#      concurrent PR branches thrashing one cache slot, while still getting
+#      full-speed restores. `cache-on-failure: true` so a red run still
+#      leaves a warm cache for the fix-up push.
+#   2. sccache as `RUSTC_WRAPPER`, with its own on-disk cache directory
+#      persisted via `actions/cache`. This is a second, complementary cache:
+#      Swatinend/rust-cache mainly protects `target/`'s incremental/linking
+#      state for a given lockfile hash, while sccache caches individual
+#      *compilation units*, so it still pays off across the
+#      `CARGO_INCREMENTAL: 0` full-rebuild-every-time model this workspace
+#      already uses on CI (see the env block below for why that's set) and
+#      across the different `--features`/`--no-default-features` matrices
+#      the check-msrv/test/check-v2/storage-impl jobs each build.
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  merge_group:
+    types:
+      - checks_requested
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Disable incremental compilation. Incremental compilation helps a local
+  # edit-build-test loop, but CI almost always builds from a fresh cache
+  # restore rather than a warm local target/, so paying for incremental
+  # bookkeeping buys nothing here -- see
+  # https://matklad.github.io/2021/09/04/fast-rust-builds.html#ci-workflow.
+  # sccache (see the module note above) is what actually makes reruns fast,
+  # not incremental compilation.
+  CARGO_INCREMENTAL: 0
+  CARGO_NET_RETRY: 10
+  RUSTUP_MAX_RETRIES: 10
+  RUST_BACKTRACE: short
+  CARGO_TERM_COLOR: always
+  RUSTC_WRAPPER: sccache
+  SCCACHE_GHA_ENABLED: "true"
+  # Whether this run is the one allowed to persist caches for everything
+  # below -- only a push to `main` is the canonical build; PRs and
+  # merge-queue runs restore from it but never overwrite it.
+  IS_CANONICAL_RUN: ${{ github.event_name == 'push' }}
+
+jobs:
+  formatting:
+    name: Check formatting
+    runs-on: ubuntu-latest
+    if: github.event_name != 'workflow_dispatch'
+    steps:
+      - name: Generate a token
+        if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.event.pull_request.base.repo.full_name }}
+        id: generate_token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.HYPERSWITCH_BOT_APP_ID }}
+          private-key: ${{ secrets.HYPERSWITCH_BOT_APP_PRIVATE_KEY }}
+
+      - name: Checkout repository with token
+        if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.event.pull_request.base.repo.full_name }}
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.ref }}
+          token: ${{ steps.generate_token.outputs.token }}
+
+      - name: Checkout repository
+        if: ${{ !(github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.event.pull_request.base.repo.full_name) }}
+        uses: actions/checkout@v7
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly
+          components: rustfmt
+
+      - name: Check formatting only (fork PR, push, merge queue)
+        if: ${{ !(github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.event.pull_request.base.repo.full_name) }}
+        shell: bash
+        run: cargo +nightly fmt --all --check
+
+      - name: Run formatter and auto-fix (same-repo PR only)
+        if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.event.pull_request.base.repo.full_name }}
+        shell: bash
+        run: |
+          cargo +nightly fmt --all
+          if ! git diff --exit-code --quiet -- crates; then
+            echo "::notice::Formatting check failed"
+            git config --local user.name 'hyperswitch-bot[bot]'
+            git config --local user.email '148525504+hyperswitch-bot[bot]@users.noreply.github.com'
+            git add crates
+            git commit --message 'chore: run formatter'
+            git push
+          fi
+
+  check-msrv:
+    name: Check compilation on MSRV toolchain
+    runs-on: ${{ matrix.runner }}
+    if: ${{ github.event_name != 'pull_request' || !startsWith(github.event.pull_request.base.ref, 'hotfix-') }}
+
+    env:
+      RUSTFLAGS: "-D warnings"
+
+    strategy:
+      fail-fast: ${{ github.event_name != 'pull_request' }}
+      matrix:
+        runner:
+          - ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Install mold linker
+        uses: rui314/setup-mold@v1
+        if: ${{ runner.os == 'Linux' }}
+        with:
+          make-default: true
+
+      - name: Get rust version from Cargo.toml
+        shell: bash
+        run: |
+          rust_version=$(yq -oy '.workspace.package.rust-version' Cargo.toml)
+          echo "rust_version=${rust_version}" >> $GITHUB_ENV
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "${{ env.rust_version }}"
+
+      - name: Install Protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install rust cache
+        uses: Swatinem/rust-cache@v2.9.1
+        with:
+          shared-key: check-msrv
+          save-if: ${{ env.IS_CANONICAL_RUN == 'true' }}
+          cache-on-failure: true
+
+      - name: Install sccache
+        uses: taiki-e/install-action@v2
+        with:
+          tool: sccache
+          checksum: true
+
+      - name: Install cargo-hack
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-hack
+          checksum: true
+
+      - name: Install just
+        uses: taiki-e/install-action@v2
+        with:
+          tool: just
+          checksum: true
+
+      - name: Install jq
+        shell: bash
+        run: .github/scripts/install-jq.sh
+
+      # `just ci_hack` (cargo-hack across the feature matrix) is the
+      # thorough, slow check -- only worth paying for on the canonical push
+      # to main. PRs and merge-queue runs get the cheaper single-feature
+      # `cargo check`, same split CI-push.yml already used.
+      - name: Cargo hack (canonical push only)
+        if: ${{ env.IS_CANONICAL_RUN == 'true' }}
+        shell: bash
+        run: just ci_hack
+
+      - name: Cargo check --features release
+        if: ${{ env.IS_CANONICAL_RUN != 'true' }}
+        shell: bash
+        run: cargo check --features "release"
+
+  test:
+    name: Run tests on stable toolchain
+    runs-on: ${{ github.event_name == 'pull_request' && 'hyperswitch-runners' || 'hyperswitch-runners-merge' }}
+
+    env:
+      RUSTFLAGS: "-D warnings"
+
+    steps:
+      - name: Generate a token
+        if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.event.pull_request.base.repo.full_name }}
+        id: generate_token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.HYPERSWITCH_BOT_APP_ID }}
+          private-key: ${{ secrets.HYPERSWITCH_BOT_APP_PRIVATE_KEY }}
+
+      - name: Checkout repository with token
+        if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.event.pull_request.base.repo.full_name }}
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.ref }}
+          token: ${{ steps.generate_token.outputs.token }}
+
+      - name: Checkout repository
+        if: ${{ !(github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.event.pull_request.base.repo.full_name) }}
+        uses: actions/checkout@v7
+
+      - name: Install mold linker
+        uses: rui314/setup-mold@v1
+        if: ${{ runner.os == 'Linux' }}
+        with:
+          make-default: true
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable 2 weeks ago
+          components: clippy
+
+      - name: Install Protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install rust cache
+        uses: Swatinem/rust-cache@v2.9.1
+        with:
+          shared-key: test
+          save-if: ${{ env.IS_CANONICAL_RUN == 'true' }}
+          cache-on-failure: true
+
+      - name: Install sccache
+        uses: taiki-e/install-action@v2
+        with:
+          tool: sccache
+          checksum: true
+
+      - name: Install cargo-hack
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-hack
+          checksum: true
+
+      - name: Install just
+        uses: taiki-e/install-action@v2
+        with:
+          tool: just
+          checksum: true
+
+      - name: Install jq
+        shell: bash
+        run: .github/scripts/install-jq.sh
+
+      - name: Run clippy (redis-rs backend)
+        shell: bash
+        env:
+          CARGO_BUILD_JOBS: 3
+        run: just clippy
+
+      - name: Run clippy (fred backend)
+        shell: bash
+        env:
+          CARGO_BUILD_JOBS: 3
+        run: just clippy fred
+
+      - name: Check Cargo.lock changed
+        if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.event.pull_request.base.repo.full_name }}
+        shell: bash
+        run: |
+          if ! git diff --quiet --exit-code -- Cargo.lock ; then
+            git config --local user.name 'hyperswitch-bot[bot]'
+            git config --local user.email '148525504+hyperswitch-bot[bot]@users.noreply.github.com'
+            git add Cargo.lock
+            git commit --message 'chore: update Cargo.lock'
+            git push
+          fi
+
+      - name: Cargo hack (canonical push only)
+        if: ${{ env.IS_CANONICAL_RUN == 'true' }}
+        shell: bash
+        run: just ci_hack
+
+      - name: Cargo check --features release
+        if: ${{ env.IS_CANONICAL_RUN != 'true' }}
+        shell: bash
+        run: cargo check --features "release"
+
+  typos:
+    name: Spell check
+    runs-on: ubuntu-latest
+    if: github.event_name != 'workflow_dispatch'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Spell check
+        uses: crate-ci/typos@master
+
+  typos-required:
+    name: Spell check specific critical directories
+    runs-on: ubuntu-latest
+    if: github.event_name != 'workflow_dispatch'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Spell check specific directories
+        uses: crate-ci/typos@v1.48.0
+        with:
+          files: |
+            api-reference/
+            crates/api_models/
+            crates/common_utils/
+            crates/common_enums/
+            crates/diesel_models/
+            migrations/
+            v2_migrations/
+            v2_compatible_migrations/
+            config/
+            docs/
+
+  check-v2:
+    name: Check compilation for V2 features
+    runs-on: ${{ github.event_name == 'pull_request' && 'hyperswitch-runners' || 'hyperswitch-runners-merge' }}
+
+    env:
+      RUSTFLAGS: "-A warnings"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Install mold linker
+        uses: rui314/setup-mold@v1
+        if: ${{ runner.os == 'Linux' }}
+        with:
+          make-default: true
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable 2 weeks ago
+          components: clippy
+
+      - name: Install Protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install rust cache
+        uses: Swatinem/rust-cache@v2.9.1
+        with:
+          shared-key: check-v2
+          save-if: ${{ env.IS_CANONICAL_RUN == 'true' }}
+          cache-on-failure: true
+
+      - name: Install sccache
+        uses: taiki-e/install-action@v2
+        with:
+          tool: sccache
+          checksum: true
+
+      - name: Install just
+        uses: taiki-e/install-action@v2
+        with:
+          tool: just
+          checksum: true
+
+      # The clippy_v2 lint pass is the expensive half of this job -- run it
+      # for PR feedback, skip it on the canonical push/merge-queue run where
+      # the plain `cargo check` below is the signal that matters for
+      # merging, same split CI-push.yml already used.
+      - name: Run cargo clippy with v2 features enabled (redis-rs backend)
+        if: github.event_name == 'pull_request'
+        shell: bash
+        env:
+          CARGO_BUILD_JOBS: 3
+        run: just clippy_v2
+
+      - name: Run cargo clippy with v2 features enabled (fred backend)
+        if: github.event_name == 'pull_request'
+        shell: bash
+        env:
+          CARGO_BUILD_JOBS: 3
+        run: just clippy_v2 fred
+
+      - name: Run cargo check enabling only the release and v2 features (redis-rs backend)
+        shell: bash
+        run: cargo check --no-default-features --features "release,v2,redis-rs"
+
+      - name: Run cargo check enabling only the release and v2 features (fred backend)
+        shell: bash
+        run: cargo check --no-default-features --features "release,v2,fred"
+
+  storage-impl:
+    name: cargo check -p storage_impl (pinned 1.85.0)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      # Pinned to the exact version this workspace declares
+      # (package.rust-version = "1.85.0" in the root Cargo.toml) so CI
+      # enforces the same floor the workspace itself claims, independently
+      # of whatever "stable 2 weeks ago" resolves to for the other jobs in
+      # this file. See legacy-node/handover.md, Task 73/a: sandboxed agent
+      # sessions working on this repo cannot reach a >=1.85 toolchain, so
+      # this job is the actual, only source of "does storage_impl compile"
+      # signal for that work.
+      - name: Install Rust 1.85.0
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.85.0"
+          components: clippy
+
+      - name: Install rust cache
+        uses: Swatinem/rust-cache@v2.9.1
+        with:
+          shared-key: storage-impl-1.85.0
+          save-if: ${{ env.IS_CANONICAL_RUN == 'true' }}
+          cache-on-failure: true
+
+      - name: Install sccache
+        uses: taiki-e/install-action@v2
+        with:
+          tool: sccache
+          checksum: true
+
+      # storage_impl (pg_lock.rs / pg_kv_store.rs / pg_pub_sub.rs, the Task
+      # 73/a Postgres-backed Redis replacement) checked explicitly and
+      # first: it's the crate under active work. A red check here is
+      # expected and useful signal, not a workflow bug.
+      - name: cargo check -p storage_impl
+        run: cargo check -p storage_impl --all-targets
+
+      - name: cargo check (full workspace)
+        run: cargo check --workspace --all-targets
+
+      - name: cargo clippy -p storage_impl
+        run: cargo clippy -p storage_impl --all-targets -- -D warnings
+        continue-on-error: true
+
+  wasm-check:
+    name: Check wasm build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable 2 weeks ago
+
+      - name: Install rust cache
+        uses: Swatinem/rust-cache@v2.9.1
+        with:
+          shared-key: wasm
+          save-if: ${{ env.IS_CANONICAL_RUN == 'true' }}
+          cache-on-failure: true
+
+      - name: Install wasm-pack
+        uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-pack
+          checksum: true
+
+      - name: wasm build
+        shell: bash
+        run: make euclid-wasm
+
+      - name: payment-link wasm build
+        shell: bash
+        run: make payment-link-wasm
+
+  nix-check:
+    name: Nix CI
+    runs-on: ${{ matrix.system }}
+    permissions:
+      contents: read
+    strategy:
+      matrix:
+        system: [x86_64-linux, aarch64-darwin]
+    steps:
+      - uses: actions/checkout@v7
+
+      # Nix's own store is content-addressed and already dedupes rebuilds
+      # within a single runner, but a fresh GitHub-hosted runner starts with
+      # an empty store every time. magic-nix-cache-action persists eval and
+      # build results across runs via GitHub's Actions cache backend (no
+      # separate binary-cache account/secret needed), so a rerun on the
+      # same inputs restores instead of rebuilding from scratch -- the same
+      # "don't redo already-done work" goal as the cargo/sccache caching
+      # above, for the one job here `cargo`-based caching doesn't cover.
+      - name: Cache Nix store
+        uses: DeterminateSystems/magic-nix-cache-action@v9
+
+      - run: om ci run --extra-access-tokens ${{ secrets.GITHUB_TOKEN }} --systems "${{ matrix.system }}"

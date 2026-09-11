@@ -63,6 +63,19 @@
 //! self-referential-struct workaround either; that redesign is real,
 //! separate follow-up work, not done here.
 //!
+//! **Multi-key locking — fixed this session (Finding #1, `handover.md`'s
+//! Task 73/a audit).** `LockAction::HoldMultiple` (`core/api_locking.rs`)
+//! has no single-key equivalent to fall back on; this used to have no
+//! entry point at all. `try_acquire_multiple` below acquires every key in
+//! a batch on one held connection via non-blocking `pg_try_advisory_lock`
+//! per key, rolling back anything already acquired the instant one key in
+//! the batch is unavailable — see that method's own doc comment for why
+//! this reproduces Redis's all-or-nothing batch semantics without risking
+//! the sequential-blocking-lock deadlock shape a naive port would have.
+//! `try_acquire` (single key) is now just `try_acquire_multiple` with a
+//! one-element slice — no behaviour change for existing single-key
+//! callers.
+//!
 //! Not compiled/tested against a real Postgres instance — checked this
 //! session (network access to `crates.io` is available in-sandbox, so this
 //! was actually attempted, not just assumed away): the workspace pins
@@ -71,7 +84,9 @@
 //! old to build this workspace, and there's no network path from here to
 //! install a newer one. Still a real gap, now a *diagnosed* one instead of
 //! an assumed one; whoever next has a 1.85+ toolchain available should
-//! `cargo check -p storage_impl` before this is trusted further.
+//! `cargo check -p storage_impl` before this is trusted further — the new
+//! `try_acquire_multiple` method is reviewed by reading only, same
+//! standing caveat as every other change in this file.
 
 use async_bb8_diesel::AsyncRunQueryDsl;
 use bb8::PooledConnection;
@@ -122,7 +137,11 @@ struct AcquiredRow {
 /// of this type today.
 pub struct PgLock<'a> {
     conn: PooledConnection<'a, async_bb8_diesel::ConnectionManager<diesel::PgConnection>>,
-    key: i64,
+    // Sorted, deduplicated set of every advisory-lock key this instance
+    // currently holds. A single-key `try_acquire` is just the len-1 case of
+    // `try_acquire_multiple` (see below) — no behaviour change for existing
+    // single-key callers, just a shared representation.
+    keys: Vec<i64>,
 }
 
 impl<'a> PgLock<'a> {
@@ -134,55 +153,132 @@ impl<'a> PgLock<'a> {
         pool: &'a PgKvPool,
         key: &str,
     ) -> error_stack::Result<Option<Self>, StorageError> {
+        Self::try_acquire_multiple(pool, &[key]).await
+    }
+
+    /// Multi-key analog of `try_acquire`, backing `LockAction::HoldMultiple`
+    /// (see `core/api_locking.rs::perform_locking_action` — Finding #1 in
+    /// the per-call-site audit, `handover.md`).
+    ///
+    /// Redis's `set_multiple_keys_if_not_exists_and_get_values` acquires
+    /// every key in **one** atomic server-side round trip: if any key is
+    /// already held, none of them count as this caller's lock and nothing
+    /// is left held. Postgres session advisory locks have no "acquire N or
+    /// none" primitive, so this reproduces the same all-or-nothing result
+    /// with `pg_try_advisory_lock` called once per key **on a single held
+    /// connection** (a session can hold any number of advisory locks
+    /// simultaneously — no need for one connection per key), rolling back
+    /// every key already acquired *this call* the instant one key fails,
+    /// instead of leaving a partial lock set held.
+    ///
+    /// **Why this can't deadlock, unlike acquiring keys one at a time with
+    /// a blocking lock:** `pg_try_advisory_lock` never blocks — a caller
+    /// either gets a key immediately or moves on. Two callers racing over
+    /// the same two keys in opposite order can therefore never each end up
+    /// holding one key while waiting on the other (the textbook multi-lock
+    /// deadlock shape Finding #1 named); the loser of any single key in the
+    /// batch fails fast, releases what it already grabbed here, and the
+    /// existing retry-with-delay loop at the `HoldMultiple` call site tries
+    /// the whole batch again later — the same backoff-and-retry shape
+    /// Redis's version already uses, not new behaviour introduced here.
+    ///
+    /// Keys are also sorted (independent of the caller's own order) as
+    /// defence in depth: it costs nothing, and it means a consistent lock
+    /// order is applied for free even if the underlying acquisition
+    /// strategy ever changes later — it isn't load-bearing for correctness
+    /// today, since the non-blocking property above already rules out the
+    /// cyclic-wait deadlock condition on its own.
+    pub async fn try_acquire_multiple(
+        pool: &'a PgKvPool,
+        keys: &[&str],
+    ) -> error_stack::Result<Option<Self>, StorageError> {
+        let mut numeric_keys: Vec<i64> = keys.iter().map(|key| lock_key_to_bigint(key)).collect();
+        numeric_keys.sort_unstable();
+        numeric_keys.dedup();
+
         let conn = pool
             .get()
             .await
             .change_context(StorageError::DatabaseConnectionError)?;
-        let numeric_key = lock_key_to_bigint(key);
 
-        let rows: Vec<AcquiredRow> =
-            sql_query("SELECT pg_try_advisory_lock($1) AS pg_try_advisory_lock")
-                .bind::<BigInt, _>(numeric_key)
-                .load_async(&conn)
-                .await
-                .map_err(StorageError::from)?;
+        let mut acquired_keys: Vec<i64> = Vec::with_capacity(numeric_keys.len());
+        for numeric_key in numeric_keys {
+            let rows: Vec<AcquiredRow> =
+                sql_query("SELECT pg_try_advisory_lock($1) AS pg_try_advisory_lock")
+                    .bind::<BigInt, _>(numeric_key)
+                    .load_async(&conn)
+                    .await
+                    .map_err(StorageError::from)?;
 
-        let acquired = rows.first().map(|r| r.pg_try_advisory_lock).unwrap_or(false);
+            let acquired = rows.first().map(|r| r.pg_try_advisory_lock).unwrap_or(false);
 
-        if acquired {
-            // Safety net for a caller that never reaches `.release()` — see
-            // module doc comment. Value is a compile-time constant, not
-            // caller input, so it's inlined directly rather than bound:
-            // Postgres's `SET` grammar doesn't accept a query parameter in
-            // the value position (`SET x = $1` is a syntax error over the
-            // extended protocol), only a literal.
-            let idle_timeout_sql =
-                format!("SET idle_session_timeout = '{LOCK_IDLE_SESSION_TIMEOUT_SECS}s'");
-            sql_query(idle_timeout_sql)
-                .execute_async(&conn)
-                .await
-                .map_err(StorageError::from)?;
+            if acquired {
+                acquired_keys.push(numeric_key);
+                continue;
+            }
+
+            // One key in the batch is already held elsewhere: this call
+            // does not get "its" lock on any of them, matching the Redis
+            // fencing-token check's all-or-nothing semantics. Roll back
+            // every key acquired earlier in this same loop before
+            // returning — otherwise a partial lock set would sit held
+            // until this connection's idle-session-timeout safety net (or
+            // its own lifetime) eventually frees it, unnecessarily
+            // blocking unrelated callers in the meantime.
+            for key_to_release in acquired_keys.iter().rev() {
+                if let Err(error) = sql_query("SELECT pg_advisory_unlock($1)")
+                    .bind::<BigInt, _>(*key_to_release)
+                    .execute_async(&conn)
+                    .await
+                {
+                    router_env::logger::warn!(
+                        ?error,
+                        key = *key_to_release,
+                        "pg_lock: rollback pg_advisory_unlock failed while backing out of a \
+                         partially-acquired multi-key lock; this key stays held on this \
+                         connection until its idle-session-timeout safety net frees it"
+                    );
+                }
+            }
+
+            return Ok(None);
         }
 
-        Ok(acquired.then_some(Self {
+        // Every key in the batch acquired cleanly. Safety net for a caller
+        // that never reaches `.release()` — see module doc comment. Value
+        // is a compile-time constant, not caller input, so it's inlined
+        // directly rather than bound: Postgres's `SET` grammar doesn't
+        // accept a query parameter in the value position (`SET x = $1` is a
+        // syntax error over the extended protocol), only a literal.
+        let idle_timeout_sql =
+            format!("SET idle_session_timeout = '{LOCK_IDLE_SESSION_TIMEOUT_SECS}s'");
+        sql_query(idle_timeout_sql)
+            .execute_async(&conn)
+            .await
+            .map_err(StorageError::from)?;
+
+        Ok(Some(Self {
             conn,
-            key: numeric_key,
+            keys: acquired_keys,
         }))
     }
 
     pub async fn release(self) -> error_stack::Result<(), StorageError> {
-        sql_query("SELECT pg_advisory_unlock($1)")
-            .bind::<BigInt, _>(self.key)
-            .execute_async(&self.conn)
-            .await
-            .map_err(StorageError::from)?;
+        for key in &self.keys {
+            sql_query("SELECT pg_advisory_unlock($1)")
+                .bind::<BigInt, _>(*key)
+                .execute_async(&self.conn)
+                .await
+                .map_err(StorageError::from)?;
+        }
 
-        // Clear the safety-net timeout set in `try_acquire` before this
-        // connection goes back to the pool — otherwise it leaks onto
-        // whichever unrelated caller borrows this same pooled connection
-        // next. Best-effort: if this fails, the connection just keeps a
-        // (more conservative, not less safe) idle timeout it shouldn't —
-        // not worth failing an otherwise-successful release over.
+        // Clear the safety-net timeout set in `try_acquire`/
+        // `try_acquire_multiple` before this connection goes back to the
+        // pool — otherwise it leaks onto whichever unrelated caller
+        // borrows this same pooled connection next. Best-effort: if this
+        // fails, the connection just keeps a (more conservative, not less
+        // safe) idle timeout it shouldn't — not worth failing an otherwise-
+        // successful release over.
         if let Err(error) = sql_query("RESET idle_session_timeout")
             .execute_async(&self.conn)
             .await

@@ -68,12 +68,14 @@ use router_env::logger;
 #[cfg(feature = "v2")]
 use storage_impl::revenue_recovery_retry_stats;
 use storage_impl::{
-    errors::StorageError, redis::kv_store::RedisConnInterface, tokenization, MockDb,
+    errors::StorageError, pg_kv_store::PgKvStore, redis::kv_store::RedisConnInterface,
+    tokenization, DatabaseStore, MockDb,
 };
 
 pub use self::kafka_store::KafkaStore;
 use self::{fraud_check::FraudCheckInterface, organization::OrganizationInterface};
 pub use crate::{
+    consts,
     core::errors::{self, ProcessTrackerError},
     errors::CustomResult,
     services::{
@@ -166,6 +168,24 @@ pub trait StorageInterface:
     fn get_subscription_store(&self)
         -> Box<dyn subscriptions::state::SubscriptionStorageInterface>;
     fn get_cache_store(&self) -> Box<dyn RedisConnInterface + Send + Sync + 'static>;
+    /// Postgres-backed KV store (Task 73/a), for call sites cut over from
+    /// Redis. Builds a fresh `PgKvStore` sharing this store's existing
+    /// Postgres pool on each call — cheap (`bb8::Pool::clone` is an `Arc`
+    /// clone) and deliberately doesn't open a second pool against Supabase,
+    /// since this deployment runs no Redis and Supabase's own pooler is
+    /// already the shared connection budget for everything else.
+    ///
+    /// Relies on `get_master_pool()`'s `PgPool::pg_pool` (`bb8::Pool<
+    /// ConnectionManager<DejaPgConnection>>`) and `PgKvStore`'s own pool
+    /// type (`bb8::Pool<ConnectionManager<diesel::PgConnection>>`) being the
+    /// *same type*, which only holds when `DejaPgConnection` resolves to
+    /// plain `diesel::PgConnection` — true under this workspace's default
+    /// features (`deja` is optional, off by default in both `router` and
+    /// `storage_impl`). If `deja` is ever enabled this call site fails to
+    /// compile rather than silently misbehaving, which is the point: a
+    /// build break here is a real signal to revisit the sharing decision,
+    /// not something to work around quietly.
+    fn get_pg_kv_store(&self) -> PgKvStore;
     fn set_key_manager_state(&mut self, key_manager_state: KeyManagerState);
 }
 
@@ -268,6 +288,13 @@ impl StorageInterface for Store {
         Box::new(self.clone())
     }
 
+    fn get_pg_kv_store(&self) -> PgKvStore {
+        PgKvStore::new(
+            self.get_master_pool().pg_pool.clone(),
+            consts::PG_KV_STORE_DEFAULT_TTL_IN_SECONDS,
+        )
+    }
+
     fn get_subscription_store(
         &self,
     ) -> Box<dyn subscriptions::state::SubscriptionStorageInterface> {
@@ -309,6 +336,17 @@ impl StorageInterface for MockDb {
 
     fn get_cache_store(&self) -> Box<dyn RedisConnInterface + Send + Sync + 'static> {
         Box::new(self.clone())
+    }
+    fn get_pg_kv_store(&self) -> PgKvStore {
+        // MockDb has no real Postgres pool to build one from (it isn't a
+        // `DatabaseStore`), so this is intentionally not implemented rather
+        // than silently faked. Tests that need `PgKvStore` behaviour should
+        // exercise a real `Store` (e.g. `test_transaction`), same pattern
+        // as any other real-Postgres-only path this codebase doesn't mock.
+        unimplemented!(
+            "PgKvStore is not available on MockDb — no real Postgres pool backs it; \
+             tests needing it should use a real `Store` (test_transaction)"
+        )
     }
     fn get_subscription_store(
         &self,

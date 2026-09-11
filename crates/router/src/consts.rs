@@ -308,6 +308,16 @@ pub const IRRELEVANT_CONNECTOR_REQUEST_REFERENCE_ID: &str =
 // Default payment method storing TTL in redis in seconds
 pub const DEFAULT_PAYMENT_METHOD_STORE_TTL: i64 = 86400; // 1 day
 
+/// Fallback TTL for `PgKvStore`-backed writes (Task 73/a) that don't pass a
+/// per-call override. No single existing `redis_ttl_in_seconds` config value
+/// is a generic default (the two in `config/*.toml` are feature-specific —
+/// forex-cache and payment-processor-token TTLs) so this is a deliberately
+/// conservative placeholder, not derived from either. Call sites that need a
+/// specific TTL should pass one explicitly (as `kill_switch.rs`'s counter
+/// does via `increment_hash_field`/`refresh_hash_field_expiry`) rather than
+/// relying on this value.
+pub const PG_KV_STORE_DEFAULT_TTL_IN_SECONDS: i64 = 3600; // 1 hour
+
 // Countries and separately encoded territories where PSD2 or the equivalent UK
 // strong customer authentication rules apply.
 pub const SCA_MANDATED_COUNTRIES: [Country; 39] = [

@@ -654,26 +654,30 @@ impl PgKvStore {
         Ok(())
     }
 
-    /// Analog of Redis `HDEL` for a single hash field.
+    /// Analog of Redis `HDEL` for a single hash field. Returns the number of rows actually
+    /// deleted (0 or 1, since `(cache_key, field)` is unique) rather than `()` — `kill_switch.rs`
+    /// `reset()` is the first real caller and needs to tell "there was nothing to clear" from
+    /// "cleared it", the same distinction Redis's own `DelReply::KeyDeleted`/`KeyNotDeleted`
+    /// gave it.
     pub async fn delete_hash_field(
         &self,
         key: &str,
         field: &str,
-    ) -> error_stack::Result<(), StorageError> {
+    ) -> error_stack::Result<usize, StorageError> {
         let conn = self
             .pool
             .get()
             .await
             .change_context(StorageError::DatabaseConnectionError)?;
 
-        sql_query("DELETE FROM pg_kv_cache WHERE cache_key = $1 AND field = $2")
+        let rows_deleted = sql_query("DELETE FROM pg_kv_cache WHERE cache_key = $1 AND field = $2")
             .bind::<Text, _>(key.to_owned())
             .bind::<Text, _>(field.to_owned())
             .execute_async(&*conn)
             .await
             .map_err(StorageError::from)?;
 
-        Ok(())
+        Ok(rows_deleted)
     }
 
     // ---- batch hash write (Finding #7) ----------------------------------
@@ -823,6 +827,47 @@ impl PgKvStore {
                     "pg cache increment returned no row for: {key}.{field}"
                 )))
             })
+    }
+
+    /// Refreshes `expires_at` on an existing hash-field row without touching
+    /// its value. `increment_hash_field` above only sets `expires_at` on a
+    /// row's *first* insert (`initial_expiry_seconds`), matching Redis
+    /// `HINCRBY`'s own behaviour of never touching TTL — but at least one
+    /// real caller (`kill_switch.rs`'s failure counter) previously used two
+    /// separate Redis calls, `HINCRBY` then `EXPIRE`, specifically to get a
+    /// *sliding* window that renews on every failure, not just the first.
+    /// `increment_hash_field` alone would silently drop that sliding-window
+    /// behaviour for any such caller, so this is the explicit second step
+    /// needed to reproduce it — found while wiring Finding #12 into its
+    /// first real call site, not part of the original per-call-site audit
+    /// findings list. No-op (not an error) if the row doesn't exist yet,
+    /// matching Redis `EXPIRE`'s own "returns 0, doesn't error" behaviour on
+    /// a missing key.
+    pub async fn refresh_hash_field_expiry(
+        &self,
+        key: &str,
+        field: &str,
+        ttl_seconds: i64,
+    ) -> error_stack::Result<(), StorageError> {
+        let conn = self
+            .pool
+            .get()
+            .await
+            .change_context(StorageError::DatabaseConnectionError)?;
+        let expires_at = common_utils::date_time::now() + time::Duration::seconds(ttl_seconds);
+
+        sql_query(
+            "UPDATE pg_kv_cache SET expires_at = $1, updated_at = now() \
+             WHERE cache_key = $2 AND field = $3",
+        )
+        .bind::<diesel::sql_types::Timestamp, _>(expires_at)
+        .bind::<Text, _>(key.to_owned())
+        .bind::<Text, _>(field.to_owned())
+        .execute_async(&*conn)
+        .await
+        .map_err(StorageError::from)?;
+
+        Ok(())
     }
 
     // ---- key existence (Finding #10) ------------------------------------

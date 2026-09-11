@@ -1,9 +1,13 @@
 //! Returns a rollout scope to the shadow connector integration when a Unified Connector Service
 //! call fails more than a configurable threshold number of times.
 //!
-//! Failures are counted in Redis via HINCRBY on a hash key scoped to the rollout scope. The read
-//! path (`is_kill_switched`) compares the counter against the threshold from the RolloutConfig.
-//! When the counter exceeds the threshold, the scope falls back to shadow mode.
+//! Failures are counted in Postgres (`PgKvStore`, Task 73/a's Finding #12) via an atomic
+//! increment on a hash-field key scoped to the rollout scope, with its TTL explicitly refreshed
+//! on every increment to reproduce the sliding failure window the original two-call Redis
+//! version (`HINCRBY` + `EXPIRE`) built on top of — see `write_counter`'s own comment. This
+//! deployment runs no Redis, so this is Postgres/Supabase-backed rather than Redis-backed. The
+//! read path (`is_kill_switched`) compares the counter against the threshold from the
+//! RolloutConfig. When the counter exceeds the threshold, the scope falls back to shadow mode.
 
 use std::str::FromStr;
 
@@ -54,9 +58,9 @@ fn rollout_scope_in(key_or_scope: &str) -> &str {
 /// Whether the kill switch should divert this scope to shadow mode.
 ///
 /// Checks: per-scope `kill_switch_enabled` from RolloutConfig must be true. Then reads the
-/// failure counter from Redis and compares against the threshold.
+/// failure counter from Postgres and compares against the threshold.
 ///
-/// Fails closed: a Redis error routes to shadow (the safe path).
+/// Fails closed: a storage error routes to shadow (the safe path).
 pub async fn is_kill_switched(
     state: &SessionState,
     rollout_scope: &str,
@@ -98,20 +102,29 @@ pub async fn is_kill_switched(
 }
 
 /// Reads the failure counter from the hash. Returns 0 if the key or field does not exist.
-/// Redis connection or read errors are propagated so the caller can fail closed.
+/// Storage connection or read errors are propagated so the caller can fail closed.
 async fn read_counter(
     state: &SessionState,
     rollout_scope: &str,
-) -> error_stack::Result<u64, storage_impl::errors::RedisError> {
-    let key: redis_interface::RedisKey = counter_key(rollout_scope).as_str().into();
-    let count: u64 = state
-        .store
-        .get_redis_conn()?
-        .get_hash_field::<Option<u64>>(&key, COUNTER_FIELD)
-        .await?
-        .unwrap_or(0);
+) -> error_stack::Result<u64, storage_impl::errors::StorageError> {
+    let key = counter_key(rollout_scope);
 
-    Ok(count)
+    match state
+        .store
+        .get_pg_kv_store()
+        .get_hash_field::<u64>(&key, COUNTER_FIELD)
+        .await
+    {
+        Ok(count) => Ok(count),
+        // `get_hash_field` errors on a missing row rather than returning `Option::None` the way
+        // the old `redis_interface::get_hash_field::<Option<u64>>` call did — translate that one
+        // specific case back into "0 failures so far", same as before. Any other error still
+        // propagates so the caller fails closed.
+        Err(error) if matches!(error.current_context(), storage_impl::errors::StorageError::ValueNotFound(_)) => {
+            Ok(0)
+        }
+        Err(error) => Err(error),
+    }
 }
 
 /// What a failing UCS call was for. A struct because transposing two of six positional strings
@@ -225,7 +238,7 @@ async fn is_ucs_only_connector(state: &SessionState, connector_name: &str) -> bo
 enum IncrementOutcome {
     /// Counter was incremented successfully.
     Incremented,
-    /// Redis refused the write.
+    /// The storage write was refused.
     WriteFailed,
 }
 
@@ -266,21 +279,35 @@ async fn increment_counter(
     }
 }
 
-/// Increments the failure counter (HINCRBY) and refreshes its TTL (EXPIRE).
-/// Two separate Redis calls — not atomic, but harmless: worst case the TTL refresh
-/// fails and the counter expires on its previous TTL.
+/// Increments the counter atomically, then refreshes its TTL as a second step.
+///
+/// `PgKvStore::increment_hash_field` alone only sets the row's expiry on its *first* insert
+/// (`initial_expiry_seconds`) — it never touches TTL on an existing row, mirroring Redis
+/// `HINCRBY`'s own behaviour. But the original Redis version deliberately made a second call,
+/// `EXPIRE`, after every `HINCRBY` specifically to get a *sliding* window that renews on every
+/// failure, not just the first — dropping that second step here would silently change this
+/// kill-switch's actual behaviour (a fixed window from first failure instead of a sliding one),
+/// so `refresh_hash_field_expiry` reproduces it explicitly. Two separate calls, not atomic — same
+/// as before: worst case the TTL refresh fails and the counter expires on its previous TTL,
+/// exactly the same failure mode the old two-Redis-call version already had.
 async fn write_counter(
     state: &SessionState,
     rollout_scope: &str,
-) -> error_stack::Result<Vec<usize>, storage_impl::errors::RedisError> {
-    let conn = state.store.get_redis_conn()?;
-    let key: redis_interface::RedisKey = counter_key(rollout_scope).as_str().into();
+) -> error_stack::Result<i64, storage_impl::errors::StorageError> {
+    let store = state.store.get_pg_kv_store();
+    let key = counter_key(rollout_scope);
 
-    let result = conn
-        .increment_fields_in_hash(&key, &[(COUNTER_FIELD, 1)])
+    let new_value = store
+        .increment_hash_field(
+            &key,
+            COUNTER_FIELD,
+            1,
+            Some(consts::UCS_KILL_SWITCH_TTL_IN_SECONDS),
+        )
         .await?;
 
-    conn.set_expiry(&key, consts::UCS_KILL_SWITCH_TTL_IN_SECONDS)
+    store
+        .refresh_hash_field_expiry(&key, COUNTER_FIELD, consts::UCS_KILL_SWITCH_TTL_IN_SECONDS)
         .await
         .inspect_err(|error| {
             logger::warn!(
@@ -291,7 +318,7 @@ async fn write_counter(
         })
         .ok();
 
-    Ok(result)
+    Ok(new_value)
 }
 
 /// Whether this scope has a counter, its current value, and whether it exceeds the threshold.
@@ -307,38 +334,38 @@ pub struct KillSwitchStatusResponse {
 impl common_utils::events::ApiEventMetric for KillSwitchStatusResponse {}
 
 /// Clears the counter, returning the scope to whatever its rollout config says.
+///
+/// Deletes the specific `(counter_key, COUNTER_FIELD)` hash-field row via `delete_hash_field` —
+/// not `delete_key`, which only ever matches plain-key rows (`field = ''`) and would silently
+/// no-op against a counter stored as a hash field, leaving `reset` looking like it worked while
+/// never actually clearing anything.
 pub async fn reset(state: SessionState, listed_key: String) -> errors::RouterResponse<()> {
     let rollout_scope = rollout_scope_in(&listed_key);
 
-    let reply = state
+    let rows_deleted = state
         .store
-        .get_redis_conn()
-        .change_context(errors::ApiErrorResponse::InternalServerError)
-        .attach_printable("Failed to get a redis connection to clear the UCS kill switch")?
-        .delete_key(&counter_key(rollout_scope).as_str().into())
+        .get_pg_kv_store()
+        .delete_hash_field(&counter_key(rollout_scope), COUNTER_FIELD)
         .await
         .change_context(errors::ApiErrorResponse::InternalServerError)
         .attach_printable("Failed to delete the UCS kill switch counter")?;
 
-    match reply {
-        redis_interface::DelReply::KeyDeleted => {
-            logger::info!(
-                rollout_scope = %rollout_scope,
-                "ucs_kill_switch: counter cleared via api"
-            );
+    if rows_deleted > 0 {
+        logger::info!(
+            rollout_scope = %rollout_scope,
+            "ucs_kill_switch: counter cleared via api"
+        );
 
-            Ok(crate::services::ApplicationResponse::StatusOk)
+        Ok(crate::services::ApplicationResponse::StatusOk)
+    } else {
+        Err(errors::ApiErrorResponse::GenericNotFoundError {
+            message: format!("No UCS kill switch counter found for scope {rollout_scope}"),
         }
-        redis_interface::DelReply::KeyNotDeleted => {
-            Err(errors::ApiErrorResponse::GenericNotFoundError {
-                message: format!("No UCS kill switch counter found for scope {rollout_scope}"),
-            }
-            .into())
-        }
+        .into())
     }
 }
 
-/// Reads the counter so an on-call engineer can inspect it without Redis or log access.
+/// Reads the counter so an on-call engineer can inspect it without DB or log access.
 pub async fn trip_status(
     state: SessionState,
     key_or_scope: String,

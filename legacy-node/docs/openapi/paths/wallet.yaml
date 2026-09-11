@@ -1,0 +1,37 @@
+getWallet:
+  get:
+    tags: [Wallet]
+    operationId: getWallet
+    summary: Get wallet balance
+    responses:
+      '200':
+        description: Wallet balance
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/schemas/WalletResponse'
+      '4XX':
+        description: Error (CONFIRM exact codes against live server)
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/schemas/ErrorResponse'
+
+createDeposit:
+  post:
+    tags: [Wallet]
+    operationId: createWalletDeposit
+    summary: Create virtual account for deposit
+    responses:
+      '200':
+        description: Virtual account created
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/schemas/DepositResponse'
+      '4XX':
+        description: Error (CONFIRM exact codes against live server)
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/schemas/ErrorResponse'

@@ -1,0 +1,51 @@
+register:
+  post:
+    tags: [Authentication]
+    operationId: registerUser
+    summary: Register a new API user
+    security: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas.yaml#/schemas/RegisterRequest'
+    responses:
+      '200':
+        description: Registration successful
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/schemas/AuthResponse'
+      '400':
+        description: Validation error (CONFIRM against live server)
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/schemas/ErrorResponse'
+
+login:
+  post:
+    tags: [Authentication]
+    operationId: loginUser
+    summary: Login to get API key
+    security: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas.yaml#/schemas/LoginRequest'
+    responses:
+      '200':
+        description: Login successful
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/schemas/AuthResponse'
+      '401':
+        description: Invalid credentials (CONFIRM against live server)
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/schemas/ErrorResponse'

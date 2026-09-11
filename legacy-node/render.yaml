@@ -1,0 +1,46 @@
+services:
+  - type: web
+    name: b-pay-backend
+    env: node
+    region: oregon  # Choose region closest to your users/providers
+    plan: starter   # Free tier to start
+    buildCommand: npm install
+    startCommand: node index.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      - key: ALLOWED_ORIGINS
+        sync: false
+      # Provider Keys (Add these in Render Dashboard for security)
+      - key: PAYSTACK_SECRET_KEY
+        sync: false
+      - key: JUICYWAY_SECRET_KEY
+        sync: false
+      - key: KORAPAY_SECRET_KEY
+        sync: false
+      # Webhook gateway (Task 41) — per-tenant forwarding config.
+      # Add one pair per downstream app; MAVW = mavins-web.
+      - key: MAVW_WEBHOOK_URL
+        sync: false
+      - key: MAVW_WEBHOOK_FORWARD_SECRET
+        sync: false
+      # Internal auth for money-moving routes (POST /payout).
+      # Shared secret, sent as X-Internal-Api-Key by trusted callers
+      # (Mavins-web's own server-side code today). Real value is a
+      # manual product-owner step in Render's dashboard, same class
+      # of action as every other secret above.
+      - key: INTERNAL_API_KEY
+        sync: false
+      # Supabase (Task 56/d-2). Service-role key, not the anon/public
+      # key — this backend talks to Supabase as a trusted server, see
+      # utils/supabase.js's own comment. Real values are a manual
+      # product-owner step in Render's dashboard, same class of action
+      # as every other secret above. Which project these point at is
+      # still Task 56/c's own open question — confirm before setting
+      # these for real.
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false

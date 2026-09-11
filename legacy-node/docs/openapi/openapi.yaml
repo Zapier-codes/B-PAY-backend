@@ -1,0 +1,69 @@
+openapi: 3.0.0
+info:
+  title: Reseller API (VTU / Payment Infrastructure)
+  description: >
+    White-label VTU (airtime/data) and payment infrastructure. Businesses
+    register for their own credentials and integrate this API directly or
+    resell it under their own brand. This spec is intentionally split into
+    one file per module (see docs/openapi/paths/) so that new countries,
+    networks, or product lines can be added without touching unrelated
+    files. See docs/guides/08-adding-a-country-rail.md before adding a
+    new country.
+  version: 1.0.0
+  contact:
+    name: Support
+
+servers:
+  - url: https://telco.opik.net/api/v1
+    description: Nigeria production server (current, confirmed live)
+  # Add one entry per country/region as new rails go live, e.g.:
+  # - url: https://gh.telco.opik.net/api/v1
+  #   description: Ghana production server (planned)
+
+tags:
+  - name: Authentication
+    description: Business/user registration and login. Issues credentials.
+  - name: Plans
+    description: Catalog of purchasable data/airtime plans, per network.
+  - name: Wallet
+    description: Prefunded wallet balance and funding (virtual account deposit).
+  - name: Purchases
+    description: VTU purchases — data bundles and airtime, per network/country.
+  - name: Transactions
+    description: Transaction history for the authenticated business/user.
+  - name: Webhooks
+    description: Outbound event notifications to a business's own endpoint.
+
+# Every protected endpoint requires the api_key security scheme below.
+# CONFIRM before relying on this: the source Swagger UI capture this spec
+# was built from (2026-09-06) has an "Authorize" button but the modal
+# content itself was not open/captured, so the exact header name/scheme
+# is inferred, not confirmed. See docs/guides/02-authentication.md.
+security:
+  - apiKeyAuth: []
+
+paths:
+  /auth/register:
+    $ref: './paths/auth.yaml#/register'
+  /auth/login:
+    $ref: './paths/auth.yaml#/login'
+  /plans:
+    $ref: './paths/plans.yaml#/listPlans'
+  /wallet:
+    $ref: './paths/wallet.yaml#/getWallet'
+  /wallet/deposit:
+    $ref: './paths/wallet.yaml#/createDeposit'
+  /purchase/data:
+    $ref: './paths/purchases.yaml#/purchaseData'
+  /purchase/airtime:
+    $ref: './paths/purchases.yaml#/purchaseAirtime'
+  /transactions:
+    $ref: './paths/transactions.yaml#/listTransactions'
+  /webhooks:
+    $ref: './paths/webhooks.yaml#/listWebhooks_createWebhook'
+
+components:
+  securitySchemes:
+    $ref: './components/schemas.yaml#/securitySchemes'
+  schemas:
+    $ref: './components/schemas.yaml#/schemas'

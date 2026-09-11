@@ -1,0 +1,33 @@
+listTransactions:
+  get:
+    tags: [Transactions]
+    operationId: listTransactions
+    summary: Get transaction history
+    parameters:
+      - name: limit
+        in: query
+        required: false
+        description: Number of transactions to return
+        schema:
+          type: integer
+          default: 20
+      - name: offset
+        in: query
+        required: false
+        description: Pagination offset
+        schema:
+          type: integer
+          default: 0
+    responses:
+      '200':
+        description: Transaction history
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/schemas/TransactionsResponse'
+      '4XX':
+        description: Error (CONFIRM exact codes against live server)
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/schemas/ErrorResponse'

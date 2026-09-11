@@ -100,7 +100,29 @@
 > task's own section. Nothing else in this file is required reading to
 > start work.**
 >
-> **✅ CI ADDED (2026-09-11, newest) — `.github/workflows/rust-check.yml`
+> **✅ CONFIRMED LANDED (2026-09-11, newest) — the CI workflow patch
+> (bullet directly below) is on `origin/main` (`9781b5eca`), confirmed
+> byte-identical via `git reset --hard origin/main` + `git diff` against
+> this session's own pre-handoff tree, not assumed from "the command
+> didn't error."** `rust-check.yml`'s **first real Actions run has not
+> been independently confirmed by this sandbox** — the GitHub REST API
+> is rate-limited for this sandbox's shared egress IP (`60/hour` window
+> already exhausted by other traffic on the same IP; confirmed via
+> `x-ratelimit-remaining: 0` on a real response header, not just an
+> error message), and it did not reset in the ~5 minutes this session
+> waited. **Whoever next has the Actions tab open should paste what
+> `rust-check`'s latest run actually shows** — expected red on
+> `cargo check -p storage_impl` per every prior session's diagnosis, but
+> that is a prediction, not a confirmed fact yet. Audit continued in
+> parallel while waiting on that (search "Task 73/a — per-call-site
+> audit, second pass" at the end of the file): **two more concrete,
+> real findings**, one of them a genuine pre-existing correctness bug
+> in the *current* Redis implementation (not something the Postgres
+> migration would introduce) — `services/card_testing_guard.rs`'s
+> fraud-counter increment is GET-then-SET, not atomic, in production
+> today. **9 of 63 files now read in depth; 54 remain open.**
+>
+> **⚠️ SUPERSEDED — CI ADDED (2026-09-11) — `.github/workflows/rust-check.yml`
 > now exists, pinned to `rustc` 1.85.0 (matching the workspace's own
 > `package.rust-version`), running `cargo check -p storage_impl` +
 > full-workspace `cargo check` + `clippy` on every push/PR to `main`.**
@@ -17569,6 +17591,118 @@ no new Rust and no further audit progress.
 (new file) + `handover.md` delta, one combined patch, base confirmed
 against real `origin/main` and test-applied before handoff (rule 8, as
 amended). No migration in this diff — DB-Ops block not owed.**
+```
+cd ~/B-PAY-backend
+git am ~/storage/downloads/<patch-file-name>
+git push
+```
+
+### Task 73/a — per-call-site audit, second pass (2026-09-11, same session, continued): CI landing confirmed on `origin/main`; Actions run itself unconfirmed (API rate-limited); 4 more files read, two real findings, one a pre-existing production bug independent of this migration
+
+**CI landing check, done properly this time:** `git fetch origin` +
+`git reset --hard origin/main` + `git diff` against this session's own
+pre-handoff tree came back **empty** — the CI patch from the previous
+entry is on `origin/main` at `9781b5eca`, byte-identical, confirmed not
+assumed. **What is not confirmed: the workflow's actual first run
+result.** `api.github.com` is on this sandbox's allowed-domain list and
+was tried directly (`/repos/.../actions/runs`), but returned `403` with
+`x-ratelimit-remaining: 0` — this sandbox's shared egress IP had
+already used its unauthenticated 60/hour GitHub API budget on other
+traffic unrelated to this session. Waited ~5 minutes (the header's own
+`x-ratelimit-reset` value) and retried; still exhausted, presumably
+other traffic on the same shared IP kept consuming the budget in the
+interim. **Not treated as "probably fine" — left explicitly open,
+flagged in the top box, for the next session or the product owner
+(who has an actual browser and isn't rate-limited) to check and report
+back.**
+
+**4 more files read in depth this pass** (bringing the running total
+to 9 of 63): `db/mandate.rs`, `db/api_keys.rs`, plus confirming the
+shared KV pattern against `db/refund.rs`/`db/dispute.rs` from the
+previous pass, and `services/card_testing_guard.rs`.
+
+**Finding #3, upgraded from tentative to confirmed pattern (not just
+one file):** `db/refund.rs`, `db/dispute.rs`, and now `db/mandate.rs`
+all go through the identical shared shape —
+`try_redis_get_else_try_database_get` + `HsetnxReply` +
+`storage_impl::redis::kv_store::{decide_storage_scheme, kv_wrapper,
+KvOperation, Op, PartitionKey}`. This is the standard read-through/
+write-through KV mirror pattern used across this codebase's DB model
+layer, not a one-off. `pg_kv_store.rs`'s existing `hset`/`hsetnx`
+methods target exactly this shape. Still not "confirmed compatible" in
+the strongest sense (that needs the toolchain, or at minimum a
+line-by-line trace of every field these three files touch against
+`pg_kv_store.rs`'s actual method signatures, neither done yet), but the
+pattern itself is now established across 3 real call sites, not
+inferred from 1.
+
+**Finding #4 (new, real, higher-value than expected) —
+`services/card_testing_guard.rs`'s `increment_blocked_count_in_cache`
+is not atomic *in the current Redis implementation*, a pre-existing
+production correctness gap this audit surfaced as a side effect, not
+something the Postgres migration would introduce.** The function does
+`GET` the current count, increments it in application code, then
+`SET`s it back with a fresh expiry (`set_key_with_expiry`) — three
+separate steps, no single atomic operation, no optimistic-concurrency
+check between the GET and the SET. Under concurrent card-testing
+attempts — precisely the adversarial scenario this guard exists to
+catch — two requests can both read the same count and both write
+`count + 1`, silently losing an increment and undercounting blocked
+attempts. **This is real today, independent of any Rust rewrite.**
+Also worth naming: `expiry` is re-applied on every increment
+(`set_key_with_expiry` on every call, not just the first), which is a
+*sliding* window — each new blocked attempt resets the full window
+length — not a fixed window from first-block. **Implication for the
+eventual Postgres port, not yet built:** a naive line-for-line
+translation (`SELECT count`, increment in Rust, `UPDATE`) would carry
+the same race forward. The correct Postgres equivalent is a single
+atomic `INSERT ... ON CONFLICT (cache_key) DO UPDATE SET count =
+pg_kv_cache.count + 1, expires_at = now() + $expiry`, which would
+*fix* the race as a side effect of the migration rather than reproduce
+it — flagged here as a decision the product owner should make
+knowingly (silently fixing a bug during an infra migration changes
+behavior, even if the new behavior is strictly more correct) rather
+than something a future session should just do unasked.
+
+**Finding #5 (new, real, needs `pg_pub_sub.rs` design attention) —
+`db/api_keys.rs` uses Redis pub/sub for cross-instance cache
+invalidation (`cache::publish_and_redact`, `.subscribe(
+"hyperswitch_invalidate")`, `ACCOUNTS_CACHE`), and this usage shape may
+not fit `pg_pub_sub.rs`'s current sketch cleanly.** `pg_pub_sub.rs`'s
+own doc comment already correctly notes it matches Redis pub/sub's
+fire-and-forget, no-guaranteed-delivery-to-late-subscribers semantics,
+and describes polling `pg_pubsub_payload` for rows "since a last-seen
+id" — but does not specify **whose** last-seen id: a single shared
+cursor (fine for a work-queue, where each message should be processed
+exactly once by whichever instance claims it) or a per-subscriber
+cursor (required for a fan-out broadcast, where *every* live instance
+must see *every* invalidation message so none of them serve stale
+cached data). Cache invalidation is unambiguously the fan-out case —
+if the eventual subscriber implementation uses a single shared cursor
+by default (the more natural reading of "poll for new rows since a
+last-seen id" without qualification), instances would silently race to
+"claim" invalidation messages and some instances would keep serving
+stale `ACCOUNTS_CACHE` entries, a real and dangerous correctness bug
+for a payments backend. **Not fixed this session** (the subscriber
+side isn't built yet at all, per this file's own standing "Not done"
+list) — flagged now, before the subscriber gets built, specifically so
+the per-subscriber-cursor requirement is a known constraint from the
+start rather than a bug discovered after the fact.
+
+**Not done, still open:** 54 of 63 files still unread; `PgLock`'s
+missing multi-key entry point (Finding #1, unchanged); the two new
+findings above are flagged, not fixed — neither should be fixed as
+new Rust without a working toolchain, consistent with the same
+discipline every prior Task 73/a session has followed; whether
+`rust-check.yml`'s first real run confirms or contradicts the
+"should come back red on storage_impl, should later succeed with 1.85"
+prediction, still genuinely unknown from this sandbox as of this
+entry.
+
+**Per the Patch Handoff Convention: `handover.md` only, no code
+change, no migration. Base re-confirmed against real `origin/main`
+immediately before this entry was written (rule 8) — not reused from
+memory of the previous check earlier in this same session:**
 ```
 cd ~/B-PAY-backend
 git am ~/storage/downloads/<patch-file-name>

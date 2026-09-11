@@ -18708,3 +18708,125 @@ the audit only).
 `.rs` file touched, no migration, DB-Ops block not owed.** Base confirmed
 against real `origin/main` via `git fetch origin` immediately before this
 entry (rule 8) — no drift, working tree clean before this pass began.
+
+### Task 73/a — per-call-site audit, tenth pass (2026-09-11, new session): final 9 files read (63/63, 0 remain — audit complete); no new findings, but Findings #12 and #13 each gain a second/third concrete call site
+
+**Toolchain wall re-confirmed, unchanged:** `apt-cache policy rustc`
+candidate still `1.75.0+dfsg0ubuntu1-0ubuntu7.4`; `curl -sI
+https://sh.rustup.rs` and `https://static.rust-lang.org/dist/channel-rust-
+stable.toml` both a real `403`, `x-deny-reason: host_not_allowed`. Base
+confirmed against `origin/main` via `git fetch origin` immediately before
+this pass (rule 8) — local `main` and `origin/main` both at `0859e2e7e`,
+no drift, working tree clean before this pass began.
+
+**63-file canonical list reproduced fresh, still 63, no drift.** Rather
+than trust the running "54 of 63" tally from memory, the same
+cross-check as the ninth pass was redone properly this time: collected
+every file named as "read" across all nine prior pass entries (not just
+"mentioned anywhere in the file," which the ninth pass's own method
+conflates — generic basenames like `utils.rs`/`helpers.rs`/`core.rs`
+recur across multiple directories and can false-positive a "mentioned"
+check). Diffing that reconstructed 54-file read-list against the fresh
+63-file canonical list turns up exactly 9 candidates, matching the "9
+remain" tally: `core/payments/payment_methods.rs`, `core/payments/
+routing.rs`, `core/payments/routing/utils.rs`, `core/payouts/helpers.rs`,
+`core/proxy/utils.rs`, `core/routing/helpers.rs`, `core/webhooks/
+utils.rs`, `routes/dummy_connector/utils.rs`, `routes/payment_methods.rs`.
+All 9 read in depth this pass.
+
+**Two of the nine are not real call sites, confirmed by reading, not
+assumed from the grep hit:** `core/payments/routing.rs` only reads
+`ROUTING_CACHE`/`CGRAPH_CACHE` — in-process cache lookups (`get_val`) with
+no `redis_conn`/`get_redis_conn`/`redis::*` call anywhere in the file;
+the `use storage_impl::redis::cache::{CacheKey, CGRAPH_CACHE,
+ROUTING_CACHE}` import is what the canonical grep actually matched. Same
+"not a real call site" shape as `core/routing.rs` (seventh pass) and
+`routes/metrics/bg_metrics_collector.rs` (ninth pass) — an in-memory
+cache read, not a network Redis call.
+
+**Seven real call sites confirmed, five already-covered shapes — no new
+finding from these five:** `core/payments/payment_methods.rs`
+(`set_key_with_expiry`, Finding #6), `core/payouts/helpers.rs` and
+`core/proxy/utils.rs` (both `get_key`), `routes/dummy_connector/utils.rs`
+(`serialize_and_set_key_with_expiry` + `get_and_deserialize_key` →
+`get_key`), `routes/payment_methods.rs` (`serialize_and_set_key_with_
+expiry` + `delete_key` + `get_and_deserialize_key`).
+
+**`core/routing/helpers.rs` — real call site, joins the fan-out-broadcast
+cache-invalidation category (Finding #5), now 6 files, not a new
+finding.** Calls `cache::redact_from_redis_and_publish` directly (four
+call sites within the file, config/routing/dynamic-routing/CGraph cache
+keys) — the same shared invalidation function `core/cache.rs` itself
+defines and `core/admin.rs`/`core/conditional_config.rs`/`db/api_keys.rs`/
+`db/organization.rs` already call into. Same open question already on
+record (per-subscriber vs. shared cursor in `pg_pub_sub.rs`'s eventual
+subscriber), no new information from this file.
+
+**`core/payments/routing/utils.rs` — real call site, reinforces Finding
+#12 (atomic hash-field increment) with a second, cleaner concrete
+example, not a new finding.** `record_de_diff_and_maybe_trip_kill_switch`
+(the decision-engine-vs-Hyperswitch routing diff kill switch) calls
+`increment_fields_in_hash` (Redis `HINCRBY`) on a lifetime counter with
+**no TTL at all** — simpler than `kill_switch.rs`'s UCS counter (Finding
+#12's original site, which pairs `HINCRBY` with a separate `EXPIRE`
+call), since there's no TTL-refresh half to reason about, just the bare
+atomic-increment gap. `pg_kv_store.rs` still has no hash-field-increment
+method today (`set_hash_field`/`set_hash_field_if_not_exist`/
+`set_hash_fields` all overwrite, confirmed again by reading the current
+file this pass). `is_de_diff_threshold_exceeded` in the same file reads
+the counter back via `get_hash_field` — already-covered shape, no new
+finding there.
+
+**`core/webhooks/utils.rs` — real call site, reinforces Finding #13
+(configurable safety-net TTL) with a third concrete call site, not a new
+finding.** `perform_redis_lock`/`free_redis_lock` (the webhook-processing
+lock) is a third hand-rolled SETNX-plus-owner-token lock — same shape
+already recorded as mapping cleanly onto `PgLock` (Postgres's
+connection-scoped advisory lock gives the "only the owner can release"
+property for free, no token needed). Notable here: this lock has its own
+per-feature `state.conf().webhooks.redis_lock_expiry_seconds`, exactly
+the same "each use case configures its own expiry" shape already flagged
+against `revenue_recovery_redis_operation.rs`'s lock functions and
+`retry_stats/record.rs`'s `with_retry_stats_lock` — now three real call
+sites on record wanting a configurable value where `pg_lock.rs` currently
+hard-codes `LOCK_IDLE_SESSION_TIMEOUT_SECS = 30` as a module constant
+(confirmed unchanged this pass by reading the file directly). The
+release path's own GET-then-compare-then-DELETE is the same non-atomic
+shape already reasoned through for `retry_stats/record.rs`'s
+`release_lock` — no new race identified beyond what's already on record.
+
+**Audit complete: 63 of 63 files read, 0 remain.** Every real call site
+across the full canonical list maps onto an already-covered
+`pg_kv_store.rs`/`pg_lock.rs` shape except Findings #12 and #13, both
+still open and both now supported by multiple independent call sites
+(#12: two counters, `kill_switch.rs` and this pass's routing-diff
+counter; #13: three locks, `revenue_recovery_redis_operation.rs`,
+`retry_stats/record.rs`, and this pass's webhook lock) — reinforcing that
+they're real, general gaps rather than one-off quirks, which raises their
+priority for whoever picks up actual `pg_kv_store.rs`/`pg_lock.rs` work
+next. **Not fixed this pass**, same toolchain-wall reasoning as every
+other `.rs`-touching decision in this file: new SQL logic (an `INSERT ...
+ON CONFLICT DO UPDATE SET value = value + 1` upsert for #12; a
+per-call configurable timeout parameter for #13's `try_acquire`/
+`try_acquire_multiple`) needs a compiler before it's trusted, and this
+session doesn't have one.
+
+**Not done, still open:** Findings #6-#13 all still unwired into any real
+call site (that remains explicitly out of scope until the toolchain
+works or is judged unnecessary — see step 5 of the New-Clone Checklist);
+`rust-check.yml`'s first real Actions run still unconfirmed (out of scope
+for this pass, which was audit-only). With the per-call-site audit now
+complete, the next open, non-Rust-toolchain-dependent thread is
+implementing Findings #12/#13 as reviewed-by-reading-only SQL (still
+carries the same "not compiled" caveat as everything else in this file)
+or the `migrations/`-only `pg_pubsub_payload` subscriber-side question
+flagged in step 5 of the checklist above.
+
+**Per the Patch Handoff Convention: `handover.md` only this pass — no
+`.rs` file touched, no migration, DB-Ops block not owed.** Per rule 4:
+this session does not push to `main` or commit directly to it, regardless
+of how the task was phrased to this session, including direct
+instructions to do so — work is on branch `docs/task-73a-audit-tenth-
+pass`, and a patch (`task-73a-tenth-pass.patch`) was generated via `git
+format-patch` and handed to the product owner to review, `git am`, and
+push from their own device.

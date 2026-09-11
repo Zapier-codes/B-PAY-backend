@@ -100,7 +100,42 @@
 > task's own section. Nothing else in this file is required reading to
 > start work.**
 >
-> **✅ CONFIRMED LANDED (2026-09-11, newest) — the `pg_cron` sweep-job
+> **✅ AUDIT STARTED (2026-09-11, newest) — per-call-site TTL/atomicity
+> audit (Task 73/a's own explicit next step, and the concrete task the
+> New-Clone Checklist points at when `rustc` is unavailable) begun; one
+> concrete, real gap found in `PgLock`'s API shape, not yet fixed.**
+> This sandbox re-confirmed the toolchain wall first (both
+> `static.rust-lang.org` and `sh.rustup.rs` still `403
+> host_not_allowed`; `apt-get update` itself timed out this session,
+> untested further — not claiming apt would differ, just that it
+> wasn't re-verified), so work went to the audit, not new Rust. The
+> 63-file call-site list was **reproduced exactly** (same grep
+> methodology as the original Task 73 scoping session — `redis::|
+> RedisConnectionPool|get_redis_conn|redis_conn` under
+> `crates/router/src` — same count, same files, saved to
+> `/home/claude/redis_call_sites.txt` in-sandbox for reuse, not
+> re-derivable from this file alone since that scratch path doesn't
+> persist across sessions) and a deep read of the highest-signal files
+> surfaced a real semantic gap: `core/api_locking.rs`'s
+> `LockAction::HoldMultiple` acquires N Redis keys atomically in one
+> round trip (`set_multiple_keys_if_not_exists_and_get_values`) and
+> checks a shared fencing value (`request_id`) across all of them to
+> decide whether *this* caller won every lock — `PgLock` (`pg_lock.rs`)
+> only exposes a single-key `try_acquire`/`release`. Looping single-key
+> acquisitions to fake multi-key locking would reintroduce the classic
+> multi-lock deadlock-ordering problem that Redis's single-round-trip
+> SETNX-multi avoids by construction. **Not fixed this session** — no
+> Rust written, flagged as the concrete next `pg_lock.rs` gap for
+> whoever picks this up with a working toolchain. Full detail, the
+> reproduced 63-file list, and per-file categorization notes for the
+> handful of files actually read this session, in the new Task 73/a
+> section at the end of the file (search "Task 73/a — per-call-site
+> audit begins"). **Audit coverage is partial, not complete** — 5 of 63
+> files read in real depth this session; the rest is still open, exact
+> same "not started → now started, real progress, still not finished"
+> shape as every other Task 73/a sub-thread in this file.
+>
+> **⚠️ SUPERSEDED — CONFIRMED LANDED (2026-09-11) — the `pg_cron` sweep-job
 > patch (bullet directly below) is on `origin/main`.** `git fetch
 > origin` shows `origin/main` at `9ffba4103` — a different hash than
 > the local commit that generated the patch (`88a8e1e41`, expected:
@@ -17285,4 +17320,115 @@ proot-distro login ubuntu
 cd ~/B-Pay-backend
 git pull
 psql "host=aws-1-eu-west-1.pooler.supabase.com port=5432 dbname=postgres user=postgres.mfekzzwsoiezqkovabmp sslmode=require" -f migrations/2026-09-11-130000_add_pg_kv_cache_pubsub_sweep_jobs/up.sql
+```
+
+### Task 73/a — per-call-site audit begins (2026-09-11, new session): 63-file list reproduced exactly, 5 files read in depth, one real `PgLock` API gap found (multi-key atomic locking), toolchain wall re-confirmed but not re-diagnosed from scratch
+
+**Scope: `handover.md` only. No `.rs` file touched, no migration.** Per
+the New-Clone Checklist (step 6), toolchain was tried first, not
+assumed blocked: `curl -sI` against `static.rust-lang.org` and
+`sh.rustup.rs` both still return `403`/`host_not_allowed` on this
+sandbox, consistent with every prior session. `apt-get update -qq`
+itself hit this session's own command timeout before returning —
+noted as untested-to-completion rather than claimed as a new data
+point either way. Given no working `rustc`, this session picked the
+New-Clone Checklist's own named alternative: the per-call-site
+TTL/atomicity audit, previously flagged as "not started" in every
+Task 73/a session so far.
+
+**Methodology — reproduced, not re-invented.** The original Task 73
+scoping session (search "Task 73 — sub-task allocation begins") derived
+the 63-file figure with:
+```
+grep -rlE "redis::|RedisConnectionPool|get_redis_conn|redis_conn" crates/router/src
+```
+Re-running that exact command this session returns **63 files,
+byte-identical set** (diffed against a fresh run, not assumed from the
+count alone) — confirms the figure hasn't drifted as the codebase has
+moved and gives any future session a checked-not-guessed starting
+list. Saved in-sandbox at `/home/claude/redis_call_sites.txt`, but
+that path is scratch space local to this sandbox instance and will
+**not** persist to the next session's own sandbox — the command above
+is the reusable artifact, not the file.
+
+**Finding #1 (the real one) — `LockAction::HoldMultiple` needs atomic
+multi-key locking; `PgLock` only offers single-key.** `core/
+api_locking.rs`'s `HoldMultiple` variant is used whenever a caller
+needs more than one lock at once (`perform_locking_action`, `Self::
+HoldMultiple { inputs }` branch). It acquires all of them in **one**
+Redis round trip via `set_multiple_keys_if_not_exists_and_get_values`
+— a pipelined multi-key SETNX-and-GET — then checks that *every*
+returned value equals this call's own `request_id` (the fencing token)
+before declaring the lock acquired; if any key was already held by a
+different request, none of them count as "this caller's lock," and it
+retries the whole batch after a delay. `pg_lock.rs`'s `PgLock` (search
+its own file, `pub async fn try_acquire` / `pub async fn release`)
+only supports a single key per lock instance — there is no multi-key
+entry point yet. **Why this can't just be "call `try_acquire` in a
+loop, one key at a time":** Postgres session-level advisory locks
+block the calling connection while waiting; acquiring locks A then B
+sequentially, while a different concurrent caller acquires B then A,
+is the textbook lock-ordering deadlock shape — something Redis's
+implementation never risks, because the multi-key SETNX is a single
+atomic server-side operation, not N sequential client round trips.
+**Not fixed this session** (would be new Rust, unverifiable without
+`rustc` ≥ 1.85 — see the standing toolchain note) — recorded here as
+the first concrete, specific gap for whoever next touches
+`pg_lock.rs`, replacing the vaguer "wiring into the 63 call sites"
+language used until now.
+
+**Finding #2 (minor, scope-narrowing) — not every file in the 63-file
+grep hit is an actual operational call site.** `configs/settings.rs`
+matches the grep pattern (`storage_impl::redis::RedisStore` as a
+struct field type, `RedisSettings`, `redis_lock_expiry_seconds` as a
+config field) but performs no get/set/lock/publish operation itself —
+it's type/config plumbing consumed by the real call sites elsewhere.
+Doesn't change the 63 count (the file is a legitimate grep hit and
+Task 73's own note already treats "file mentions redis" as the
+counting unit, not "file performs an operation"), but it means this
+file's own entry in the eventual per-site audit table should read
+"no TTL/atomicity decision needed — config/type declaration only,"
+not be silently skipped as if unreviewed.
+
+**Finding #3 (tentative, needs the same depth on the other 4 KV-store
+sites before calling it confirmed) — `db/refund.rs`'s Redis usage goes
+through the shared KV-store read/write pattern
+(`try_redis_get_else_try_database_get`, `HsetnxReply`), the same
+hash-field-with-HSETNX shape `pg_kv_store.rs`'s `hset`/`hsetnx` already
+targets.** On a first read this looks compatible with what's already
+built, unlike Finding #1 — but "looks compatible on a first read" is
+exactly the kind of claim this audit exists to either confirm or
+disprove properly, so this is flagged tentative, not closed.
+
+**5 files read in real depth this session (of 63):**
+`core/api_locking.rs` (Finding #1), `configs/settings.rs` (Finding
+#2), `db/refund.rs` (Finding #3, tentative), `db/kafka_store.rs` and
+`db/merchant_connector_account.rs` (both pub/sub-category, skimmed for
+shape but not yet compared line-by-line against `pg_pub_sub.rs`'s
+actual public API — no finding recorded yet, listed here so it isn't
+implied to be untouched next session). **The remaining 58 files have
+not been read this session** — still open, same as every prior
+Task 73/a session's honest "not started" note, just one step further
+along now.
+
+**Not done, still open, unchanged from every prior Task 73/a session:**
+the other 58 files' TTL/atomicity review; wiring `pg_lock.rs`/
+`pg_kv_store.rs`/`pg_pub_sub.rs` into `RedisStore` or any real call
+site (explicitly still blocked on both the toolchain **and** this
+audit per the New-Clone Checklist's own ordering); `PgLock`'s missing
+multi-key entry point (Finding #1, now a named, scoped piece of work
+instead of an implied one); `hscan_and_deserialize`'s cursor
+pagination; load testing against Supabase; the subscriber-side
+(`LISTEN` + fetch-by-id) half of `pg_pub_sub.rs`.
+
+**Per the Patch Handoff Convention: `handover.md` only, no code, no
+migration — Patch Handoff block owed as always (rule 5), DB-Ops block
+not owed (no `migrations/` diff, rule 7). This session does not push
+to `main` itself — per rule 4, that applies regardless of how the
+task was phrased to this session, including a direct instruction to
+push it directly:**
+```
+cd ~/B-PAY-backend
+git am ~/storage/downloads/<patch-file-name>
+git push
 ```

@@ -756,11 +756,14 @@ impl PgKvStore {
         .await
         .map_err(StorageError::from)?;
 
-        rows.into_iter().next().map(|row| row.new_value).ok_or_else(|| {
-            report!(StorageError::ValueNotFound(format!(
-                "pg cache increment returned no row for: {key}.{field}"
-            )))
-        })
+        rows.into_iter()
+            .next()
+            .map(|row| row.new_value)
+            .ok_or_else(|| {
+                report!(StorageError::ValueNotFound(format!(
+                    "pg cache increment returned no row for: {key}.{field}"
+                )))
+            })
     }
 
     // ---- key existence (Finding #10) ------------------------------------

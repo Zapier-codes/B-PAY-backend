@@ -139,10 +139,22 @@
 > **Same job also surfaced two other real findings, not asked for but
 > real:** `check-msrv` failed too (`Cargo hack (canonical push only)`
 > step, exit non-zero after ~7 minutes) — a separate, unexamined
-> failure, not yet triaged. `Check wasm build`, `Spell check`, and
-> `Check formatting` also failed on this same push — again unexamined;
-> don't assume any of these share a root cause with the
-> `storage_impl` failure without actually checking.
+> failure, not yet triaged. `Check wasm build` also failed, still
+> unexamined.
+>
+> **⚠️ UPDATE, same session — `Check formatting` fixed, `Spell check`
+> triaged as pre-existing/unrelated, `storage_impl`'s own error STILL
+> not in hand.** Product owner pasted `--log-failed` output covering
+> `Spell check` + `Check formatting` (not the `storage_impl` job
+> itself). `Check formatting`'s one diff (`pg_kv_store.rs`, pure
+> reflow) is fixed. `Spell check`'s ~30 findings span ~15 files, none
+> of them `pg_kv_store.rs`/`pg_lock.rs`/`pg_pub_sub.rs` — confirmed
+> pre-existing and unrelated, explicitly left unfixed (real but
+> out-of-scope). **The actual `cargo check -p storage_impl` error —
+> the one thing this whole thread needs — is still unknown**; asked
+> for again, this time scoped to the exact job
+> (`--job 103335923019`). Full detail: search "Check formatting diff
+> ... fixed in pg_kv_store.rs" at the end of the file.
 >
 > **✅ Task 73/b — pub/sub call-site audit, FIRST PASS (2026-09-11) —
 > all 15 reproducible call sites read; the standing
@@ -19261,4 +19273,83 @@ the product owner's own credentials can make; run from wherever `gh` is
 already authenticated, e.g. the Termux device):
 ```
 gh run view 34621375723 --repo Zapier-codes/B-Pay-backend --log-failed
+```
+
+### CI — `Check formatting` diff (product owner pasted `--log-failed`) fixed in `pg_kv_store.rs`; `Spell check` failures confirmed pre-existing and unrelated; `storage_impl` cargo-check error still not in hand (2026-09-11, same session, continued)
+
+**Product owner ran the log-pull command from the prior entry and pasted
+the output back.** It turned out to be `gh run view --log-failed`'s
+output for two of the run's five failed jobs — `Spell check` and `Check
+formatting` — not the `cargo check -p storage_impl` job specifically
+(the actual target). Recorded as what it actually was, not silently
+treated as the storage_impl error.
+
+**`Check formatting` — real, fixed:** `cargo +nightly fmt --all --check`
+flagged exactly one diff, in `crates/storage_impl/src/pg_kv_store.rs`
+at the `increment_hash_field`-style helper (the same function area as
+Finding #12's hash-field-increment work) — a single-expression method
+chain (`rows.into_iter().next().map(...).ok_or_else(...)`) that rustfmt
+wants broken across multiple lines once it doesn't fit its width limit.
+**Applied the exact reflow the CI diff showed, verified byte-for-byte
+against the pasted diff before editing** — pure formatting, no logic
+touched, so this needed no compiler to verify safely (unlike everything
+else `.rs`-shaped in this file). This directly touches Task 73/a's own
+work (the file is `pg_kv_store.rs`), so it's in scope, not adjacent work
+pulled in speculatively.
+
+**`Spell check` — real, but explicitly out of scope, not fixed:** ~30
+`typos`-tool findings (`recieved`→`received`, `Registeration`→
+`Registration`, `eligiblity`→`eligibility`, `updator`→`updater`,
+`Rounting`→`Routing`, `nd`→`and`, and others) across roughly 15 files —
+`core/payments.rs`, `core/routing.rs`, `core/user_role.rs`,
+`core/payment_methods.rs`, `core/payouts.rs`,
+`core/unified_connector_service/transformers.rs`,
+`core/merchant_connector_webhook_management.rs` (+ its
+`transformers.rs`), `core/revenue_recovery.rs`, `routes/app.rs`,
+`workflows/revenue_recovery.rs`, `core/payments/{helpers.rs,
+session_token.rs, access_token.rs, routing/utils.rs}`,
+`core/payments/flows/{setup_mandate_flow.rs, complete_authorize_flow.rs,
+session_flow.rs, authorize_flow.rs}`, `card_metadata/toml/
+card_subtypes.toml`. **None of these touch `pg_kv_store.rs`/
+`pg_lock.rs`/`pg_pub_sub.rs`** — checked explicitly, not assumed — so
+this failure predates and is unrelated to Task 73/a's own diff.
+Explicitly not fixed this pass: 15 unrelated files is real scope creep
+for a session whose actual mandate is the Postgres-locking thread: named
+here so it isn't lost, not silently absorbed into "storage-impl work"
+or silently ignored either.
+
+**Still not in hand: the actual `cargo check -p storage_impl` failure
+text — the one piece of information this whole thread has been waiting
+on.** Asked the product owner to re-run targeting the specific job:
+```
+gh run view 34621375723 --repo Zapier-codes/B-Pay-backend --job 103335923019 --log
+```
+Until that comes back, the real compile error behind Findings #1/#6-#13
+(reviewed by reading only, never compiled) is still unknown, and nothing
+in `pg_lock.rs`/`pg_kv_store.rs`/`pg_pub_sub.rs` beyond this one
+formatting fix should be touched speculatively.
+
+**Not done, still open:** the `storage_impl` compiler error's actual
+text (still the real blocker — asked for again, more specifically this
+time); the 15-file Spell check backlog (real, pre-existing, explicitly
+out of scope this pass); `check-msrv`/wasm failures on the same run,
+still untriaged; the 15-vs-18 pub/sub count discrepancy (unchanged,
+earlier entry); wiring any Task 73/a finding into a real call site
+(still blocked on the local sandbox toolchain).
+
+**Per the Patch Handoff Convention: `crates/storage_impl/src/
+pg_kv_store.rs` (formatting only) and this `handover.md` entry. No
+migration touched, no DB-Ops block owed. Combined into the same
+still-unapplied branch/commit as the prior entry per rule 6 (assumed
+not yet applied, since this follow-up landed minutes into the same
+live session — flagged for the product owner to correct if that
+assumption is wrong). Base re-confirmed against real `origin/main`
+(`fdf15dcd8`) — no drift (rule 8).**
+
+**Exact command(s) for the product owner, per rule 7 — Patch Handoff
+only this pass (no `db/migrations/` change, no DB-Ops block owed):**
+```
+cd ~/B-PAY-backend
+git am ~/storage/downloads/<patch-file-name>
+git push
 ```

@@ -104,6 +104,21 @@
 > task's own section. Nothing else in this file is required reading to
 > start work.**
 >
+> **✅ euclid_wasm `wasm-check` CI fix (2026-09-11, newest, unapplied
+> patch — not yet handed to product owner as of this line) — `mio`
+> reached the wasm32 build via `common_utils`'s unconditional `reqwest`
+> dependency; scoped `reqwest` to `cfg(not(target_arch = "wasm32"))` and
+> gave `request.rs`'s `Form` a wasm32 stand-in so `RequestContent`
+> still type-checks there.** Not compiled — same toolchain wall as
+> everything else in this file (`rustc` candidate is `1.75.0`,
+> `sh.rustup.rs` a real `403`); needs `cargo check --target
+> wasm32-unknown-unknown` or a real `wasm-check` Actions run before it's
+> trusted further. Full detail: search "Task — euclid_wasm `wasm-check`
+> CI failure fixed" at the end of the file. Two commits on branch
+> `fix/euclid-wasm-mio-build`, patch handed to the product owner as
+> `wasm-mio-fix.patch` per rule 4 — unrelated to, and not folded into,
+> the Task 73/a Postgres-locking thread below.
+>
 > **✅ CONFIRMED LANDED (2026-09-11, newest) — the CI workflow patch
 > (bullet directly below) is on `origin/main` (`9781b5eca`), confirmed
 > byte-identical via `git reset --hard origin/main` + `git diff` against

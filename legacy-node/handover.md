@@ -104,8 +104,20 @@
 > task's own section. Nothing else in this file is required reading to
 > start work.**
 >
-> **✅ euclid_wasm `wasm-check` CI fix (2026-09-11, newest, unapplied
-> patch — not yet handed to product owner as of this line) — `mio`
+> **✅ AUDIT CONTINUED, NINTH PASS (2026-09-11, newest, `handover.md`
+> only, unapplied patch — not yet handed to product owner as of this
+> line) — 9 more files read (54 of 63 now, 9 remain); two new API gaps
+> found, neither fixed this pass.** Finding #12: no atomic hash-field-
+> increment in `pg_kv_store.rs` (`kill_switch.rs`'s rollout-failure
+> counter). Finding #13: no "refresh TTL, keep value" method for plain
+> keys, and the same gap as `PgLock`'s fixed (non-configurable)
+> `LOCK_IDLE_SESSION_TIMEOUT_SECS`. Toolchain wall re-confirmed
+> unchanged. Full detail: search "Task 73/a — per-call-site audit,
+> ninth pass" at the end of the file.
+>
+> **✅ euclid_wasm `wasm-check` CI fix (2026-09-11, LANDED — confirmed
+> on `origin/main`, content-identical diff check against this session's
+> own branch, not assumed from "the command didn't error") — `mio`
 > reached the wasm32 build via `common_utils`'s unconditional `reqwest`
 > dependency; scoped `reqwest` to `cfg(not(target_arch = "wasm32"))` and
 > gave `request.rs`'s `Form` a wasm32 stand-in so `RequestContent`
@@ -18596,3 +18608,103 @@ so — work is on branch `fix/euclid-wasm-mio-build`, and a patch
 (`wasm-mio-fix.patch`) was generated via `git format-patch` and handed
 to the product owner to review, `git am`, and push from their own
 device.**
+
+### Task 73/a — per-call-site audit, ninth pass (2026-09-11, new session): 9 more files read (54/63, 9 remain); two new API gaps found (not fixed this pass)
+
+**Toolchain wall re-confirmed, unchanged:** `apt-cache policy rustc` still
+offers only `1.75.0+dfsg0ubuntu1-*`; `curl -sI https://sh.rustup.rs` and
+`https://static.rust-lang.org/dist/channel-rust-stable.toml` both a real
+`403`, `x-deny-reason: host_not_allowed`. Same wall, independently
+reproduced again rather than trusted from this file.
+
+**63-file canonical list reproduced fresh** (`grep -rlE
+"redis::|RedisConnectionPool|get_redis_conn|redis_conn" crates/router/
+src`), still 63, no drift. Rather than trust the running "45 of 63" tally
+from memory, cross-checked it against the file itself: every already-
+"read" file's basename appears somewhere in this file's own prose
+(mid-identifier line-wraps included, e.g. `unified_\nauthentication_
+service.rs`); a script search for zero-mention basenames turned up
+exactly 9 candidates, all read in depth this pass:
+`core/payments/operations/payment_confirm.rs`, `core/payments/types.rs`,
+`core/revenue_recovery/retry_stats/record.rs`, `core/unified_connector_
+service/kill_switch.rs`, `db.rs`, `routes/dummy_connector/core.rs`,
+`routes/metrics/bg_metrics_collector.rs`, `services.rs`, `types/storage/
+revenue_recovery_redis_operation.rs`. That brings the running total to
+54 of 63; **9 remain**, not re-derived beyond this pass's own 9 (the "45"
+baseline is inherited from prior entries, not independently re-verified
+file-by-file this session).
+
+**Three of the nine are not real call sites** (same shape as Finding #2's
+`configs/settings.rs`) — confirmed by reading, not assumed from the grep
+hit alone: `db.rs` (imports `redis::kv_store::RedisConnInterface` as a
+trait bound only), `routes/metrics/bg_metrics_collector.rs` (imports
+`storage_impl::redis::cache` to call each in-process cache instance's own
+`record_entry_count_metric()` — an in-memory metrics loop, no network
+Redis call in this file), `services.rs` (references `storage_impl::
+redis::cache::IMC_INVALIDATION_CHANNEL` as a constant passed into
+`RouterStore::from_config`, doesn't call it).
+
+**Six real call sites confirmed, all already-covered shapes — no new
+finding from these six:** `payment_confirm.rs` (`set_key_with_expiry`,
+Finding #6), `types.rs` (`set_hash_fields`/Finding #7,
+`get_hash_field_and_deserialize` → `get_hash_field`),
+`dummy_connector/core.rs` (`delete_key`, `get_and_deserialize_key` →
+`get_key`).
+
+**Finding #12 (new) — no atomic hash-field-increment method in
+`pg_kv_store.rs`.** `kill_switch.rs`'s `write_counter` (the UCS
+rollout-failure kill-switch counter) calls `increment_fields_in_hash`
+(Redis `HINCRBY`) then a separate `set_expiry` (`EXPIRE`) call — two
+Redis round trips, explicitly documented in that file's own comment as
+"not atomic, but harmless" for the TTL-refresh half. The increment
+itself, though, has **no Postgres equivalent at all** among
+`pg_kv_store.rs`'s existing hash methods (`set_hash_field`,
+`set_hash_field_if_not_exist`, `set_hash_fields` all overwrite; none
+increments). This is a sharper version of the already-recorded
+`card_testing_guard.rs` GET-then-SET race (same risk class — a fraud/
+kill-switch counter that can undercount under concurrent writers) but
+for a hash field specifically, which in Postgres needs an upsert
+(`INSERT ... ON CONFLICT DO UPDATE SET value = value + 1`) rather than a
+read-modify-write pair. **Not fixed this pass** — same reasoning as
+Finding #1 initially: real, concrete, but new SQL logic on the KV table
+that should be reviewed against a compiler before trusting it, and this
+session doesn't have one (see toolchain wall above).
+
+**Finding #13 (new) — no "refresh TTL, keep value" method for plain
+keys; same gap shows up as `PgLock`'s non-configurable safety-net
+timeout.** `types/storage/revenue_recovery_redis_operation.rs`'s
+`update_connector_customer_lock_ttl` calls `redis_conn.set_expiry(key,
+exp)` — bumps TTL only, doesn't touch the stored value.
+`update_key_preserving_ttl` (Finding #6) does the *mirror* operation
+(update value, keep TTL); nothing today does the reverse. The same shape
+reappears in `pg_lock.rs`: `LOCK_IDLE_SESSION_TIMEOUT_SECS` is a fixed
+30s module constant, not a per-call parameter, while the real Redis lock
+call sites that use this pattern (`revenue_recovery_redis_operation.rs`'s
+own lock functions, and `core/revenue_recovery/retry_stats/record.rs`'s
+`with_retry_stats_lock`) each configure their own expiry
+(`redis_ttl_in_seconds` / `retry_stats_lock.redis_lock_expiry_seconds`)
+per use case. **Not fixed this pass**, same toolchain-wall reasoning as
+Finding #12 — flagged as two call sites now on record needing a
+configurable safety-net duration on `PgLock::try_acquire`/
+`try_acquire_multiple`, not just the fixed constant.
+
+**Confirmed, not a new finding:** `retry_stats/record.rs`'s hand-rolled
+SETNX-plus-owner-token lock (`with_retry_stats_lock`/`release_lock`) maps
+cleanly onto `PgLock` despite looking different at the call site — the
+owner-token check exists there because a bare Redis SETNX key has no
+built-in caller-affinity, but `PgLock`'s session-scoped advisory lock is
+inherently tied to the connection that acquired it, so the equivalent
+"only the owner can release" property comes for free from Postgres
+itself, no token needed. Recorded so a future pass doesn't mistake the
+different-looking code for a missing capability.
+
+**Not done, still open:** 9 of 63 files still unread; Findings #12 and
+#13 both real, both unfixed; every finding fixed so far (#6-#11) still
+unwired into any real call site; `rust-check.yml`'s first real Actions
+run still unconfirmed (not attempted this pass — this pass's scope was
+the audit only).
+
+**Per the Patch Handoff Convention: `handover.md` only this pass — no
+`.rs` file touched, no migration, DB-Ops block not owed.** Base confirmed
+against real `origin/main` via `git fetch origin` immediately before this
+entry (rule 8) — no drift, working tree clean before this pass began.

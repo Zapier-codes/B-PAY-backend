@@ -104,9 +104,43 @@
 > task's own section. Nothing else in this file is required reading to
 > start work.**
 >
-> **✅ AUDIT CONTINUED, NINTH PASS (2026-09-11, newest, `handover.md`
-> only, unapplied patch — not yet handed to product owner as of this
-> line) — 9 more files read (54 of 63 now, 9 remain); two new API gaps
+> **⚠️ POINTER CORRECTION (2026-09-11) — the box below this one (marked
+> "NINTH PASS... newest") stopped being accurate several sessions ago
+> and nobody updated it when they moved on; recorded as a correction,
+> not silently fixed, per this file's own standing practice.** Real
+> current state, newest first:
+>
+> **✅ Task 73/b — pub/sub call-site audit, FIRST PASS (2026-09-11,
+> newest) — all 15 reproducible call sites read; the standing
+> "per-subscriber vs. shared cursor" open question (Finding #5) is
+> resolved for this whole category: it's local in-memory-cache
+> invalidation broadcast, self-healing via each cache's own TTL, no
+> durable catch-up needed.** One real open item: this pass's own
+> reproduction found 15 files, not the "18" a prior session's doc
+> comment claimed — not resolved, named plainly. Full detail: search
+> "Task 73/b — pub/sub call-site audit, first pass" at the end of the
+> file.
+>
+> **✅ Task 73/a — 63-file audit COMPLETE (63/63), Findings #1, #6
+> through #13 all fixed in `pg_kv_store.rs`/`pg_lock.rs` (reviewed by
+> reading, none compiled — toolchain wall unchanged throughout).**
+> Nothing wired into a real call site yet — that step is still blocked
+> on the same toolchain wall. Full detail: search "Task 73/a — per-
+> call-site audit, tenth pass" and "eleventh pass" at the end of the
+> file.
+>
+> **✅ euclid_wasm `wasm-check` CI fix — landed separately, unrelated to
+> the Postgres-locking thread**, see its own entry.
+>
+> **Still open, unchanged by any of the above:** `rust-check.yml`'s
+> first real Actions run still unconfirmed by any session; the 15-vs-18
+> pub/sub count discrepancy (named above); wiring any fixed finding
+> into a real call site (blocked on the toolchain, same as everything
+> else `.rs`-shaped in this file).
+>
+> **✅ AUDIT CONTINUED, NINTH PASS (2026-09-11, stale as of the
+> correction above — kept for history, no longer the current pointer)
+> — 9 more files read (54 of 63 now, 9 remain); two new API gaps
 > found, neither fixed this pass.** Finding #12: no atomic hash-field-
 > increment in `pg_kv_store.rs` (`kill_switch.rs`'s rollout-failure
 > counter). Finding #13: no "refresh TTL, keep value" method for plain
@@ -18956,3 +18990,118 @@ cd ~/B-PAY-backend
 git am ~/storage/downloads/task-73a-findings-12-13.patch
 git push
 ```
+
+### Task 73/b — pub/sub call-site audit, first pass (2026-09-11, new session): all reproducible real call sites are one category (IMC invalidation broadcast); the standing "per-subscriber vs. shared cursor" open question resolved for this category — neither is needed; a count discrepancy against the "18" figure flagged, not silently resolved
+
+**Toolchain wall re-confirmed, unchanged, before touching anything:**
+`apt-cache policy rustc` candidate still `1.75.0+dfsg0ubuntu1-
+0ubuntu7.4`; not re-run via a fresh `curl` this pass — the last several
+sessions have each independently confirmed the identical `403` on
+`sh.rustup.rs`, and this pass makes no `.rs` edit that would need it
+resolved anyway (read-only audit, same as Task 73/a's own passes).
+
+**Starting point: the eleventh pass (`pg_pubsub_payload subscriber
+gap` entry) named this thread explicitly — "a per-call-site audit of
+the 18 pub/sub call sites, mirroring the just-completed 63-file
+audit's own format" — but that entry did not itself enumerate the 18.
+Reproduced independently this pass, the same way the original 63-file
+list was reproduced at the start of Task 73/a.**
+
+**Count discrepancy, flagged rather than forced to match:** the
+broadest reasonable pattern (`\.publish\(|\.subscribe\(|redact_from_
+redis_and_publish|CacheKind::|redis_pub_sub|pub_sub::`) across `crates/
+router/src` and `crates/storage_impl/src`, minus the two files that
+are the pub/sub *implementation* rather than call sites (`redis/
+cache.rs`, `redis/pub_sub.rs` themselves — same reasoning as excluding
+`pg_pub_sub.rs` from its own migration target), comes to **15 files**,
+not 18:
+
+```
+crates/router/src/core/admin.rs
+crates/router/src/core/cache.rs
+crates/router/src/core/conditional_config.rs
+crates/router/src/core/routing.rs
+crates/router/src/core/routing/helpers.rs
+crates/router/src/core/surcharge_decision_config.rs
+crates/router/src/db/api_keys.rs
+crates/router/src/db/merchant_connector_account.rs
+crates/router/src/db/organization.rs
+crates/storage_impl/src/business_profile.rs
+crates/storage_impl/src/configs.rs
+crates/storage_impl/src/lib.rs
+crates/storage_impl/src/merchant_account.rs
+crates/storage_impl/src/merchant_connector_account.rs
+crates/storage_impl/src/merchant_key_store.rs
+```
+
+Not claiming this is definitely wrong and 18 is right, or the reverse
+— just that this pass's own reproduction doesn't hit 18, and rather
+than pad the list or trim it to force a match (the exact mistake the
+fifth-pass entry had to correct itself over `vault.rs`), the honest
+count is recorded as 15 with the gap named. Whoever wrote "18" may
+have used a wider pattern (e.g. including test files, or counting
+`core/payments/routing.rs` and `core/routing.rs` as related-but-
+separate the way this pass did, or something else not reconstructable
+from the file alone). **Worth resolving explicitly, not worth guessing
+at further.**
+
+**Read all 15 in depth, plus the subscriber implementation itself
+(`storage_impl/src/redis/pub_sub.rs`) to see what a "subscriber"
+actually does here — not assumed from the call sites alone.** Every
+one of the 15 goes through exactly one of two identical-shape helpers:
+`redact_from_redis_and_publish` / `publish_and_redact`, both wrapping
+a `CacheKind::*` variant (`Config`, `Accounts`, `CGraph`,
+`PmFiltersCGraph`, `Routing`, `Surcharge`, three dynamic-routing-
+algorithm variants). `storage_impl/src/lib.rs` (the 15th file) is not
+a publisher at all — it's the **one place `subscribe()` is called**,
+at process startup, once, on a single shared channel
+(`IMC_INVALIDATION_CHANNEL`).
+
+**The subscriber side, traced directly in `redis/pub_sub.rs`, not
+inferred:** `subscribe()` spawns exactly one background task per
+Redis-connection-pool instance (guarded by a `compare_exchange` so a
+second `subscribe()` call never double-spawns), running `on_message()`
+for the lifetime of the process. `on_message()` reads the `CacheKind`
+out of the message and does exactly one thing: `.remove()` the
+matching key from the corresponding **local, in-process, in-memory**
+cache (`CONFIG_CACHE`, `ACCOUNTS_CACHE`, `CGRAPH_CACHE`, etc.) —
+nothing else. No payload is stored, re-fetched, or processed; the next
+read of that key just misses the local cache and re-populates from the
+real source of truth (DB/Redis) on demand.
+
+**This resolves, for this category specifically, the "per-subscriber
+vs. shared cursor" open question that's been on standing record since
+Finding #5 (third audit pass) and repeated as unresolved in the
+eleventh-pass entry — the answer for IMC invalidation is: neither is
+needed, by design, not as a gap.** A subscriber that's down or
+disconnected when a `NOTIFY` fires doesn't need to "catch up" on
+anything, because there's nothing to catch up on beyond "a local cache
+entry might be one write cycle stale" — every one of these caches
+already has its own TTL/size-bound eviction as the actual correctness
+backstop (this is advisory freshness, not guaranteed delivery of
+anything durable). A missed invalidation just means that process keeps
+serving a stale-but-soon-to-expire local entry a little longer, the
+same trade-off Redis pub/sub itself already makes (fire-and-forget, no
+delivery guarantee) — `pg_pub_sub.rs`'s own module doc comment already
+asserts this design intent; **this pass confirms, by reading every
+real caller, that the assertion is correct for 100% of this category**,
+not just a reasonable-sounding claim.
+
+**What's still genuinely open, unchanged from the eleventh-pass
+entry's own framing — this pass narrows it, doesn't resolve it
+further:** the Rust-side connection-lifecycle gap (`LISTEN` needing a
+dedicated non-pooled connection, `bb8` not being built for that) is
+unaffected by anything found this pass — still real, still unstarted.
+And the count discrepancy above is a real open item on its own, not
+folded into "resolved."
+
+**Not done, still open:** the 15-vs-18 count discrepancy (unresolved,
+named above); `pg_pub_sub.rs`'s dedicated-connection gap for a real
+`LISTEN` loop (pre-existing, unchanged); wiring Findings #6–#13 into
+any real call site; `rust-check.yml`'s first real Actions run still
+unconfirmed.
+
+**Per the Patch Handoff Convention: `handover.md` only, no `.rs` file
+touched — this was a read-only audit pass, consistent with every prior
+audit-only entry in this file. Base confirmed against real
+`origin/main` (`67dbfc344`) immediately before this entry (rule 8).**

@@ -4,6 +4,21 @@
 > task's own section. Nothing else in this file is required reading to
 > start work.**
 >
+> **Task 72 is a new proposal (2026-09-11), discovery only, no code —
+> needs product-owner confirmation before any migration is written.**
+> Raised while scoping Task 63/b: B-Pay's `transactions.reference`
+> currently conflates three distinct Stripe concepts (`PaymentIntent`
+> ID, `PaymentRecord`/per-attempt reference, `Idempotency-Key`) into
+> one table-wide-unique column, which is what actually blocks Task
+> 63/b's cross-processor retry from keeping one stable caller-facing
+> handle the way Stripe's real Orchestration does. Proposes an
+> additive two-object split mirroring Stripe's own — full research
+> (cited against `docs.stripe.com`) and three explicit open questions
+> in Task 72's own section (end of file, search "Task 72 —"). **Task
+> 63/b itself is on hold** — this session was directly instructed to
+> propose this redesign first rather than build 63/b's scoped-down
+> interim approach in the meantime.
+>
 > **Task 63/a is DONE (2026-09-10)** — Task 51's b-1/b-2 fallback-order
 > tables formalized into a new `routing_fallbacks` table (migrations
 > `0019`/`0020`), purely additive — `routing_config` (migration `0005`)
@@ -15561,5 +15576,94 @@ migration) was generated and handed to the product owner.**
 `git fetch origin` + `git log --oneline origin/main -5` confirmed no
 drift immediately before generating the patch (local was already at
 `origin/main`'s own tip, `cbdfe1d` — Task 68's own commit).
+
+---
+
+## Task 72 — Persisted payment-intent object (Stripe `PaymentIntent`/`PaymentRecord` pattern) — closes `STRIPE_DISCOVERY.md`'s gap #1 [ ]
+
+**Discovery + proposal only, no code, no migration written — same
+"propose, needs product-owner sign-off before code" convention as
+Task 61/d and Task 62/a.** Raised directly by the product owner while
+scoping Task 63/b (cross-processor automatic fallback): before
+building the actual retry logic, confirm whether B-Pay needs its own
+version of the object Stripe uses to keep one stable caller-facing
+handle across a cross-processor retry — rather than having Task 63/b
+quietly improvise around the gap.
+
+**The concrete problem, not hypothetical:** `transactions.reference`
+(migration `0001`) currently does two jobs at once — it's the
+caller-facing handle *and* the exact value forwarded to whichever
+single provider is called — and it's `UNIQUE` table-wide, not scoped
+per provider (confirmed directly: `transactions_reference_key`,
+migration `0001`). If Task 63/b ever retries a failed payment against
+a *different* provider, that second attempt cannot reuse the same
+`reference` value without either violating that constraint or
+overwriting the first attempt's own row (erasing which provider was
+actually tried first — an audit-trail loss this repo's own
+conventions elsewhere argue against, e.g. Task 60's webhook dedup,
+Task 61's append-only ledger).
+
+**How Stripe actually solves this (researched directly against
+`docs.stripe.com` this session, not recalled from training):**
+Stripe's caller-facing handle is the `PaymentIntent` ID, and it
+**does not change** across a cross-processor retry — Orchestration
+retries a failed payment using a different processor than the one
+that submitted the original attempt, while the caller keeps working
+with the same `PaymentIntent` throughout
+(docs.stripe.com/payments/orchestration/retries). Stripe also built a
+dedicated second object, `PaymentRecord`, specifically to hold that
+execution history — a new attempt can be reported against the same
+`PaymentRecord`, and successive attempts can use the same or a
+different payment method and processor
+(docs.stripe.com/payments/payment-records). A third, genuinely
+separate Stripe concept worth naming so it isn't conflated with the
+other two: the `Idempotency-Key` header is a short-lived (24-hour),
+purely request-dedup mechanism, unrelated to either object's own ID.
+**B-Pay's single `reference` field is currently standing in for all
+three of these distinct Stripe concepts at once** — that conflation,
+not any one bug, is the root of the problem Task 63/b ran into.
+
+**Proposed shape (a starting proposal for confirmation, not a final
+design):** two new, additive concepts, mirroring Stripe's own split —
+1. A caller-facing **intent** record: one stable id/reference per
+   logical payment request, status aggregated across whatever
+   attempts happened underneath it.
+2. A **per-attempt** record (B-Pay's `PaymentRecord` equivalent): one
+   row per actual provider call, its own provider-specific reference
+   (free to vary per attempt, no longer forced through a single
+   table-wide-unique column), status, and Task 62's error-taxonomy
+   fields (`type`/`code`/`decline_code`) for whichever attempt failed.
+
+**Open questions, deliberately not decided here — flagged for direct
+product-owner confirmation before any migration is written:**
+- **Does this replace/rename `transactions`, or sit alongside it as
+  new, additive tables?** Renaming or reshaping a live table with
+  confirmed production rows (per `db/SCHEMA.md`'s live-migration list)
+  is a materially different risk profile than adding new tables next
+  to it — this repo's own convention (every migration so far) has
+  been additive-first.
+- **Does the caller (the Supabase Edge Function, per Task 23) keep
+  supplying the top-level reference as it does today, with B-Pay only
+  adding the per-attempt layer underneath?** This determines whether
+  this is a breaking contract change for an existing, already-audited
+  caller or a purely additive one.
+- **Sequencing relative to Task 63/b:** build this first and have
+  63/b depend on it (closer to a real Stripe-equivalent, but bigger
+  and slower), or ship 63/b now with the scoped-down interim approach
+  discussed in this session (fresh reference per attempt, caller
+  reads back which provider/reference actually succeeded) and treat
+  this task as a later replacement? **Per this session's direct
+  instruction: hold Task 63/b, propose this task first** — so the
+  interim approach is not being built in the meantime, but the
+  product owner may still choose to sequence it that way later.
+
+**Verification:** every Stripe-side claim above was checked directly
+against `docs.stripe.com` this session (`payments/orchestration/retries`,
+`payments/payment-records`, `payments/payment-intents`), not recalled
+from training — Orchestration is itself in private preview, so its
+docs are exactly the kind of moving target this repo's own "confirm,
+don't guess" discipline exists for. `transactions_reference_key`'s
+existence and scope were confirmed by reading migration `0001`
+directly, not assumed from its own comment.
 
 ---

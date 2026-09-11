@@ -12,6 +12,25 @@
 //! KV wrapper does today (one shared `ttl_for_kv`, not a per-field TTL) —
 //! see `up.sql` for why this is one-row-per-field rather than a JSON blob.
 //!
+//! - **Findings #6/#7/#8/#9 — fixed this session, via new methods, not by
+//!   changing the four methods above.** The per-call-site audit's third
+//!   through fifth passes found this module's original shape (setnx-only
+//!   writes, no batch hash write, no TTL introspection, no delete at all)
+//!   didn't cover every real Redis call site: `set_key_with_expiry` +
+//!   `update_key_preserving_ttl` (Finding #6, the single highest-call-
+//!   count gap — unconditional overwrite-with-TTL and its TTL-preserving
+//!   counterpart, for `db/payment_method_session.rs` and three
+//!   `core/payment_methods.rs` sites), `set_hash_fields` (Finding #7, one
+//!   round-trip multi-field write so `core/payment_method_balance.rs`
+//!   can't observe a partial write), `get_ttl` (Finding #8, for
+//!   `vault.rs`'s CVC-retrieval path), and `delete_key`/`delete_hash_field`
+//!   (Finding #9 — real revocation, not lazy-expiry-eligible housekeeping,
+//!   for single-use payment tokens and temp-locker cleanup). Not yet
+//!   wired into any real call site — that's still the unstarted
+//!   `RedisStore` integration this file's own second bullet below already
+//!   flags — and not yet compiled, same toolchain wall as everything else
+//!   here.
+//!
 //! Not done, left for the per-call-site review Task 73/a explicitly calls
 //! out as separate follow-up work:
 //! - **Expiry sweep — fixed this session, via `pg_cron`, not the
@@ -334,6 +353,243 @@ impl PgKvStore {
                     .change_context(StorageError::DeserializationFailed)
             })
             .collect()
+    }
+
+    // ---- overwrite-with-TTL variants (Finding #6) -----------------------
+    //
+    // `set_key_if_not_exist` above is Redis SETNX semantics: a no-op if the
+    // key already exists. The per-call-site audit (third/fourth/fifth
+    // passes) found the real gap is Redis's *other* common shape —
+    // `serialize_and_set_key_with_expiry`, an unconditional overwrite that
+    // also resets the TTL — needed by `db/payment_method_session.rs` and
+    // three sites in `core/payment_methods.rs` (single-use payment-method
+    // tokens, volatile payment-method records, CVC tokens). This was the
+    // single highest-call-count gap in this module; reusing SETNX for
+    // these call sites would silently keep serving a stale value forever
+    // after the first write, a correctness bug not a style choice.
+
+    /// Analog of `serialize_and_set_key_with_expiry`. Unconditionally
+    /// overwrites the value *and* resets the TTL to a fresh
+    /// `ttl_seconds`-from-now window, in one round trip.
+    pub async fn set_key_with_expiry<S: Serialize + Sync>(
+        &self,
+        key: &str,
+        value: &S,
+    ) -> error_stack::Result<(), StorageError> {
+        let conn = self
+            .pool
+            .get()
+            .await
+            .change_context(StorageError::DatabaseConnectionError)?;
+        let bytes =
+            serde_json::to_vec(value).change_context(StorageError::SerializationFailed)?;
+        let expires_at = self.expiry_from_now();
+
+        sql_query(
+            "INSERT INTO pg_kv_cache (cache_key, field, value, expires_at) \
+             VALUES ($1, '', $2, $3) \
+             ON CONFLICT (cache_key, field) \
+             DO UPDATE SET value = EXCLUDED.value, expires_at = EXCLUDED.expires_at, \
+                            updated_at = now()",
+        )
+        .bind::<Text, _>(key)
+        .bind::<diesel::sql_types::Binary, _>(bytes)
+        .bind::<diesel::sql_types::Timestamp, _>(expires_at)
+        .execute_async(&conn)
+        .await
+        .map_err(StorageError::from)?;
+
+        Ok(())
+    }
+
+    /// TTL-*preserving* counterpart to `set_key_with_expiry`, for the
+    /// session-expiry security boundary in `db/payment_method_session.rs`
+    /// (third pass): overwrites the value without touching `expires_at`.
+    /// On first write for a key that doesn't exist yet there is no
+    /// existing TTL to preserve, so this falls back to a fresh
+    /// `ttl_seconds` window rather than silently writing a row with no
+    /// expiry at all.
+    pub async fn update_key_preserving_ttl<S: Serialize + Sync>(
+        &self,
+        key: &str,
+        value: &S,
+    ) -> error_stack::Result<(), StorageError> {
+        let conn = self
+            .pool
+            .get()
+            .await
+            .change_context(StorageError::DatabaseConnectionError)?;
+        let bytes =
+            serde_json::to_vec(value).change_context(StorageError::SerializationFailed)?;
+        let fallback_expires_at = self.expiry_from_now();
+
+        sql_query(
+            "INSERT INTO pg_kv_cache (cache_key, field, value, expires_at) \
+             VALUES ($1, '', $2, $3) \
+             ON CONFLICT (cache_key, field) \
+             DO UPDATE SET value = EXCLUDED.value, updated_at = now()",
+        )
+        .bind::<Text, _>(key)
+        .bind::<diesel::sql_types::Binary, _>(bytes)
+        .bind::<diesel::sql_types::Timestamp, _>(fallback_expires_at)
+        .execute_async(&conn)
+        .await
+        .map_err(StorageError::from)?;
+
+        Ok(())
+    }
+
+    // ---- TTL introspection (Finding #8) ---------------------------------
+
+    /// Analog of `vault.rs`'s `redis_conn.get_ttl(&key)` — returns the
+    /// *remaining* time-to-live, not the value. Used by
+    /// `retrieve_key_and_ttl_for_cvc_from_payment_method_id` to compute an
+    /// expiry timestamp shown back to the caller. Returns `Ok(None)` for a
+    /// plain (non-expiring) row, matching Redis `TTL`'s `-1` case, and a
+    /// `ValueNotFound` error for a missing/already-expired key, matching
+    /// Redis `TTL`'s `-2` case.
+    pub async fn get_ttl(
+        &self,
+        key: &str,
+    ) -> error_stack::Result<Option<time::Duration>, StorageError> {
+        let conn = self
+            .pool
+            .get()
+            .await
+            .change_context(StorageError::DatabaseConnectionError)?;
+
+        #[derive(QueryableByName)]
+        struct TtlRow {
+            #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Double>)]
+            remaining_seconds: Option<f64>,
+        }
+
+        let rows: Vec<TtlRow> = sql_query(
+            "SELECT extract(epoch FROM (expires_at - (now() AT TIME ZONE 'utc'))) AS remaining_seconds \
+             FROM pg_kv_cache \
+             WHERE cache_key = $1 AND field = '' \
+             AND (expires_at IS NULL OR expires_at > (now() AT TIME ZONE 'utc'))",
+        )
+        .bind::<Text, _>(key)
+        .load_async(&conn)
+        .await
+        .map_err(StorageError::from)?;
+
+        let row = rows.into_iter().next().ok_or_else(|| {
+            report!(StorageError::ValueNotFound(format!(
+                "pg cache key not found or expired: {key}"
+            )))
+        })?;
+
+        Ok(row
+            .remaining_seconds
+            .map(|secs| time::Duration::seconds_f64(secs.max(0.0))))
+    }
+
+    // ---- deletion / revocation (Finding #9) -----------------------------
+    //
+    // Everything above relies on lazy expiry (a row past `expires_at` is
+    // filtered at read time, reclaimed later by the `pg_cron` sweep) —
+    // fine for cache housekeeping, wrong for *revocation*. Single-use
+    // payment tokens (`core/payment_methods/utils.rs`'s
+    // `delete_payment_token_data`) and temp-locker cleanup (`vault.rs`)
+    // both need a token to stop being valid the instant it's deleted, not
+    // whenever its original TTL happens to lapse. Falling back to "do
+    // nothing, let the row expire on its own" would be a real security
+    // regression, not a missing convenience.
+
+    /// Analog of Redis `DEL` for a plain key. Idempotent: deleting an
+    /// already-absent key is not an error, matching Redis's own `DEL`
+    /// (returns `0`, not an error, for a missing key).
+    pub async fn delete_key(&self, key: &str) -> error_stack::Result<(), StorageError> {
+        let conn = self
+            .pool
+            .get()
+            .await
+            .change_context(StorageError::DatabaseConnectionError)?;
+
+        sql_query("DELETE FROM pg_kv_cache WHERE cache_key = $1 AND field = ''")
+            .bind::<Text, _>(key)
+            .execute_async(&conn)
+            .await
+            .map_err(StorageError::from)?;
+
+        Ok(())
+    }
+
+    /// Analog of Redis `HDEL` for a single hash field.
+    pub async fn delete_hash_field(
+        &self,
+        key: &str,
+        field: &str,
+    ) -> error_stack::Result<(), StorageError> {
+        let conn = self
+            .pool
+            .get()
+            .await
+            .change_context(StorageError::DatabaseConnectionError)?;
+
+        sql_query("DELETE FROM pg_kv_cache WHERE cache_key = $1 AND field = $2")
+            .bind::<Text, _>(key)
+            .bind::<Text, _>(field)
+            .execute_async(&conn)
+            .await
+            .map_err(StorageError::from)?;
+
+        Ok(())
+    }
+
+    // ---- batch hash write (Finding #7) ----------------------------------
+
+    /// Analog of `set_hash_fields` (plural) — `core/payment_method_
+    /// balance.rs`'s `persist_individual_pm_balance_details_in_redis`
+    /// writes a whole balance record's fields in one Redis call so a
+    /// concurrent reader never observes a partial write. A loop over the
+    /// singular `set_hash_field` above would not have that guarantee: this
+    /// uses one `INSERT ... SELECT ... FROM UNNEST(...)` round trip
+    /// instead, so every field in `fields` lands in the same statement —
+    /// same atomicity Redis gives a multi-field `HSET` for free.
+    pub async fn set_hash_fields<S: Serialize + Sync>(
+        &self,
+        key: &str,
+        fields: &[(String, S)],
+    ) -> error_stack::Result<(), StorageError> {
+        if fields.is_empty() {
+            return Ok(());
+        }
+        let conn = self
+            .pool
+            .get()
+            .await
+            .change_context(StorageError::DatabaseConnectionError)?;
+
+        let mut field_names = Vec::with_capacity(fields.len());
+        let mut field_values = Vec::with_capacity(fields.len());
+        for (field, value) in fields {
+            field_names.push(field.clone());
+            field_values.push(
+                serde_json::to_vec(value).change_context(StorageError::SerializationFailed)?,
+            );
+        }
+        let expires_at = self.expiry_from_now();
+
+        sql_query(
+            "INSERT INTO pg_kv_cache (cache_key, field, value, expires_at) \
+             SELECT $1, f, v, $4 \
+             FROM UNNEST($2::text[], $3::bytea[]) AS t(f, v) \
+             ON CONFLICT (cache_key, field) \
+             DO UPDATE SET value = EXCLUDED.value, expires_at = EXCLUDED.expires_at, \
+                            updated_at = now()",
+        )
+        .bind::<Text, _>(key)
+        .bind::<diesel::sql_types::Array<Text>, _>(field_names)
+        .bind::<diesel::sql_types::Array<diesel::sql_types::Binary>, _>(field_values)
+        .bind::<diesel::sql_types::Timestamp, _>(expires_at)
+        .execute_async(&conn)
+        .await
+        .map_err(StorageError::from)?;
+
+        Ok(())
     }
 }
 

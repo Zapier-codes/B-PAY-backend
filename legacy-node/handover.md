@@ -122,6 +122,22 @@
 > fraud-counter increment is GET-then-SET, not atomic, in production
 > today. **9 of 63 files now read in depth; 54 remain open.**
 >
+> **✅ LANDED (2026-09-11, newest) — pg_kv_store.rs Findings #6/#7/#8/#9
+> fixed via five new methods (`set_key_with_expiry`,
+> `update_key_preserving_ttl`, `set_hash_fields`, `get_ttl`,
+> `delete_key`/`delete_hash_field`); base confirmed against real
+> `origin/main` (`5631f9f66`) via `git fetch origin` before the patch was
+> built, no drift.** Not wired into any real call site yet (still calls
+> the real Redis client today) and not compiled (same toolchain wall,
+> re-confirmed this session: apt candidate still `1.75.0`, `sh.rustup.rs`
+> still real `403 host_not_allowed`) — reviewed by reading only, same
+> standing caveat as every other `.rs` change in this file. Full detail:
+> search "Task 73/a — pg_kv_store.rs Findings #6/#7/#8/#9 fixed" at the
+> end of the file. Per-call-site audit itself unchanged at 36/63 unread —
+> that's still the next open item once this patch lands, alongside
+> wiring these five methods into their real call sites and getting
+> `rust-check.yml`'s first Actions run confirmed (still unconfirmed).
+>
 > **✅ AUDIT CONTINUED, THIRD PASS (2026-09-11, newest) — 6 more files
 > read (15 of 63 now, 48 remain); one new concrete `pg_kv_store.rs` API
 > gap found.** `db/payment_method_session.rs` needs an unconditional
@@ -17990,3 +18006,74 @@ unconfirmed.
 **Per the Patch Handoff Convention: `handover.md` only, no `.rs` file
 touched, no migration. Base confirmed against real `origin/main`
 (`85ad9b3be`) immediately before this entry (rule 8).**
+
+### Task 73/a — pg_kv_store.rs Findings #6/#7/#8/#9 fixed (2026-09-11, new session): unconditional overwrite-with-TTL, TTL-preserving update, batch hash write, TTL introspection, and delete — none wired into RedisStore yet, none compiled (same toolchain wall)
+
+**New-Clone Checklist re-run, both known walls re-confirmed for this
+sandbox, not assumed from the file:** `rustc` not installed; apt's only
+candidate is `1.75.0` (workspace pins `1.85.0`); `curl -sI
+https://sh.rustup.rs` returned real `403`, `x-deny-reason:
+host_not_allowed`. No new toolchain path found. Per the checklist's own
+step 5, work went to a real, currently-open, non-Rust-compiling-required
+item: closing the four `pg_kv_store.rs` API gaps the last three audit
+passes had already found and left unfixed (Findings #6, #7, #8, #9),
+since those are concrete, already-diagnosed, and don't require a
+toolchain to *write* — only to compile-check, same standing caveat as
+every prior `.rs` change in this file.
+
+**Five new methods added to `crates/storage_impl/src/pg_kv_store.rs`,
+matching this module's existing single-round-trip, no-read-then-write
+style:**
+- `set_key_with_expiry` — Finding #6, unconditional overwrite + TTL
+  reset, `INSERT ... ON CONFLICT DO UPDATE`. Reinforced across five
+  files in prior passes as the single highest-call-count gap.
+- `update_key_preserving_ttl` — Finding #6's other half, for
+  `db/payment_method_session.rs`'s session-expiry boundary specifically:
+  overwrites value, leaves `expires_at` untouched on conflict; falls
+  back to a fresh TTL only on first insert, since there's no existing
+  TTL to preserve yet.
+- `set_hash_fields` (plural) — Finding #7, one `INSERT ... SELECT ...
+  FROM UNNEST(...)` round trip for `core/payment_method_balance.rs`'s
+  multi-field balance writes, so a concurrent reader can't observe a
+  partial write the way a loop over singular `set_hash_field` would
+  allow.
+- `get_ttl` — Finding #8, `extract(epoch FROM (expires_at - now()))`;
+  `Ok(None)` mirrors Redis `TTL`'s `-1` (no expiry), a `ValueNotFound`
+  error mirrors Redis `TTL`'s `-2` (missing/expired), for `vault.rs`'s
+  CVC-expiry-timestamp path.
+- `delete_key` / `delete_hash_field` — Finding #9, real `DELETE`, not
+  lazy-expiry. Idempotent on a missing key (matches Redis `DEL`
+  returning `0`, not erroring, for a key that isn't there) — needed
+  because revocation (single-use payment tokens, temp-locker cleanup)
+  has to take effect immediately, not whenever the row's original TTL
+  happens to lapse.
+
+**Deliberately NOT done this session, same standing discipline as every
+prior pass:**
+- **Not wired into any real call site.** These are new standalone
+  methods on `PgKvStore`; `db/payment_method_session.rs`,
+  `core/payment_methods.rs`, `core/payment_method_balance.rs`, and
+  `vault.rs` still call the real Redis client today. That integration —
+  and the still-separate question of whether `PgKvStore` shares
+  `database/store.rs`'s existing connection pool or keeps its own — is
+  unstarted, same as this file's own module doc comment already flagged
+  before this session.
+- **Not compiled.** Reviewed by reading only. The `UNNEST`-based
+  `set_hash_fields` query in particular has real Postgres array-binding
+  syntax (`$2::text[]`, `$3::bytea[]`) that diesel's `sql_query` binding
+  path has not been exercised against anywhere else in this file —
+  flagging this as the single most likely spot for a real compile error
+  once a toolchain exists, not claiming it's already been checked.
+- **Per-call-site audit itself not advanced.** Still 36 of 63 files
+  unread (unchanged from the fifth-pass count) — this session's time
+  went to fixing already-found gaps, not finding new ones.
+- `rust-check.yml`'s first real Actions run is **still unconfirmed** —
+  not re-attempted this session; still needs someone with an
+  unthrottled GitHub session to check the Actions tab.
+
+**Per the Patch Handoff Convention: one `.rs` file touched
+(`crates/storage_impl/src/pg_kv_store.rs`), no migration — DB-Ops block
+not owed this time. Base confirmed against real `origin/main`
+(`5631f9f66`) immediately before this entry via `git fetch origin`
+(rule 8) — no drift, local base matched exactly, so this is a fresh
+single commit on top rather than a rebuild.**

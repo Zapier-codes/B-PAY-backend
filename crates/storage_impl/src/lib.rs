@@ -39,6 +39,12 @@ pub mod metrics;
 pub mod mock_db;
 pub mod payment_method;
 pub mod payments;
+// Task 73/a — Postgres-backed replacement for redis/{cache,kv_store,pub_sub}.rs.
+// Not yet wired into `redis.rs`'s `RedisStore` or any call site; see each
+// module's doc comment for what's implemented vs. still open.
+pub mod pg_kv_store;
+pub mod pg_lock;
+pub mod pg_pub_sub;
 #[cfg(feature = "payouts")]
 pub mod payouts;
 pub mod platform_wrapper;

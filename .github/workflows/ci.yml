@@ -474,14 +474,31 @@ jobs:
       # 73/a Postgres-backed Redis replacement) checked explicitly and
       # first: it's the crate under active work. A red check here is
       # expected and useful signal, not a workflow bug.
+      #
+      # `--features v1` added 2026-09-11 (Task 73/a follow-up): this job
+      # was the one place in this file checking storage_impl/the workspace
+      # with neither `v1` nor `v2` enabled. storage_impl's own `default`
+      # features (olap/oltp/accounts_cache/redis-rs) don't pull in either,
+      # unlike crates/router's `default = ["common_default", "v1", ...]`
+      # that the plain `cargo check --features "release"` job above relies
+      # on implicitly. Without it, diesel_models compiles with its v1/v2-
+      # gated types (PaymentMethodNew, Organization, Refund, etc.) and the
+      # `dsl`/`storage_enums` re-exports they depend on entirely absent,
+      # which is what actually produced the 51 `diesel_models` compile
+      # errors this job was chasing under Task 73/a's name -- none of them
+      # were in pg_lock.rs/pg_kv_store.rs/pg_pub_sub.rs, all of them were
+      # unrelated v1-vs-no-feature errors in diesel_models itself. v2 is
+      # already covered separately by the "Check compilation for V2
+      # features" job above, so v1 here (matching the workspace's own
+      # default) is the correct, minimal pairing -- not a new policy.
       - name: cargo check -p storage_impl
-        run: cargo check -p storage_impl --all-targets
+        run: cargo check -p storage_impl --all-targets --features v1
 
       - name: cargo check (full workspace)
-        run: cargo check --workspace --all-targets
+        run: cargo check --workspace --all-targets --features v1
 
       - name: cargo clippy -p storage_impl
-        run: cargo clippy -p storage_impl --all-targets -- -D warnings
+        run: cargo clippy -p storage_impl --all-targets --features v1 -- -D warnings
         continue-on-error: true
 
   wasm-check:

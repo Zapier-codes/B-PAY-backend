@@ -19353,3 +19353,85 @@ cd ~/B-PAY-backend
 git am ~/storage/downloads/<patch-file-name>
 git push
 ```
+
+### CI — `storage_impl` job's real `cargo check` error finally in hand (product owner pasted `--log` for job 103335923019); root cause is NOT in Task 73/a's own files — it's a missing `--features v1` on this one job (2026-09-11, new session)
+
+**Product owner pasted the actual log this time** (the specific-job command
+from the prior entry: `gh run view 34621375723 --job 103335923019 --log`).
+This is the real, long-awaited `cargo check -p storage_impl` output, not a
+different job's log like the previous paste.
+
+**Headline finding, checked explicitly, not assumed: none of the 51 errors
+touch `pg_lock.rs`, `pg_kv_store.rs`, or `pg_pub_sub.rs`.** Every single one
+is in `crates/diesel_models/src/{refund.rs, payment_method.rs,
+merchant_account.rs, types.rs, query/business_profile.rs,
+query/organization.rs, query/payment_method.rs, query/user/sample_data.rs}`.
+Task 73/a's own three files have never actually been shown to fail to
+compile — the "red check" this whole thread has been chasing under Task
+73/a's name was real, but it was never about Task 73/a's code.
+
+**Root cause, traced through `Cargo.toml`s, not guessed:**
+- `diesel_models`'s `[features]` block: `default = ["kv_store"]` — neither
+  `v1` nor `v2` is a default feature. Types like `PaymentMethodNew`,
+  `PaymentMethodUpdateInternal`, `Organization`, `Refund`,
+  `CommonMandateReference`, `FeatureMetadata` are `#[cfg(feature = "v1")]`/
+  `#[cfg(feature = "v2")]`-gated — with neither enabled they simply don't
+  exist, which is exactly the `E0412`/`E0425`/`E0433` "cannot find type/
+  value" spam in the log (plus the `dsl`/`payment_attempt_dsl`/
+  `refund_dsl`/`storage_enums` re-export errors, which come from the same
+  schema modules being feature-gated the same way).
+- `storage_impl`'s own `[features] default = ["olap", "oltp",
+  "accounts_cache", "redis-rs"]` — also no `v1`/`v2` — and its
+  `diesel_models = { ..., default-features = false }` dependency line, so
+  nothing upstream forces v1/v2 on either.
+- Compare `crates/router/Cargo.toml`: `default = ["common_default", "v1",
+  "redis-rs"]` — `v1` is baked into *router's* defaults, which is why the
+  plain `cargo check --features "release"` job earlier in this same
+  `ci.yml` has never hit this (it's default-plus-release, and default
+  already carries `v1` for the root/default package).
+- This job's two `cargo check` lines were the one place in `ci.yml`
+  checking `storage_impl`/the workspace with **neither** `v1` nor `v2`
+  enabled — every other feature-aware job either inherits `v1` from
+  `router`'s defaults or explicitly opts into `v2` (the "Check compilation
+  for V2 features" job, `--features "release,v2,redis-rs"` /
+  `"release,v2,fred"`).
+
+**Fix applied, matching the existing v1/v2 split already established
+elsewhere in this same file rather than inventing a new policy:** added
+`--features v1` to this job's `cargo check -p storage_impl --all-targets`,
+`cargo check --workspace --all-targets`, and `cargo clippy -p storage_impl
+--all-targets -- -D warnings` lines. `v2` is intentionally not added here —
+it already has its own dedicated job — so this pairs `storage-impl` with
+the workspace's actual default feature the same way `router`'s own
+`default` already does. Comment added in `ci.yml` at the same spot
+explaining the "red check expected, not a workflow bug" assumption in the
+adjacent existing comment turned out to be the thing that was wrong here —
+recorded as a correction in place, not silently rewritten, per this file's
+own standing practice.
+
+**Still open, explicitly not addressed by this fix:** the 51
+`diesel_models` errors themselves are real *if* the workspace is ever
+compiled with neither `v1` nor `v2` — this fix makes CI stop doing that for
+this job, it doesn't make `diesel_models` compile featureless. Whether that
+combination should compile at all (i.e. whether `kv_store`-only, no-v1/v2
+`diesel_models` is a real supported configuration anywhere else in this
+workspace) is unexamined and out of scope here. **Cannot be verified from
+this sandbox** — still no working `rustc`/`cargo` here (`which rustc cargo`
+confirmed empty again this session, consistent with the file's existing
+"retired toolchain" note) — the real verification is the next CI run on
+this pushed commit, same as every other `storage_impl`-touching change in
+this file's history.
+
+**Per the Patch Handoff Convention: `.github/workflows/ci.yml` only (one
+job's three `run:` lines plus an explanatory comment) and this
+`handover.md` entry — no `db/migrations/` change, no DB-Ops block owed.
+Base confirmed against real `origin/main` via `git fetch origin`
+immediately before generating the patch (rule 8).**
+
+**Exact command(s) for the product owner, per rule 7 — Patch Handoff only
+this pass:**
+```
+cd ~/B-PAY-backend
+git am ~/storage/downloads/<patch-file-name>
+git push
+```

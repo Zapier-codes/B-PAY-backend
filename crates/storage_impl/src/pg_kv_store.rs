@@ -31,6 +31,15 @@
 //!   flags — and not yet compiled, same toolchain wall as everything else
 //!   here.
 //!
+//! - **Finding #10 — fixed this session (sixth audit pass), same as
+//!   #6–#9: a new method, no existing method changed.** `exists`, for
+//!   `services/authentication/blacklist.rs` and `utils/user/two_factor_
+//!   auth.rs`'s plain `EXISTS` checks — distinct from `get_key` (which
+//!   also deserializes a value these callers discard) and `get_ttl`
+//!   (Finding #8, which needs a remaining-duration answer, not a bool).
+//!   Not wired into any real call site, not compiled — same caveats as
+//!   Findings #6–#9 above.
+//!
 //! Not done, left for the per-call-site review Task 73/a explicitly calls
 //! out as separate follow-up work:
 //! - **Expiry sweep — fixed this session, via `pg_cron`, not the
@@ -590,6 +599,50 @@ impl PgKvStore {
         .map_err(StorageError::from)?;
 
         Ok(())
+    }
+    // ---- key existence (Finding #10) ------------------------------------
+    //
+    // Found in the per-call-site audit's sixth pass, not the original four
+    // findings: `services/authentication/blacklist.rs`'s
+    // `check_email_token_in_blacklist` and `utils/user/two_factor_auth.rs`'s
+    // `check_totp_in_redis` / `check_recovery_code_in_redis` all call
+    // `redis_conn.exists::<()>(...)` — a plain existence check, distinct
+    // from `get_key` (which also deserializes a value the caller doesn't
+    // want here) and from `get_ttl` (Finding #8, which needs a live,
+    // non-expired row to compute a remaining duration from). No `pg_kv_
+    // store.rs` method covers "does this key exist, expired-filtered,
+    // value discarded" today.
+
+    /// Analog of Redis `EXISTS` for a plain key. Applies the same
+    /// not-expired filter every read in this module already applies —
+    /// an expired-but-not-yet-swept row reads as absent, matching Redis's
+    /// own lazy-expiry behaviour (a TTL'd key that's past its expiry
+    /// answers `EXISTS` with `0`, same as a key that was never set).
+    pub async fn exists(&self, key: &str) -> error_stack::Result<bool, StorageError> {
+        let conn = self
+            .pool
+            .get()
+            .await
+            .change_context(StorageError::DatabaseConnectionError)?;
+
+        #[derive(QueryableByName)]
+        struct ExistsRow {
+            #[diesel(sql_type = diesel::sql_types::Bool)]
+            #[allow(dead_code)] // existence of the row is the signal; value itself unused
+            present: bool,
+        }
+
+        let rows: Vec<ExistsRow> = sql_query(
+            "SELECT true AS present FROM pg_kv_cache \
+             WHERE cache_key = $1 AND field = '' \
+             AND (expires_at IS NULL OR expires_at > (now() AT TIME ZONE 'utc'))",
+        )
+        .bind::<Text, _>(key)
+        .load_async(&conn)
+        .await
+        .map_err(StorageError::from)?;
+
+        Ok(!rows.is_empty())
     }
 }
 

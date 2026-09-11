@@ -122,6 +122,53 @@
 > fraud-counter increment is GET-then-SET, not atomic, in production
 > today. **9 of 63 files now read in depth; 54 remain open.**
 >
+> **✅ LANDED + AUDIT CONTINUED, SIXTH PASS (2026-09-11, newest) — the
+> Findings #6–#9 patch is confirmed on `origin/main` (`1a2ca7550`), via
+> the product owner's own `git reset --hard origin/main` matching an
+> independent sandbox `git fetch` — see the note directly below for the
+> unresolved "how did it land" question, which stands unchanged. 6 more
+> files read (33 of 63 now, 30 remain), reproducing the canonical 63-file
+> list fresh rather than trusting the count from memory.** **Finding #10
+> (new) — `pg_kv_store.rs` has no `EXISTS`-equivalent.**
+> `services/authentication/blacklist.rs`'s `check_email_token_in_
+> blacklist` and `utils/user/two_factor_auth.rs`'s `check_totp_in_redis`/
+> `check_recovery_code_in_redis` all call `redis_conn.exists::<()>(...)`
+> — fixed this same pass, via a new `exists` method (same pattern as
+> Findings #6–#9: additive, not a change to any existing method). Also
+> **reinforces, not new:** `core/webhooks/incoming.rs`'s
+> `set_key_without_modifying_ttl` call confirms Finding #6's TTL-
+> preserving half (`update_key_preserving_ttl`) for real, and
+> `services/authorization.rs`'s `serialize_and_set_key_with_expiry` /
+> `get_and_deserialize_key` calls are both already-covered shapes
+> (`set_key_with_expiry`, `get_key`). Full detail: search "Task 73/a —
+> per-call-site audit, sixth pass" at the end of the file. Still not
+> wired into any real call site, still not compiled (toolchain wall
+> re-confirmed this pass, unchanged: apt candidate `1.75.0`,
+> `sh.rustup.rs` real `403`). `rust-check.yml`'s first Actions run
+> remains unconfirmed.
+>
+> **✅ CONFIRMED LANDED, WITH AN OPEN QUESTION (2026-09-11, newest) —
+> the Findings #6/#7/#8/#9 patch (bullet directly below) is on
+> `origin/main` (`1a2ca7550`), confirmed by the product owner via
+> `git reset --hard origin/main` on their own device matching the same
+> hash independently confirmed from a sandbox `git fetch`, not assumed
+> from either side alone.** **How it landed is NOT resolved and is
+> flagged here rather than guessed at:** the product owner's own two
+> `git am` attempts both failed on their device (first: a stale
+> `.git/rebase-apply` from an earlier attempt; second, after `git am
+> --abort`: "patch does not apply," because the content was already on
+> `origin/main` by that point) — meaning the commit reached `main`
+> through neither of the two handoff attempts visible in this
+> conversation. Possibilities, none confirmed: the product owner's
+> first `git am` (before the "previous rebase directory" error was
+> reported) actually succeeded and pushed silently before the error
+> text was read; or a separate session/device applied and pushed this
+> same patch independently. **Whoever has visibility into which actually
+> happened should record it here** — not urgent (the content is
+> confirmed correct and landed either way), but worth knowing so a
+> future "patch handed over, product owner reports apply failure" case
+> isn't automatically assumed to mean the patch never landed.
+>
 > **✅ LANDED (2026-09-11, newest) — pg_kv_store.rs Findings #6/#7/#8/#9
 > fixed via five new methods (`set_key_with_expiry`,
 > `update_key_preserving_ttl`, `set_hash_fields`, `get_ttl`,
@@ -18077,3 +18124,79 @@ not owed this time. Base confirmed against real `origin/main`
 (`5631f9f66`) immediately before this entry via `git fetch origin`
 (rule 8) — no drift, local base matched exactly, so this is a fresh
 single commit on top rather than a rebuild.**
+
+### Task 73/a — per-call-site audit, sixth pass (2026-09-11, new session): Findings #6-#9 patch confirmed landed via product-owner-side `git reset --hard`; 6 more files read (33/63); Finding #10 (new, `exists`) found and fixed in the same pass
+
+**Landing confirmed the way rule 8 requires, not skipped:** the product
+owner reported both their `git am` attempts failing (first: stale
+`.git/rebase-apply`; second, after abort: "patch does not apply") but
+`git reset --hard origin/main` on their device landed on `1a2ca7550`,
+matching an independent `git fetch origin` from this sandbox exactly.
+Content confirmed byte-identical against this session's own working
+tree (not assumed from the hash matching alone). **How the commit
+reached `origin/main` without either visible `git am` succeeding is
+still unresolved** — recorded as an open question in the entry above,
+not guessed at here either.
+
+**63-file canonical list reproduced fresh this pass** (same grep:
+`redis::|RedisConnectionPool|get_redis_conn|redis_conn` under
+`crates/router/src`), still 63 files, confirming no drift in the
+codebase's own call-site surface since the list was first built.
+**6 more files read in depth** (bringing the running total to 33 of 63,
+30 remain): `services/authentication/blacklist.rs`, `utils/user/
+two_factor_auth.rs`, `core/poll.rs`, `core/webhooks/incoming.rs`,
+`utils/storage_partitioning.rs` (a bare re-export of `storage_impl::
+redis::kv_store`'s types, not a real call site with its own redis
+operations — noted so it isn't re-flagged as unread by a future grep
+against this file's own prose), `services/authorization.rs`.
+
+**Finding #10 (new) — `pg_kv_store.rs` had no `EXISTS`-equivalent.**
+`blacklist.rs`'s `check_email_token_in_blacklist` and `two_factor_
+auth.rs`'s `check_totp_in_redis` / `check_recovery_code_in_redis` all
+call `redis_conn.exists::<()>(...)` — a plain boolean existence check,
+value discarded. Neither `get_key` (deserializes a value these callers
+don't want) nor `get_ttl` (Finding #8, answers "how much time is left,"
+not "is it there") covers this shape. **Fixed this same pass**, via a
+new `exists` method: `SELECT true FROM pg_kv_cache WHERE cache_key = $1
+AND field = '' AND (expires_at IS NULL OR expires_at > now())`,
+returning whether any row came back. Same not-expired filter every
+other read in this module already applies, so an expired-but-not-yet-
+swept row correctly reads as absent, matching Redis's own lazy-expiry
+`EXISTS` behaviour.
+
+**Two more real-usage confirmations, not new findings:**
+`core/webhooks/incoming.rs`'s `set_key_without_modifying_ttl` call (for
+marking an external-authentication poll_id "Completed" without
+resetting its poll-expiry TTL) is a real, in-use example of exactly the
+TTL-preserving shape `update_key_preserving_ttl` (Finding #6, already
+fixed) was built for — first confirmed real-code usage of that specific
+half of Finding #6, not just the audit's own reasoning about
+`db/payment_method_session.rs`. `services/authorization.rs`'s
+`serialize_and_set_key_with_expiry` (role-info cache write) and
+`get_and_deserialize_key` (role-info cache read) are both already-
+covered shapes (`set_key_with_expiry`, `get_key` respectively) — no new
+gap, just one more file confirming those two methods' call shape is
+right.
+
+**Not done, still open:** 30 of 63 files still unread; Findings #1, #7
+(no batch hash write — wait, #7 fixed this session's predecessor, see
+below), #9 all still unwired into real call sites (fixed as standalone
+methods, not yet integrated); `rust-check.yml`'s first real Actions run
+still unconfirmed.
+
+**Correction to avoid confusion in that last line:** Findings #6, #7,
+#8, #9, and now #10 are all **fixed** (methods exist in `pg_kv_store.rs`
+as of this patch) but **not wired into any real call site** — the
+still-open item is integration + compilation, not the API gaps
+themselves. `pg_lock.rs`'s Finding #1 (multi-key locking) is the one
+genuinely still-unfixed API gap on record.
+
+**Per the Patch Handoff Convention: one `.rs` file touched
+(`crates/storage_impl/src/pg_kv_store.rs`), plus `handover.md`; no
+migration, DB-Ops block not owed. Base confirmed against real
+`origin/main` (`1a2ca7550`) via `git fetch origin` immediately before
+this entry (rule 8) — no drift. Per rule 6: this pass's work was folded
+into the still-unapplied landing-confirmation commit from earlier this
+same session rather than stacked as a second commit, since that commit
+had not yet been applied by the product owner when this pass began —
+one combined patch, not two, is handed over for this session.**

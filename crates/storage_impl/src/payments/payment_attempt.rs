@@ -32,6 +32,8 @@ use router_env::{instrument, tracing};
 use crate::behaviour::{Conversion, ReverseConversion};
 #[cfg(feature = "v2")]
 use crate::kv_router_store::{FilterResourceParams, FindResourceBy, UpdateResourceParams};
+#[cfg(feature = "olap")]
+use crate::utils::pg_connection_read_replica;
 use crate::{
     diesel_error_to_data_error, errors,
     errors::RedisErrorExt,
@@ -41,8 +43,6 @@ use crate::{
     utils::{pg_connection_read, pg_connection_write, try_redis_get_else_try_database_get},
     DataModelExt, DatabaseStore, RouterStore,
 };
-#[cfg(all(feature = "v1", feature = "olap"))]
-use crate::utils::pg_connection_read_replica;
 
 #[async_trait::async_trait]
 impl<T: DatabaseStore> PaymentAttemptInterface for RouterStore<T> {
@@ -397,8 +397,8 @@ impl<T: DatabaseStore> PaymentAttemptInterface for RouterStore<T> {
         processor_merchant_id: &common_utils::id_type::MerchantId,
         _storage_scheme: MerchantStorageScheme,
     ) -> CustomResult<PaymentListFilters, errors::StorageError> {
-        use hyperswitch_domain_models::behaviour::Conversion;
         use futures::future::try_join_all;
+        use hyperswitch_domain_models::behaviour::Conversion;
 
         let conn = pg_connection_read(self).await?;
         let intents = try_join_all(pi.iter().map(|pi| async {
@@ -483,7 +483,7 @@ impl<T: DatabaseStore> PaymentAttemptInterface for RouterStore<T> {
         _storage_scheme: MerchantStorageScheme,
         merchant_key_store: &MerchantKeyStore,
     ) -> CustomResult<Vec<PaymentAttempt>, errors::StorageError> {
-        use futures::future::try_join_all;
+        use futures::future::{try_join_all, FutureExt};
 
         let conn = pg_connection_read(self).await?;
         let key_manager_state = self
@@ -1801,7 +1801,7 @@ impl<T: DatabaseStore> PaymentAttemptInterface for KVRouterStore<T> {
         storage_scheme: MerchantStorageScheme,
         merchant_key_store: &MerchantKeyStore,
     ) -> error_stack::Result<Vec<PaymentAttempt>, errors::StorageError> {
-        use futures::future::try_join_all;
+        use futures::future::{try_join_all, FutureExt};
 
         let storage_scheme = Box::pin(decide_storage_scheme::<_, DieselPaymentAttempt>(
             self,

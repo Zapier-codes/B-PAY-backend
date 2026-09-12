@@ -20971,3 +20971,92 @@ cd ~/B-PAY-backend
 git am ~/storage/downloads/0001-docs-add-rule-10-reliable-ci-log-fetch-procedure.patch
 git push
 ```
+
+## Task — root-caused and fixed the 3 real regressions from `df7876aca`, all one shared cause (2026-09-12)
+
+**Trigger:** continuation of the Rule 10 entry above — the 3 full failure
+logs (`Check formatting`, `cargo check -p storage_impl (pinned 1.85.0)`,
+`Check compilation for V2 features`) were pulled successfully via the
+Rule 10 retry-loop procedure and read in full.
+
+**Root cause, all 3 traced to one change in `df7876aca`
+(`crates/storage_impl/src/payments/payment_attempt.rs`):** that commit
+correctly removed an unused module-level import
+(`#[cfg(all(feature = "v1", feature = "olap"))] use futures::future::{try_join_all, FutureExt};`)
+that was triggering E0425/unused-import under `v1`-without-`olap` — the
+problem it explicitly set out to fix — but the replacement introduced two
+distinct new bugs:
+
+1. **`FutureExt` silently dropped.** The old import brought in both
+   `try_join_all` and `FutureExt` together. The fix added three new
+   *local*, function-scoped `use futures::future::try_join_all;` lines
+   but never re-added `FutureExt` anywhere. Two of those three functions
+   call `.map(|join_result| ...)` directly on the `Future` that
+   `try_join_all(...)` returns — which requires `FutureExt` in scope
+   (`.map` on a bare `Future` isn't `Iterator::map`) — so those two sites
+   broke with `error[E0599]: ... is not an iterator`. (The third
+   function's `try_join_all` call doesn't chain `.map` on the future
+   itself, so it needed no change.)
+
+2. **`pg_connection_read_replica`'s new cfg gate is narrower than its
+   actual callers.** The commit moved this import out of the `use
+   crate::{...}` block into its own line, gated
+   `#[cfg(all(feature = "v1", feature = "olap"))]` — but the file has
+   *two* call sites for this function: one inside a
+   `#[cfg(all(feature = "v1", feature = "olap"))]`-gated method (fine)
+   and one inside a `#[cfg(all(feature = "v2", feature = "olap"))]`-gated
+   method (`get_total_count_of_filtered_payment_attempts`, line ~656) —
+   which the `v1`-only import doesn't cover. Building under V2 features
+   hits `error[E0425]: cannot find function pg_connection_read_replica`.
+
+3. **Formatting job failure was a distinct, cosmetic symptom of the same
+   edit** — `cargo +nightly fmt --all --check` wanted the moved import
+   positioned differently (right after the `crate::kv_router_store`
+   import, not after the bigger `use crate::{...}` block) and one local
+   `use` pair (`futures::future::try_join_all` /
+   `hyperswitch_domain_models::behaviour::Conversion`) alphabetically
+   reordered. No logic implication, just needed `cargo fmt` never having
+   been run on the original commit.
+
+**Fix applied, matching the CI-reported diffs exactly, nothing extra
+touched:**
+- Widened `pg_connection_read_replica`'s import gate from
+  `all(feature = "v1", feature = "olap")` to just `feature = "olap"`
+  (covers both real call sites; `v1`/`v2` are mutually exclusive in this
+  codebase so this doesn't loosen anything unintentionally), and moved it
+  to the position `cargo fmt` asked for.
+- Re-added `FutureExt` to the two local imports that call `.map` on the
+  `try_join_all` future directly (now
+  `use futures::future::{try_join_all, FutureExt};` at both sites); left
+  the third site's single-name import untouched since it doesn't need it.
+- Reordered the one `use` pair per the formatting diff.
+
+**Not compiled — same caveat as every prior session's Rust edits.** No
+working `rustc`/`rustfmt` available in this sandbox (toolchain installer
+hosts are blocked on the network allowlist, per the New-Clone Checklist
+above). This diff was reviewed by reading against the three CI error
+messages line-for-line, not compiler-verified — the next CI run against
+this exact base is the real confirmation.
+
+**Not done, still open (unchanged):** `Check compilation on MSRV
+toolchain` and `Run tests on stable toolchain` remain the two
+pre-existing failures identified in the Rule 10 entry — confirmed
+unrelated to `df7876aca`'s changes (both were already failing as of
+`45924390c`, two commits earlier) and still need a working `rustc` ≥
+1.85 before any session can make progress on them.
+
+**Per the Patch Handoff Convention, rule 8: drift-checked immediately
+before this entry** — `git fetch origin` found `origin/main` had moved to
+`e8d16f98a` (the previous entry's Rule 10 doc patch, already applied and
+pushed); rebuilt this session's fix on that real current base via
+`git reset --hard origin/main` + reapplying the stashed working change,
+confirmed no diff loss, before committing.
+
+**Per rule 7: command block for this session's handoff (Patch Handoff
+only — no `db/migrations/` changes this session, so no DB-Ops block
+owed):**
+```
+cd ~/B-PAY-backend
+git am ~/storage/downloads/0001-fix-storage_impl-restore-futureext-and-widen-pg_connection_read_replica-cfg.patch
+git push
+```

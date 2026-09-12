@@ -12,8 +12,6 @@ use diesel_models::{
     reverse_lookup::{ReverseLookup, ReverseLookupNew},
 };
 use error_stack::ResultExt;
-#[cfg(all(feature = "v1", feature = "olap"))]
-use futures::future::{try_join_all, FutureExt};
 #[cfg(feature = "v1")]
 use hyperswitch_domain_models::behaviour::Conversion;
 use hyperswitch_domain_models::{
@@ -40,12 +38,11 @@ use crate::{
     kv_router_store::KVRouterStore,
     lookup::ReverseLookupInterface,
     redis::kv_store::{decide_storage_scheme, kv_wrapper, KvOperation, Op, PartitionKey},
-    utils::{
-        pg_connection_read, pg_connection_read_replica, pg_connection_write,
-        try_redis_get_else_try_database_get,
-    },
+    utils::{pg_connection_read, pg_connection_write, try_redis_get_else_try_database_get},
     DataModelExt, DatabaseStore, RouterStore,
 };
+#[cfg(all(feature = "v1", feature = "olap"))]
+use crate::utils::pg_connection_read_replica;
 
 #[async_trait::async_trait]
 impl<T: DatabaseStore> PaymentAttemptInterface for RouterStore<T> {
@@ -401,6 +398,7 @@ impl<T: DatabaseStore> PaymentAttemptInterface for RouterStore<T> {
         _storage_scheme: MerchantStorageScheme,
     ) -> CustomResult<PaymentListFilters, errors::StorageError> {
         use hyperswitch_domain_models::behaviour::Conversion;
+        use futures::future::try_join_all;
 
         let conn = pg_connection_read(self).await?;
         let intents = try_join_all(pi.iter().map(|pi| async {
@@ -485,6 +483,8 @@ impl<T: DatabaseStore> PaymentAttemptInterface for RouterStore<T> {
         _storage_scheme: MerchantStorageScheme,
         merchant_key_store: &MerchantKeyStore,
     ) -> CustomResult<Vec<PaymentAttempt>, errors::StorageError> {
+        use futures::future::try_join_all;
+
         let conn = pg_connection_read(self).await?;
         let key_manager_state = self
             .get_keymanager_state()
@@ -1801,6 +1801,8 @@ impl<T: DatabaseStore> PaymentAttemptInterface for KVRouterStore<T> {
         storage_scheme: MerchantStorageScheme,
         merchant_key_store: &MerchantKeyStore,
     ) -> error_stack::Result<Vec<PaymentAttempt>, errors::StorageError> {
+        use futures::future::try_join_all;
+
         let storage_scheme = Box::pin(decide_storage_scheme::<_, DieselPaymentAttempt>(
             self,
             storage_scheme,

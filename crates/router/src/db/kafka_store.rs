@@ -46,9 +46,9 @@ use scheduler::{
     SchedulerInterface,
 };
 use serde::Serialize;
-use storage_impl::redis::kv_store::RedisConnInterface;
 #[cfg(feature = "v2")]
 use storage_impl::revenue_recovery_retry_stats;
+use storage_impl::{pg_kv_store::PgKvStore, redis::kv_store::RedisConnInterface};
 use time::PrimitiveDateTime;
 
 use super::{
@@ -3676,6 +3676,19 @@ impl StorageInterface for KafkaStore {
     ) -> Box<dyn subscriptions::state::SubscriptionStorageInterface> {
         Box::new(self.clone())
     }
+
+    // Corrected 2026-09-12: KafkaStore was missing this trait method entirely
+    // (E0046, confirmed by a real failing `cargo check -p storage_impl` /
+    // `Check compilation for V2 features` run) -- delegates to the wrapped
+    // Store exactly like every other non-boxed method in this impl block
+    // (see set_key_manager_state below). Not recompiled locally -- no
+    // working rustc >=1.85 in this sandbox (see legacy-node/handover.md
+    // New-Clone Checklist). Flag as reviewed-by-reading only until a
+    // session with a real toolchain confirms.
+    fn get_pg_kv_store(&self) -> PgKvStore {
+        self.diesel_store.get_pg_kv_store()
+    }
+
     fn set_key_manager_state(&mut self, key_manager_state: KeyManagerState) {
         self.diesel_store.set_key_manager_state(key_manager_state);
     }

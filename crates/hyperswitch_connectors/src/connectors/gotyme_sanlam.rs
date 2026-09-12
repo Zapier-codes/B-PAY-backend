@@ -61,14 +61,12 @@ use crate::{constants::headers, types::ResponseRouterData, utils};
 
 #[derive(Clone)]
 pub struct GotymeSanlam {
-    #[cfg(feature = "payouts")]
     amount_converter: &'static (dyn AmountConvertor<Output = StringMajorUnit> + Sync),
 }
 
 impl GotymeSanlam {
     pub fn new() -> &'static Self {
         &Self {
-            #[cfg(feature = "payouts")]
             amount_converter: &StringMajorUnitForConnector,
         }
     }

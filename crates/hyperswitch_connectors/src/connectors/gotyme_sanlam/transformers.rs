@@ -120,6 +120,7 @@ impl<F> TryFrom<&GotymeSanlamRouterData<&PayoutsRouterData<F>>>
     }
 }
 
+#[cfg(feature = "payouts")]
 impl<F> TryFrom<(&PayoutsRouterData<F>, StringMajorUnit)> for GotymeSanlamPayoutTransferPayload {
     type Error = error_stack::Report<errors::ConnectorError>;
 

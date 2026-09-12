@@ -42,15 +42,13 @@ use hyperswitch_interfaces::{
         ConnectorValidation,
     },
     configs::Connectors,
+    errors::ConnectorError,
     events::connector_api_logs::ConnectorEvent,
     types::{self, Response},
     webhooks,
 };
 #[cfg(feature = "payouts")]
-use hyperswitch_interfaces::{
-    errors::ConnectorError,
-    types::{PayoutFulfillType, PayoutSyncType},
-};
+use hyperswitch_interfaces::types::{PayoutFulfillType, PayoutSyncType};
 use hyperswitch_masking::ExposeInterface;
 use transformers as trustly;
 
@@ -58,14 +56,12 @@ use crate::{constants::headers, types::ResponseRouterData, utils};
 
 #[derive(Clone)]
 pub struct Trustly {
-    #[cfg(feature = "payouts")]
     amount_converter: &'static (dyn AmountConvertor<Output = StringMajorUnit> + Sync),
 }
 
 impl Trustly {
     pub fn new() -> &'static Self {
         &Self {
-            #[cfg(feature = "payouts")]
             amount_converter: &StringMajorUnitForConnector,
         }
     }

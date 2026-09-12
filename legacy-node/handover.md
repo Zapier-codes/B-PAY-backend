@@ -20283,3 +20283,34 @@ cd ~/B-PAY-backend
 git am ~/storage/downloads/0001-euclid-wasm-router_env-tokio-mio-fix-combined.patch
 git push
 ```
+
+## Task 73/a — per-call-site audit, continued (2026-09-12)
+
+Picked up the "~60 remaining sites still unwalked" item from the previous
+session's `pg_kv_store.rs`/`pg_lock.rs` write-up. No toolchain change since
+last session (`which cargo`/`which rustc` both still resolve to nothing in
+this sandbox) — this pass is read-only, per step 4 of the New-Clone
+Checklist: **not** wiring anything into `RedisStore` or a real call site,
+since neither of that step's two prerequisites (working `rustc` ≥ 1.85, or
+the audit being complete) is met yet.
+
+Confirmed, by reading the actual call sites (not just the two files'
+already-written doc comments) — both match what `pg_kv_store.rs` already
+claims for them:
+
+- **`db/ephemeral_key.rs`** — both `create_ephemeral_key`/its client-secret
+  variant call `set_expire_at(&key, expire_at)` with an absolute Unix
+  timestamp derived from `created_at.saturating_add(validity.hours())` at
+  two call sites each (secret key + id key), plus a separate `delete_key`
+  path on invalidation. This is exactly Finding #16's absolute-timestamp
+  `EXPIREAT` shape — `set_expire_at` is the right method, already
+  implemented, still correctly left unwired.
+- **`services/authentication/blacklist.rs`** — `.exists::<()>(&blacklist_key
+  ...)` at line 118, a plain boolean membership check with no
+  deserialization of a stored value. Matches Finding #10 exactly (that's
+  why `exists` was added as its own method distinct from `get_key`) —
+  again, already implemented, still correctly left unwired.
+
+No new findings from these two; recording them as **audited, no gap** so
+they don't get re-walked from scratch next session. ~58 of the ~60
+remaining sites are still unwalked.

@@ -10444,15 +10444,48 @@ repo's handover.md (including mavins-web's):**
    retrieval command itself, every time, so the product owner can run
    it once and paste the result back:
    ```
-   gh run view --repo Zapier-codes/B-Pay-backend --log-failed \
+   gh run view $(gh run list --repo Zapier-codes/B-Pay-backend --branch main --limit 1 --json databaseId --jq '.[0].databaseId') \
+     --repo Zapier-codes/B-Pay-backend --log-failed \
      > ~/storage/downloads/ci-errors-latest.txt
    ```
-   (swap in an explicit run ID in place of the bare `gh run view` if a
+   **Corrected 2026-09-12, first real run of this exact command by the
+   product owner:** `gh run view --log-failed` alone (no run ID) errors
+   `run or job ID required when not running interactively` the moment
+   its output is piped to a file rather than left on an interactive
+   terminal — `gh` can't fall back to its "pick from a list" prompt
+   once stdout isn't a TTY. The one-liner above resolves the latest run
+   ID itself via `gh run list ... --json databaseId --jq ...` first, so
+   there's no interactive prompt to fall back to. **This is the version
+   to hand over from now on — the bare `gh run view --log-failed` form
+   above this correction is what NOT to repeat**, recorded per this
+   file's own practice rather than silently replaced.
+   (swap in an explicit run ID in place of the `$(...)` substitution if a
    specific historical run — not the latest — is what needs
    inspecting, e.g. `gh run view 34678839780 --repo ... --log-failed`).
    `--log-failed` scopes the dump to only the steps that actually
    failed, across every failing job in the run at once — one file,
-   one paste, no picking one job at a time. This isn't a one-off
+   one paste, no picking one job at a time.
+
+   **Per-job retrieval (added 2026-09-12, product-owner request) — for
+   when only one named job's log is wanted (e.g. "Spell check failed,
+   just get me that one")** rather than the whole run's failed steps at
+   once: resolve that job's own ID first, then scope `--log-failed` to
+   it with `--job` instead of a bare run ID:
+   ```
+   RUN_ID=$(gh run list --repo Zapier-codes/B-Pay-backend --branch main --limit 1 --json databaseId --jq '.[0].databaseId')
+   JOB_ID=$(gh run view "$RUN_ID" --repo Zapier-codes/B-Pay-backend --json jobs --jq '.jobs[] | select(.name=="Spell check") | .databaseId')
+   gh run view --job "$JOB_ID" --repo Zapier-codes/B-Pay-backend --log-failed \
+     > ~/storage/downloads/ci-errors-spell-check.txt
+   ```
+   Swap the `select(.name=="Spell check")` string for whichever job name
+   is actually wanted — it has to match the job's display `name` in
+   `ci.yml` exactly (e.g. `"Check formatting"`, `"Run tests on stable
+   toolchain"`, `"cargo check -p storage_impl (pinned 1.85.0)"`), not the
+   YAML key (`test`, `formatting`, `storage-impl`). **Not yet run for
+   real by the product owner** — same as the whole-run form was
+   uncorrected until it actually got run once; flagging that up front
+   this time instead of waiting for a second correction entry. This
+   isn't a one-off
    instruction for whichever session first needed it; it's a standing
    requirement for CI-triage work generally, same status as rules 1–8
    above.
@@ -20774,3 +20807,36 @@ waiting on the next `gh run view --log-failed` pull.
 **Per the Patch Handoff Convention, rule 8: drift-checked immediately
 before this entry, and acted on** — see the rule-8 paragraph above; this
 is the fetch that found the drift, not a separate one.
+
+## Task — rule 9's own command was broken; corrected (2026-09-12)
+
+**Trigger:** product owner ran rule 9's exact `gh run view --repo ... --log-failed > ...` command for real, first time it was ever actually run rather than just handed over, and hit `run or job ID required when not running interactively`.
+
+**Root cause:** `gh run view` with no run ID normally falls back to an
+interactive picker; that fallback doesn't exist once stdout is redirected
+to a file (not a TTY), so it hard-errors instead. The command handed over
+in rule 9 (and duplicated in this session's own entry above) never
+actually worked non-interactively — it was untested against a real `gh`
+invocation before being written down as the standing command, which is
+exactly the gap this correction closes.
+
+**Fix:** rule 9's command block now resolves the latest run ID itself
+first (`gh run list --branch main --limit 1 --json databaseId --jq
+'.[0].databaseId'`) via command substitution, then feeds that into `gh
+run view ... --log-failed`, so there's no interactive prompt to fall
+back to. Corrected in place at rule 9 (search "Corrected 2026-09-12")
+rather than silently editing the old text away, per this file's own
+standing practice.
+
+**Not done, still open (unchanged):** the Nix CI fix from last entry is
+now on `origin/main` (confirmed via `git fetch`, HEAD `eeb3b1088`) but
+still not run-confirmed; V2 `get_pg_kv_store` gap and the pre-existing
+typos are also still open. Next real CI run (or the next
+`gh run view --log-failed` pull, now with a command that actually works)
+should be checked against all three at once rather than one at a time.
+
+**Per the Patch Handoff Convention, rule 8: drift-checked immediately
+before this entry, and acted on** — `git fetch origin` found
+`origin/main` had moved again, to `eeb3b1088` (the previous session's
+Nix-fix patch already applied + pushed); rebuilt this commit on that real
+current base rather than the stale local branch, same as last entry.

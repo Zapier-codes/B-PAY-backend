@@ -119,7 +119,11 @@
 //! real build/test pass and the per-call-site audit above.
 
 use async_bb8_diesel::AsyncRunQueryDsl;
-use diesel::{sql_query, sql_types::Text, QueryableByName};
+use diesel::{
+    sql_query,
+    sql_types::{BigInt, Binary, Bool, Double, Nullable, Text},
+    QueryableByName,
+};
 use error_stack::{report, ResultExt};
 use serde::{de::DeserializeOwned, Serialize};
 use time::PrimitiveDateTime;
@@ -150,37 +154,34 @@ pub enum PgHsetnxReply {
     KeyNotSet,
 }
 
-// diesel's QueryableByName derive fully-qualifies its generated sql_type
-// path (e.g. diesel::sql_types::Binary) and, for a single-field struct,
-// that generated qualification gets misattributed to this field's own
-// span under -D warnings -- not a real redundant-path issue in code we
-// wrote. Silenced narrowly rather than at the crate/lint-group level.
-// Confirmed against a real failed CI run (2026-09-12, cargo check -p
-// storage_impl pinned 1.85.0 job); NOT recompiled locally -- no working
-// rustc >=1.85 in this sandbox (see legacy-node/handover.md New-Clone
-// Checklist). Flag as reviewed-by-reading only until a session with a
-// real toolchain confirms.
+// Corrected 2026-09-12: a prior session's #[allow(unused_qualifications)]
+// on this struct did NOT suppress the lint (confirmed by a real failing
+// `Run tests on stable toolchain` clippy run) -- the fully-qualified
+// `diesel::sql_types::Binary` path in the #[diesel(sql_type = ...)]
+// attribute is the actual token the lint flags, so the real fix is to
+// shorten it now that `Binary` is imported directly, not to relocate an
+// #[allow]. Kept #[allow(unused_qualifications)] as a fallback in case
+// the derive macro's own generated code re-introduces a qualified path
+// internally -- not recompiled locally -- no working rustc >=1.85 in
+// this sandbox (see legacy-node/handover.md New-Clone Checklist). Flag
+// as reviewed-by-reading only until a session with a real toolchain
+// confirms.
 #[allow(unused_qualifications)]
 #[derive(QueryableByName)]
 struct RawValueRow {
-    #[diesel(sql_type = diesel::sql_types::Binary)]
+    #[diesel(sql_type = Binary)]
     value: Vec<u8>,
 }
 
-// diesel's QueryableByName derive fully-qualifies its generated sql_type
-// path (e.g. diesel::sql_types::Binary) and, for a single-field struct,
-// that generated qualification gets misattributed to this field's own
-// span under -D warnings -- not a real redundant-path issue in code we
-// wrote. Silenced narrowly rather than at the crate/lint-group level.
-// Confirmed against a real failed CI run (2026-09-12, cargo check -p
-// storage_impl pinned 1.85.0 job); NOT recompiled locally -- no working
-// rustc >=1.85 in this sandbox (see legacy-node/handover.md New-Clone
-// Checklist). Flag as reviewed-by-reading only until a session with a
-// real toolchain confirms.
+// Corrected 2026-09-12: see RawValueRow above -- struct-level #[allow]
+// alone didn't suppress the lint in a real CI run; shortened the
+// qualified path (BigInt now imported directly) instead, keeping the
+// #[allow] as a fallback. Not recompiled locally (see legacy-node/
+// handover.md New-Clone Checklist) -- reviewed by reading only.
 #[allow(unused_qualifications)]
 #[derive(QueryableByName)]
 struct InsertedRow {
-    #[diesel(sql_type = diesel::sql_types::BigInt)]
+    #[diesel(sql_type = BigInt)]
     #[allow(dead_code)] // existence of the row is the signal; id itself unused today
     id: i64,
 }
@@ -694,20 +695,16 @@ impl PgKvStore {
             .await
             .change_context(StorageError::DatabaseConnectionError)?;
 
-        // diesel's QueryableByName derive fully-qualifies its generated sql_type
-        // path (e.g. diesel::sql_types::Binary) and, for a single-field struct,
-        // that generated qualification gets misattributed to this field's own
-        // span under -D warnings -- not a real redundant-path issue in code we
-        // wrote. Silenced narrowly rather than at the crate/lint-group level.
-        // Confirmed against a real failed CI run (2026-09-12, cargo check -p
-        // storage_impl pinned 1.85.0 job); NOT recompiled locally -- no working
-        // rustc >=1.85 in this sandbox (see legacy-node/handover.md New-Clone
-        // Checklist). Flag as reviewed-by-reading only until a session with a
-        // real toolchain confirms.
+        // Corrected 2026-09-12: see RawValueRow in this file's top section --
+        // struct-level #[allow] alone didn't suppress the lint in a real CI
+        // run; shortened the qualified path (Nullable, Double now imported
+        // directly) instead, keeping the #[allow] as a fallback. Not
+        // recompiled locally (see legacy-node/handover.md New-Clone
+        // Checklist) -- reviewed by reading only.
         #[allow(unused_qualifications)]
         #[derive(QueryableByName)]
         struct TtlRow {
-            #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Double>)]
+            #[diesel(sql_type = Nullable<Double>)]
             remaining_seconds: Option<f64>,
         }
 
@@ -905,20 +902,16 @@ impl PgKvStore {
         let initial_expires_at = initial_expiry_seconds
             .map(|secs| common_utils::date_time::now() + time::Duration::seconds(secs));
 
-        // diesel's QueryableByName derive fully-qualifies its generated sql_type
-        // path (e.g. diesel::sql_types::Binary) and, for a single-field struct,
-        // that generated qualification gets misattributed to this field's own
-        // span under -D warnings -- not a real redundant-path issue in code we
-        // wrote. Silenced narrowly rather than at the crate/lint-group level.
-        // Confirmed against a real failed CI run (2026-09-12, cargo check -p
-        // storage_impl pinned 1.85.0 job); NOT recompiled locally -- no working
-        // rustc >=1.85 in this sandbox (see legacy-node/handover.md New-Clone
-        // Checklist). Flag as reviewed-by-reading only until a session with a
-        // real toolchain confirms.
+        // Corrected 2026-09-12: see RawValueRow in this file's top section --
+        // struct-level #[allow] alone didn't suppress the lint in a real CI
+        // run; shortened the qualified path (BigInt now imported directly)
+        // instead, keeping the #[allow] as a fallback. Not recompiled
+        // locally (see legacy-node/handover.md New-Clone Checklist) --
+        // reviewed by reading only.
         #[allow(unused_qualifications)]
         #[derive(QueryableByName)]
         struct IncrementedRow {
-            #[diesel(sql_type = diesel::sql_types::BigInt)]
+            #[diesel(sql_type = BigInt)]
             new_value: i64,
         }
 
@@ -1016,20 +1009,16 @@ impl PgKvStore {
             .await
             .change_context(StorageError::DatabaseConnectionError)?;
 
-        // diesel's QueryableByName derive fully-qualifies its generated sql_type
-        // path (e.g. diesel::sql_types::Binary) and, for a single-field struct,
-        // that generated qualification gets misattributed to this field's own
-        // span under -D warnings -- not a real redundant-path issue in code we
-        // wrote. Silenced narrowly rather than at the crate/lint-group level.
-        // Confirmed against a real failed CI run (2026-09-12, cargo check -p
-        // storage_impl pinned 1.85.0 job); NOT recompiled locally -- no working
-        // rustc >=1.85 in this sandbox (see legacy-node/handover.md New-Clone
-        // Checklist). Flag as reviewed-by-reading only until a session with a
-        // real toolchain confirms.
+        // Corrected 2026-09-12: see RawValueRow in this file's top section --
+        // struct-level #[allow] alone didn't suppress the lint in a real CI
+        // run; shortened the qualified path (Bool now imported directly)
+        // instead, keeping the #[allow] as a fallback. Not recompiled
+        // locally (see legacy-node/handover.md New-Clone Checklist) --
+        // reviewed by reading only.
         #[allow(unused_qualifications)]
         #[derive(QueryableByName)]
         struct ExistsRow {
-            #[diesel(sql_type = diesel::sql_types::Bool)]
+            #[diesel(sql_type = Bool)]
             #[allow(dead_code)]
             // existence of the row is the signal; value itself unused
             present: bool,

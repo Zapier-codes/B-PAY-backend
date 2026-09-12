@@ -91,7 +91,11 @@
 
 use async_bb8_diesel::AsyncRunQueryDsl;
 use bb8::PooledConnection;
-use diesel::{sql_query, sql_types::BigInt, QueryableByName};
+use diesel::{
+    sql_query,
+    sql_types::{BigInt, Bool},
+    QueryableByName,
+};
 use error_stack::ResultExt;
 
 use crate::{errors::StorageError, pg_kv_store::PgKvPool};
@@ -142,20 +146,16 @@ fn lock_key_to_bigint(key: &str) -> i64 {
     }
 }
 
-// diesel's QueryableByName derive fully-qualifies its generated sql_type
-// path (e.g. diesel::sql_types::Binary) and, for a single-field struct,
-// that generated qualification gets misattributed to this field's own
-// span under -D warnings -- not a real redundant-path issue in code we
-// wrote. Silenced narrowly rather than at the crate/lint-group level.
-// Confirmed against a real failed CI run (2026-09-12, cargo check -p
-// storage_impl pinned 1.85.0 job); NOT recompiled locally -- no working
-// rustc >=1.85 in this sandbox (see legacy-node/handover.md New-Clone
-// Checklist). Flag as reviewed-by-reading only until a session with a
-// real toolchain confirms.
+// Corrected 2026-09-12: a prior session's #[allow(unused_qualifications)]
+// on this struct did NOT suppress the lint (confirmed by a real failing
+// `Run tests on stable toolchain` clippy run) -- shortened the qualified
+// path (Bool now imported directly) instead, keeping the #[allow] as a
+// fallback. Not recompiled locally (see legacy-node/handover.md
+// New-Clone Checklist) -- reviewed by reading only.
 #[allow(unused_qualifications)]
 #[derive(QueryableByName)]
 struct AcquiredRow {
-    #[diesel(sql_type = diesel::sql_types::Bool)]
+    #[diesel(sql_type = Bool)]
     pg_try_advisory_lock: bool,
 }
 

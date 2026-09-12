@@ -288,6 +288,17 @@ impl StorageInterface for Store {
         Box::new(self.clone())
     }
 
+    // Corrected 2026-09-12: `self.get_master_pool().pg_pool.clone()` failed
+    // to type-check under the `v2` feature set (E0308, confirmed by a real
+    // failing `Check compilation for V2 features` run) because
+    // `storage_impl::pg_kv_store::PgKvPool` was hardcoded to a plain
+    // `diesel::PgConnection` pool while `pg_pool`'s real type varies with
+    // the `deja` feature. Fixed at the `PgKvPool` type-alias definition
+    // (now aliases `RawPgPool` directly) rather than here — this call site
+    // was always doing the right thing, reusing the existing master pool
+    // instead of opening a second one; only the type name it targeted was
+    // wrong. Not recompiled locally (see legacy-node/handover.md
+    // New-Clone Checklist) -- reviewed by reading only.
     fn get_pg_kv_store(&self) -> PgKvStore {
         PgKvStore::new(
             self.get_master_pool().pg_pool.clone(),

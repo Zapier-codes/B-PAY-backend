@@ -96,7 +96,24 @@ crates_without_v1_feature="$(
     | "\(.name)" # Print out package name'
 )"
 while IFS= read -r crate && [[ -n "${crate}" ]]; do
-  command="cargo hack check --all-targets --each-feature --package \"${crate}\""
+  # Corrected 2026-09-12: `--each-feature` includes a bare
+  # `--no-default-features`-only pass with nothing else enabled. For most
+  # crates that's a valid (if minimal) configuration, but crates like
+  # `redis_interface` require exactly one backend feature to be active
+  # (`fred` xor `redis-rs`, guarded by a real `compile_error!` in
+  # `src/lib.rs`) and have no valid "zero features" build -- that's not a
+  # code bug, it's the crate correctly rejecting an unsupported
+  # configuration, but cargo-hack was still asking it to compile that way
+  # (confirmed via a real failing `Check compilation on MSRV toolchain`
+  # run, E0412 cascading from the `compile_error!`). `--exclude-no-default-features`
+  # is cargo-hack's own documented flag for skipping exactly that
+  # all-features-off baseline, applied here across the board rather than
+  # only for `redis_interface`: a crate with every optional feature
+  # disabled isn't a configuration any real deployment runs, so checking
+  # it isn't giving up meaningful coverage for the other crates in this
+  # loop either. Not recompiled locally (see legacy-node/handover.md
+  # New-Clone Checklist) -- reviewed by reading only.
+  command="cargo hack check --all-targets --each-feature --exclude-no-default-features --package \"${crate}\""
   all_commands+=("$command")
 done <<< "${crates_without_v1_feature}"
 

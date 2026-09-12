@@ -118,6 +118,22 @@
 //! Do not treat this as a drop-in production replacement without both a
 //! real build/test pass and the per-call-site audit above.
 
+// Corrected 2026-09-12: a prior session's struct-level
+// `#[allow(unused_qualifications)]` on `RawValueRow`/`InsertedRow` did NOT
+// suppress the lint in a real `Run tests on stable toolchain` clippy run
+// (18 errors, both structs, exact lines the struct-level allow already
+// covered) -- the `#[derive(QueryableByName)]` expansion emits the
+// qualified path in a scope the struct-level attribute doesn't reach.
+// This codebase already has a working precedent for exactly this
+// diesel-derive false positive: `diesel_models::schema`/`schema_v2` apply
+// `#[allow(unused_qualifications)]` at the *module* boundary, not the
+// item. Matching that here with a module-wide inner attribute, placed
+// before any item in the file as Rust requires, rather than
+// reintroducing the same per-struct attribute that already failed once.
+// Not recompiled locally (see legacy-node/handover.md New-Clone
+// Checklist) -- reviewed by reading only.
+#![allow(unused_qualifications)]
+
 use async_bb8_diesel::AsyncRunQueryDsl;
 use diesel::{
     sql_query,
@@ -130,14 +146,33 @@ use time::PrimitiveDateTime;
 
 use crate::errors::StorageError;
 
-/// Deliberately its own pool type, distinct from
-/// `crate::database::store::PgPool` (which wraps `RawPgPool` with an event
-/// emitter for the domain-model store). This module is a narrower,
-/// self-contained choke-point and doesn't need that wrapper — but wiring it
-/// into the real connection-startup path (`database/store.rs`) so it shares
-/// one physical pool instead of opening a second one is unresolved, left
-/// for integration, not solved here.
-pub type PgKvPool = bb8::Pool<async_bb8_diesel::ConnectionManager<diesel::PgConnection>>;
+/// Corrected 2026-09-12: this was hardcoded to
+/// `bb8::Pool<async_bb8_diesel::ConnectionManager<diesel::PgConnection>>`,
+/// which only matches the workspace's real pool type when the `deja`
+/// feature is off — with `deja` on (as in the `v2` CI feature set),
+/// `crate::database::store::RawPgPool` is built over `DejaPgConnection`
+/// (a wrapping connection type), so `self.get_master_pool().pg_pool.clone()`
+/// in `router/src/db.rs` failed to type-check (E0308, confirmed by a real
+/// failing `Check compilation for V2 features` run).
+///
+/// Fix: alias directly to `crate::database::store::RawPgPool` instead of a
+/// hand-picked concrete connection type. This is not just the type fix —
+/// it also resolves the "wiring it into the real connection-startup path
+/// so it shares one physical pool instead of opening a second one" gap
+/// this comment used to flag as unsolved: since `PgKvPool` is now
+/// definitionally the same pool type the domain-model store already
+/// builds, `get_pg_kv_store()` can (and does) clone the existing master
+/// pool handle rather than standing up a second connection pool to the
+/// same database.
+///
+/// Not recompiled locally — no working rustc >=1.85 in this sandbox (see
+/// `legacy-node/handover.md` New-Clone Checklist). Reviewed by reading:
+/// `RawPgPool`'s element type is `async_bb8_diesel::ConnectionManager<DejaPgConnection>`,
+/// and `DejaPgConnection` is already used generically as the connection
+/// type behind `RawPgConnection`/`PgPooledConn` throughout `diesel_models`,
+/// so nothing downstream in this file assumes the old concrete
+/// `diesel::PgConnection` type.
+pub type PgKvPool = crate::database::store::RawPgPool;
 
 /// Mirrors `redis_interface::SetnxReply` so callers that only branch on
 /// "did my write win the race" don't need to know which backend answered.
@@ -154,31 +189,16 @@ pub enum PgHsetnxReply {
     KeyNotSet,
 }
 
-// Corrected 2026-09-12: a prior session's #[allow(unused_qualifications)]
-// on this struct did NOT suppress the lint (confirmed by a real failing
-// `Run tests on stable toolchain` clippy run) -- the fully-qualified
-// `diesel::sql_types::Binary` path in the #[diesel(sql_type = ...)]
-// attribute is the actual token the lint flags, so the real fix is to
-// shorten it now that `Binary` is imported directly, not to relocate an
-// #[allow]. Kept #[allow(unused_qualifications)] as a fallback in case
-// the derive macro's own generated code re-introduces a qualified path
-// internally -- not recompiled locally -- no working rustc >=1.85 in
-// this sandbox (see legacy-node/handover.md New-Clone Checklist). Flag
-// as reviewed-by-reading only until a session with a real toolchain
-// confirms.
-#[allow(unused_qualifications)]
+// Struct-level #[allow(unused_qualifications)] here (both structs) was
+// tried and confirmed NOT to suppress the lint in a real CI run -- see
+// the module-level #![allow(unused_qualifications)] near the top of this
+// file, which is the fix that actually applies.
 #[derive(QueryableByName)]
 struct RawValueRow {
     #[diesel(sql_type = Binary)]
     value: Vec<u8>,
 }
 
-// Corrected 2026-09-12: see RawValueRow above -- struct-level #[allow]
-// alone didn't suppress the lint in a real CI run; shortened the
-// qualified path (BigInt now imported directly) instead, keeping the
-// #[allow] as a fallback. Not recompiled locally (see legacy-node/
-// handover.md New-Clone Checklist) -- reviewed by reading only.
-#[allow(unused_qualifications)]
 #[derive(QueryableByName)]
 struct InsertedRow {
     #[diesel(sql_type = BigInt)]

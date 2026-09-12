@@ -21715,3 +21715,80 @@ cd ~/B-Pay-backend
 git am ~/storage/downloads/0001-task-73a-item3-payouts-cfg-recheck-and-handover.patch
 git push
 ```
+
+## Task — Task 73/a item 3 (downstream fallout files): re-checked the 4 flagged files — none reproduce the cfg-gate mismatch either (2026-09-12, same session)
+
+**Trigger:** product owner said to move to the next task; the "NEXT SESSION:
+start here" list's item 3 explicitly named 4 files as "almost certainly
+downstream fallout... worth re-checking against the CI log fresh AFTER
+fixing 1–3, not before" — items 1–3's connector-level part is now done (this
+file's own preceding two entries), so this is that deferred re-check.
+
+**Per the Patch Handoff Convention, rule 8: drift-checked before starting**
+— `git fetch origin` confirmed `origin/main` unchanged at `4ddfda5c4`, same
+base this branch was already built on. **Per rule 6 (combine, don't stack):**
+this entry's commit goes on top of the existing unapplied
+`audit/task-73a-item3-payouts-cfg-recheck` branch rather than a new branch,
+since the prior patch from this same branch hasn't been confirmed applied
+yet.
+
+**Scope:** `hyperswitch_domain_models/src/types.rs`,
+`hyperswitch_connectors/src/types.rs`, `api_models/src/lib.rs`, and
+`hyperswitch_connectors/src/utils.rs` — read every `#[cfg(feature =
+"payouts")]` / `#[cfg(not(feature = "payouts"))]` site in each (2, 4, 1, and
+17 respectively) and traced each one's definition against its actual
+caller(s), same methodology as the connector-file pass.
+
+**Finding: none of the four reproduce the bug either.**
+- `hyperswitch_domain_models/src/types.rs` — `PayoutsData`/
+  `PayoutsResponseData` re-export and the `PayoutsRouterData<F>` type alias
+  are both cleanly gated; nothing in this file references them
+  unconditionally.
+- `hyperswitch_connectors/src/types.rs` — `PayoutsResponseRouterData` alias
+  and the `PayoutIndividualDetailsExt` trait + impl are paired correctly
+  (definition and impl gated together).
+- `api_models/src/lib.rs` — `pub mod payouts;` is gated; the one line in
+  this file is internally consistent by construction (a gated module has
+  nothing inside it to mismatch against).
+- `hyperswitch_connectors/src/utils.rs` — walked all 17 gate sites: paired
+  trait-def/impl blocks (`PayoutFulfillRequestData`, `PayoutsData`,
+  `CustomerDetails`, `CardData` for `CardPayout`/`ApplePayDecrypt`/
+  `GooglePayDecrypt`), paired trait-method declarations in the shared
+  `RouterData`-style trait (`get_payout_method_data`/`get_quote_id`,
+  declared gated and implemented gated), a struct-literal field
+  (`payout_method_data`/`quote_id`) gated to match its gated field
+  declaration, and a standalone helper (`to_payout_connector_meta`) that's
+  gated and has no unconditional caller. All consistent.
+
+**Conclusion for item 3 as a whole:** the CI log's 106-error root-cause
+family (misplaced `payouts` cfg gates) was real and items 1–2 (trustly,
+worldpayxml) plus this session's two audit passes account for the full
+originally-named list — 6 connector files plus the 4 flagged
+downstream files. None of the 10 remaining named files need a code change.
+The bug was narrower than the original diagnosis assumed: isolated to
+trustly and worldpayxml, not spread across the whole named set. No further
+files remain open under this task's original scope.
+
+**No code change made this entry either**, for the same reason as the prior
+one — there's nothing to fix. **Not compiled** (no working `rustc`/`cargo` in
+this sandbox, same wall as every prior session); reading-based audit, no
+code to compile-check.
+
+**Not done, still open:**
+- The per-call-site TTL/atomicity audit's "batch 3" — unrelated to Task
+  73/a's payouts-cfg thread, still outstanding on its own track.
+- Re-running `cargo check -p hyperswitch_connectors` with and without
+  `--features payouts` once a working `rustc` ≥ 1.85 is available, as a
+  compiler-verified second opinion on both audit passes in this file.
+
+**Per rule 4: this stayed off `main`** — committed on branch
+`audit/task-73a-item3-payouts-cfg-recheck`, not `main`.
+
+**Per rule 7: command block for this session's handoff (doc-only, two
+commits since `origin/main`, combined into ONE patch file per rule 6/rule 5
+— no `db/migrations/` changes, no DB-Ops block owed):**
+```
+cd ~/B-PAY-backend
+git am ~/storage/downloads/0001-task-73a-item3-full-audit-combined-and-handover.patch
+git push
+```

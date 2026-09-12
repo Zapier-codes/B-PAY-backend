@@ -106,7 +106,79 @@
 > task's own section. Nothing else in this file is required reading to
 > start work.**
 >
-> **🔴🔴 NEW NEXT TASK (2026-09-12, supersedes the Task 73/a box directly
+> **🟢 NEW NEXT TASK (2026-09-12, supersedes the 🔴🔴 box directly below —
+> that box's item 1 is now done, items 2–3 are what's left) — item 1 of
+> the "NEXT SESSION: start here" list (below) is fixed: the three named
+> `trustly/transformers.rs` cfg-gate bugs (a/b/c), plus two more the
+> named diagnosis didn't cover, found by tracing the actual dependency
+> chain rather than editing the three named lines and stopping:**
+> - **(a) as named** — `trustly_serialize` un-gated (general
+>   request-signing infra, called unconditionally by
+>   `generate_trustly_signature`/`verify_webhook_signature`).
+>   **Plus, not in the original diagnosis:** `generate_trustly_signature`
+>   also needs `utils::base64_decode` unconditionally, but the whole
+>   `crate::utils` module handle only existed inside the payouts-gated
+>   `utils::{self, ...}` import — ungating `trustly_serialize` alone
+>   would have left this second break in place. Split the import so
+>   `utils` (the module) and `common_utils::{CustomResult, pii}` follow
+>   actual unconditional-vs-payouts-only usage, matching the
+>   `crate::{types::{...}, utils::{self, ...}}` split already used in
+>   `gigadat`/`loonio`/`truelayer` transformers.rs.
+> - **(b) as named, but widened** — `RegisterAccountAttributes` gated
+>   (references `CountryAlpha2`). Gating only that struct, as literally
+>   written, would have just moved the "missing type" error up one
+>   level: `RegisterAccountData`/`-Params`/`-Request` all reference it
+>   unconditionally, and (confirmed by reading every call site) are
+>   used exclusively inside the already-`#[cfg(feature = "payouts")]`
+>   `TryFrom` impl — so the whole request-side chain is gated together.
+>   `RegisterAccountResponse*` deliberately left ungated: it references
+>   no payouts-only types, so it isn't part of this compile error, and
+>   gating it would be scope creep, not a fix. (Checked the sibling
+>   `AccountPayout*`/`PayoutSync*` struct families too, in case they had
+>   the identical shape — they don't reference anything payouts-gated
+>   internally, so they're not broken and weren't touched.)
+> - **(c) as named, but widened** — `get_payout_webhook_event` gated
+>   (returns `IncomingWebhookEvent::PayoutSuccess`/etc., themselves
+>   payouts-gated). **Unlike `worldpayxml.rs`'s cited sibling case**
+>   (caller already branches on the feature), `trustly.rs`'s
+>   `get_webhook_event_type` and `get_webhook_resource_object` called
+>   this function unconditionally with no fallback — gating just the
+>   function definition, as literally written, would have broken both
+>   call sites in a non-payouts build. Wrapped each call in
+>   `#[cfg(feature = "payouts")]` with a `#[cfg(not(...))]` fallback
+>   (`Err(WebhooksNotImplemented)`, matching this same file's own
+>   `get_webhook_object_reference_id` convention a few lines above), plus
+>   `#[cfg_attr(not(feature = "payouts"), allow(unused_variables))]` on
+>   both fns (idiom already established in
+>   `crates/router/src/connection.rs`, not invented here).
+>
+> Branch `fix/trustly-payouts-cfg-gate-item-1`, commit `176326e35`
+> (based on `origin/main` at `e269b2afd` — re-confirmed via `git fetch
+> origin` immediately before branching, no drift). **Not compiled** —
+> same toolchain wall as every prior session (`which rustc cargo` →
+> nothing this session too, not re-diagnosed further per the New-Clone
+> Checklist's step 2/3 guidance); reviewed by reading against sibling
+> connector patterns and by tracing every usage of every touched symbol
+> across both `trustly.rs` and `trustly/transformers.rs`, not
+> compiler-verified.
+>
+> **Next real task: items 2 and 3 of the "NEXT SESSION: start here"
+> list below, in order** — `worldpayxml/transformers.rs`'s
+> `get_payout_webhook_event` gate (item 2), then the not-yet-root-caused
+> remainder (`truelayer/transformers.rs`, remaining `gotyme_sanlam.rs`
+> errors, `envoy/transformers.rs`, `cybersourcedecisionmanager.rs` +
+> `transformers.rs`, `paypal/transformers.rs`, `adyenplatform.rs`, plus
+> the 4 likely-downstream-fallout files) — item 3 explicitly says not to
+> spend time on the downstream type files until the connector-level
+> fixes land, so do 2 and the connector-level parts of 3 first, re-check
+> the type-file errors fresh afterward. **Apply this session's own
+> lesson going in**: don't stop at the first-diagnosed line for each —
+> trace whatever each newly-gated item touches (fields, imports, call
+> sites) the same way this session did for trustly, since two of three
+> items here needed it.
+>
+> **🔴🔴 OLDER NEXT TASK (2026-09-12, now history — item 1 above is
+> done, items 2–3 are current) — supersedes the Task 73/a box directly
 > below — that box is now history, not the live pointer) — a real,
 > concrete CI failure log for `Check compilation on MSRV toolchain
 > (ubuntu-latest)` / `Cargo hack (canonical push only)` was handed to

@@ -106,6 +106,110 @@
 > task's own section. Nothing else in this file is required reading to
 > start work.**
 >
+> **🔴🔴 NEW NEXT TASK (2026-09-12, supersedes the Task 73/a box directly
+> below — that box is now history, not the live pointer) — a real,
+> concrete CI failure log for `Check compilation on MSRV toolchain
+> (ubuntu-latest)` / `Cargo hack (canonical push only)` was handed to
+> this session directly by the product owner (not pulled via the
+> rate-limited GitHub API — sidesteps that wall entirely for this one
+> job). 106 compile errors, all one root cause family: connector files
+> have `#[cfg(feature = "payouts")]` gates on the wrong side of the
+> payouts/non-payouts boundary — either gating something used
+> unconditionally, or missing on something that's genuinely
+> payout-only. Confirmed by reading each error site against its
+> sibling connectors' existing (correct) patterns in the same crate,
+> not compiled (same toolchain wall as ever, independently re-verified
+> this session: `which rustc cargo` → nothing; `apt-cache policy rustc`
+> → candidate `1.75.0` vs pinned `1.85.0`; `curl -sI
+> https://sh.rustup.rs` and `.../channel-rust-stable.toml` → both `403
+> host_not_allowed` again).
+>
+> **Fixed this session, branch `fix/payouts-cfg-gate-mismatches`,
+> commit `f0192f52c` (based on `origin/main` at `9d4dad21c` — the
+> stray local `5c39711ad` "per-call-site audit batch 3 closeout" commit
+> some earlier session left checked out was NOT origin, confirmed via
+> `git fetch origin` before branching, and deliberately not built on
+> top of):**
+> - `trustly.rs`: `ConnectorError` import moved out of its wrongful
+>   `#[cfg(feature = "payouts")]` gate (used unconditionally in core
+>   Payments/Refunds flows); `amount_converter` field + initializer
+>   un-gated for the same reason (every sibling connector — aci, adyen,
+>   volt, etc. — leaves this field unconditional).
+> - `gotyme_sanlam.rs`: identical `amount_converter` mis-gating, same
+>   fix. Also silently resolved that file's cascading "unused imports"
+>   errors (`Method`, `RequestBuilder`, `RequestContent`,
+>   `AmountConvertor`, `StringMajorUnit`, `StringMajorUnitForConnector`,
+>   `ResponseRouterData`, `utils`) — those were only unused as a
+>   side-effect of the mis-gated field, not a separate bug.
+> - `gotyme_sanlam/transformers.rs`: `TryFrom<(&PayoutsRouterData<F>,
+>   StringMajorUnit)> for GotymeSanlamPayoutTransferPayload` was missing
+>   `#[cfg(feature = "payouts")]` that its two sibling payout `TryFrom`
+>   impls immediately above and below it both have. Added it — this
+>   impl only handles `PayoutMethodData::BankTransfer` variants, no
+>   non-payouts caller exists.
+>
+> **🎯 NEXT SESSION: start here, in this order — every item below is
+> already root-caused, just not yet edited:**
+> 1. `crates/hyperswitch_connectors/src/connectors/trustly/transformers.rs`:
+>    (a) `trustly_serialize` (currently `#[cfg(feature = "payouts")]`,
+>    ~line 341) is called unconditionally from `generate_trustly_signature`
+>    (~line 390, no payouts gate) — un-gate `trustly_serialize` itself,
+>    it's general request-signing infra, not payout-specific, and
+>    `verify_webhook_signature` (~line 1170, also ungated) calls it too.
+>    (b) `RegisterAccountAttributes` struct def (~line 330) references
+>    `CountryAlpha2`, which is only imported under `#[cfg(feature =
+>    "payouts")]` — add the gate to this struct (its only caller, the
+>    `TryFrom<&TrustlyRouterData<&PayoutsRouterData<F>>>` impl at ~line
+>    483, is already payouts-gated, so this is a pure omission, not a
+>    design question). (c) `get_payout_webhook_event(webhook_method:
+>    TrustlyWebhookMethod) -> CustomResult<IncomingWebhookEvent,
+>    ConnectorError>` (~line 1137) needs `#[cfg(feature = "payouts")]`
+>    — it returns `IncomingWebhookEvent::PayoutSuccess/PayoutFailure/
+>    PayoutCancelled/PayoutReversed`, which are themselves
+>    payouts-gated variants in `api_models::webhooks`.
+> 2. `crates/hyperswitch_connectors/src/connectors/worldpayxml/transformers.rs`:
+>    `get_payout_webhook_event(status: LastEvent) ->
+>    IncomingWebhookEvent` (~line 4310) needs `#[cfg(feature =
+>    "payouts")]` — its only caller, `worldpayxml.rs:1443`, already has
+>    the gate; this function itself doesn't, same omission pattern as
+>    above.
+> 3. Same error family (E0412/E0433/E0599, misplaced payouts gates),
+>    not yet individually root-caused — read each against its own
+>    sibling patterns the same way as above, don't assume it's
+>    identical without checking: `truelayer/transformers.rs` (6 errors:
+>    `truelayer.rs:115:35`, `truelayer/transformers.rs:14:51,51:19,
+>    92:7,94:12,785:57,788:57`), `gotyme_sanlam.rs`/`transformers.rs`
+>    remaining errors past what's fixed above (`123:19` was the one
+>    fixed; check `127:34,132:13,132:44,149:13,149:44,169:17,201:17,
+>    216:41` too — `216:41` is `impl From<GotymeSanlamPayoutStatus> for
+>    PayoutStatus`, same missing-gate pattern, not yet applied),
+>    `envoy/transformers.rs` (2 errors), `cybersourcedecisionmanager.rs`
+>    + `transformers.rs` (2 errors each), `paypal/transformers.rs` (1),
+>    `adyenplatform.rs` (1), plus 4 errors each in
+>    `hyperswitch_domain_models/src/types.rs`,
+>    `hyperswitch_connectors/src/types.rs`, `api_models/src/lib.rs`,
+>    and 2 in `hyperswitch_connectors/src/utils.rs` — these last four
+>    are almost certainly downstream fallout from the connector-level
+>    fixes above (missing types cascading through re-exports), worth
+>    re-checking against the CI log fresh AFTER fixing 1–3, not before
+>    — don't spend time on them until the connector fixes are in, they
+>    may just disappear.
+> 4. Once all of the above are done, per the New-Clone Checklist and
+>    Patch Handoff Convention: `git fetch origin` and diff before
+>    building the handoff patch (rule 8), stay off `main` (rule 4), and
+>    hand over via `git format-patch` + `git am` (rule 7) — same as
+>    every prior entry in this file, no exception made for this task.
+>
+> **The full original CI log this task is based on is not itself
+> committed anywhere in this repo** — it was supplied directly to the
+> session as an attachment, not fetched from GitHub Actions. Next
+> session doesn't have it automatically; re-pull the job's log via
+> whatever channel is available (authenticated `gh run view --log`,
+> the Actions UI, or another direct hand-off) before assuming the exact
+> line numbers above still match — they were accurate against the
+> commit this session started from (`origin/main` @ `9d4dad21c`) and
+> will drift if anything else lands on `main` first.
+>
 > **🔴 NEW NEXT TASK (2026-09-12, latest) — Task 73/a, Finding #17's
 > storage-layer primitive is now built; the CI-blocked items in the
 > "Current full CI picture" box below remain genuinely open and

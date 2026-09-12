@@ -112,6 +112,43 @@
 > not silently fixed, per this file's own standing practice.** Real
 > current state, newest first:
 >
+> **🟡 euclid_wasm — router_env's own tokio/opentelemetry-otlp/
+> opentelemetry_sdk gated out of wasm32, candidate fix for the "Check
+> wasm build also failed, still unexamined" line a few bullets down
+> (2026-09-11, newest, same session as this correction).** Traced the
+> real dependency edges by reading `Cargo.toml` files directly (no
+> working `cargo tree` in this sandbox — same toolchain wall as
+> everywhere else): the earlier "LANDED" `common_utils` reqwest fix
+> a few bullets below is real and still correct, but it only closed
+> *one* of several unconditional paths into `mio`. The dominant one
+> turned out to be `router_env` itself — `api_models` (a direct
+> `euclid_wasm` dependency) depended on it with no target gate and no
+> `default-features = false`, so `router_env`'s *default* `actix_web`
+> feature (pulling `tokio`+`mio` via `actix-rt`) was live for the wasm
+> build, on top of `router_env`'s own always-on `tokio` +
+> `opentelemetry-otlp` (`grpc-tonic` → `tonic`/`hyper`) +
+> `opentelemetry_sdk` (`rt-tokio-current-thread`) — none `optional`,
+> none target-gated. `cards` (also reachable from `api_models`) already
+> had this exact problem fixed correctly (target-gated + `default-
+> features = false`) — `api_models` was the one crate that hadn't been
+> brought in line, and had in fact regressed once already (see
+> historical commit `a1b064b37`, which removed this same dependency
+> for this same reason; a later commit reintroduced one
+> `router_env::logger::error!` call in `payment_methods.rs` without
+> reintroducing the target gate that commit also should have added).
+> Three commits, branch `fix/euclid-wasm-router-env-tokio-mio`: (1)
+> re-remove the ungated `router_env` dep from `api_models` + its one
+> log call, mirroring `a1b064b37` exactly; (2) scope `api_models`'s own
+> optional `reqwest` dep out of wasm32 too (not currently reachable,
+> defense-in-depth); (3) gate `router_env`'s `tokio`/`opentelemetry-
+> otlp`/`opentelemetry_sdk` + its `logger::setup` module out of
+> wasm32 at the source. **Not compiled, not run against the actual
+> failing CI log for push `fdf15dcd8` below** — this is a well-
+> grounded candidate from reading real `Cargo.toml`/`.rs` files, not a
+> confirmed fix for that specific run. Full detail + patch file: search
+> "Task — euclid_wasm router_env/tokio/mio (the dominant path)" at the
+> end of the file.
+>
 > **✅ CI — `ci.yml`'s `storage-impl` job got its first real completed
 > run (2026-09-11, newest) — CONFIRMS the run happened; does NOT yet
 > reveal the compile error.** `cargo check -p storage_impl` on a
@@ -20077,5 +20114,172 @@ original `pg_kv_cache` migration.
 ```
 cd ~/B-PAY-backend
 git am ~/storage/downloads/0001-feat-storage-Finding-16-pg_kv_store-set_expire_at-ab.patch
+git push
+```
+
+### Task — euclid_wasm router_env/tokio/mio (the dominant path), full trace + fix (2026-09-11, new session)
+
+**Why this is a separate entry from the "LANDED" `common_utils` reqwest
+fix above:** that fix is real and still correct — verified again this
+session (`fa8f6ba64` is an ancestor of current `main`, confirmed with
+`git merge-base --is-ancestor`). But it only closed one of several
+independent, unconditional paths from `euclid_wasm` into `mio`
+(`mio` has no `wasm32-unknown-unknown` support, `wasi` only — the
+recurring root cause across every wasm-build entry in this file).
+Rebuilt the real dependency edges this session by reading `Cargo.toml`
+files directly, not `cargo tree` — no working `rustc`/`cargo` in this
+sandbox (`rustc --version` / `cargo --version`: `not found`; `apt-cache
+policy rustc` candidate still `1.75.0`, same toolchain wall as every
+other entry in this file).
+
+**Three paths traced, one by one:**
+
+1. **`common_utils` → `reqwest` — already gated, confirmed still
+   correct.** `crates/common_utils/Cargo.toml` scopes `reqwest` under
+   `[target.'cfg(not(target_arch = "wasm32"))'.dependencies]` with a
+   comment explaining why, and gives `request.rs`'s `Form` a wasm32
+   stand-in. Unchanged, still correct.
+
+2. **`common_utils` → `tokio` directly (`Cargo.toml` line 63) — still
+   ungated, but confirmed NOT reachable for `euclid_wasm`'s actual
+   build.** `tokio = { version = "1.48.0", ..., optional = true }`,
+   only turned on by the `"signals"` feature
+   (`signals = ["dep:signal-hook-tokio", "dep:signal-hook", "dep:tokio",
+   "dep:router_env", "dep:futures"]`). Checked what feature set
+   `euclid_wasm`'s build actually requests of `common_utils`: `api_models`'s
+   `v1` feature only turns on `common_utils/v1` — nothing in `euclid_wasm`'s
+   dependency chain (`api_models`, `cards`, `euclid`, `kgraph_utils`,
+   `connector_configs`, etc., with features `dummy_connector,v1,payouts`)
+   requests `common_utils/signals`. Left as-is this pass — real but
+   currently dormant, and touching an `optional`+feature-gated dependency
+   that already works correctly for every other target carries more risk
+   than benefit without a stronger reason. Flagged here for whoever picks
+   this up next, not fixed.
+
+3. **`api_models`/`cards` → `router_env` → `tokio` + `opentelemetry-otlp`
+   (`grpc-tonic`) + `opentelemetry_sdk` (`rt-tokio-current-thread`), plus
+   `router_env`'s own *default* `actix_web` feature (→ `tokio`+`mio` via
+   `actix-rt`) — THE DOMINANT PATH, now fixed (candidate).** `router_env`
+   is `api_models`'s and `cards`'s shared logging/tracing crate.
+   `crates/cards/Cargo.toml` already had this exactly right:
+   ```toml
+   [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+   router_env = { version = "0.1.0", path = "../router_env", features = [...], default-features = false }
+   ```
+   `crates/api_models/Cargo.toml` did not — a plain, unconditional
+   ```toml
+   router_env = { version = "0.1.0", path = "../router_env" }
+   ```
+   with neither a target gate nor `default-features = false`. Two
+   distinct consequences of that single line, both real:
+   - `router_env`'s `default = ["actix_web", "payouts"]` was therefore
+     live for any build where `api_models` is the only crate requesting
+     `router_env` — which is exactly `euclid_wasm`'s build (only
+     `api_models` depends on `router_env` in that dependency subgraph).
+     `actix_web` feature → `actix-web` + `tracing-actix-web` + `uuid/v7`,
+     and `actix-web` itself needs a full `tokio`+`mio` reactor via
+     `actix-rt` — unrelated to and independent of the two crates below.
+   - `router_env`'s own plain `[dependencies]` table had
+     `tokio = { version = "1.48.0" }` (no `optional`),
+     `opentelemetry-otlp = { ..., features = ["grpc-tonic", ...] }`
+     (pulls `tonic`/`hyper`), and
+     `opentelemetry_sdk = { ..., features = ["rt-tokio-current-thread", ...] }`
+     — none `optional`, none target-gated, all three pulling `mio`.
+
+   **Confirmed these three are only used by `logger/setup.rs`** (grep
+   for `opentelemetry_sdk`/`opentelemetry_otlp` across
+   `crates/router_env/src` returns only that file; the only other
+   `tokio::` hits are `#[tokio::test]`/`.await` in `request_id.rs`'s
+   test module). **Confirmed `setup()`/`TelemetryGuard` are only ever
+   called from `crates/router/src/bin/router.rs`,
+   `crates/router/src/bin/scheduler.rs`, and
+   `crates/drainer/src/main.rs`** (grep for `router_env::setup`/
+   `logger::setup` across every crate's `src`) — none of which are in
+   `euclid_wasm`'s dependency graph. **Confirmed `api_models`'s only use
+   of `router_env` at all is one call**, `router_env::logger::error!`
+   inside an `.inspect_err()` in `payment_methods.rs`'s Apple Pay
+   `card_type` parsing — a pure logging side effect, already followed
+   by `.ok()` regardless of whether the log fires. **Also confirmed
+   `cards`'s only use of `router_env` is `logger`/`env::Env`/
+   `env::which`** (`validate.rs`) — none of which need the telemetry
+   pipeline either.
+
+   **This exact problem already happened once and was fixed once:**
+   commit `a1b064b37` ("fix(wasm): Removing router env dependency from
+   api models crate", `#11177`) removed `api_models`'s `router_env`
+   dependency and its one `logger::error!` call in `customers.rs` for
+   this same reason. It regressed: a later change added a *second*
+   `router_env::logger::error!` call, this time in `payment_methods.rs`,
+   reintroducing the same unconditional dependency without
+   reintroducing any gate.
+
+**Fix — three commits on branch `fix/euclid-wasm-router-env-tokio-mio`,
+based on current `main` (`2ad14aa6a`, drift-checked via `git fetch
+origin` immediately before starting — `origin/main` had not moved):**
+
+1. `fix(wasm): remove ungated router_env dependency from api_models
+   (regression of #11177)` — removes the dependency line from
+   `crates/api_models/Cargo.toml` and the one `use router_env::logger;`
+   + `.inspect_err(...)` log call in `payment_methods.rs`, mirroring
+   `a1b064b37` exactly (drop the log, keep `.ok()`).
+2. `fix(wasm): scope api_models's optional reqwest dep out of wasm32
+   (defense-in-depth)` — `api_models`'s own `reqwest` is `optional`,
+   only turned on by its own `"errors"`/`"v2"` features (neither in
+   `euclid_wasm`'s current feature set), so not currently reachable —
+   moved to a `[target.'cfg(not(target_arch = "wasm32"))'.dependencies]`
+   table anyway, same pattern as `common_utils`/`cards`, so a future
+   feature addition to `euclid_wasm` can't silently reopen this path.
+3. `fix(router_env): gate tokio/opentelemetry-otlp/opentelemetry_sdk
+   out of wasm32 (the dominant path)` — moves all three to a
+   `[target.'cfg(not(target_arch = "wasm32"))'.dependencies]` table in
+   `crates/router_env/Cargo.toml`, and gates `mod setup;`/`pub use
+   setup::{setup, TelemetryGuard};` in `logger.rs` behind
+   `#[cfg(not(target_arch = "wasm32"))]` (the module that's the only
+   consumer of those three deps). `opentelemetry` (bare) and
+   `opentelemetry-aws` are left alone — neither requests a tokio-runtime
+   feature.
+
+**Not done, still open:**
+- **Not compiled, not run against a real `wasm-check` Actions log.**
+  Same toolchain wall as every entry in this file. This needs `cargo
+  check -p router_env -p api_models -p cards -p euclid_wasm --target
+  wasm32-unknown-unknown`, or a real CI run, before it's trusted
+  further — exactly the same caveat the earlier "LANDED" reqwest fix
+  carried until it was confirmed on `origin/main`.
+- **Not matched against the specific failing run mentioned elsewhere in
+  this file** (`push fdf15dcd8`, "`Check wasm build` also failed, still
+  unexamined") — this is a well-grounded candidate root cause from
+  reading real code, not a confirmed fix for that specific run's actual
+  compiler output, which this sandbox still can't fetch (same `403
+  Must have admin rights to Repository` auth wall noted elsewhere for
+  that run's job logs).
+- **`common_utils`'s ungated `tokio` (item 2 above) left as-is** —
+  real but not currently reachable; flagged, not fixed.
+- **`Cargo.lock` not regenerated** — `api_models` losing a dependency
+  and `router_env` moving three would ordinarily need a `cargo update
+  -p api_models -p router_env` (or a full `cargo check`) to reflect in
+  `Cargo.lock`; not run, same toolchain wall. Whoever has real `cargo`
+  next should run that as part of verifying this compiles at all.
+- Everything else already open elsewhere in this file is unchanged by
+  this entry (Finding #16 not wired into `ephemeral_key.rs`; `check-msrv`/
+  spell-check statuses; the `storage_impl` compile error text; etc.).
+
+**Per the Patch Handoff Convention: four commits (three fix commits +
+this doc entry), handed over as ONE combined patch file, per explicit
+product-owner request this session** — `git format-patch origin/main
+--stdout` into a single file rather than one file per commit; all four
+`From <sha>` sections land in that one file in order, and `git am` on
+a single multi-commit mbox file applies each commit in sequence the
+same as it would across several separate files (rule 6 still doesn't
+apply here — no prior unapplied patch on this specific thread; the
+earlier `wasm-mio-fix.patch` was already confirmed landed on
+`origin/main` before this session started). Rule 8 drift check redone
+immediately before regenerating this combined file: `git fetch origin`
+showed `origin/main` still unchanged at `2ad14aa6a` — no drift.**
+
+**Exact command(s) for the product owner:**
+```
+cd ~/B-PAY-backend
+git am ~/storage/downloads/0001-euclid-wasm-router_env-tokio-mio-fix-combined.patch
 git push
 ```

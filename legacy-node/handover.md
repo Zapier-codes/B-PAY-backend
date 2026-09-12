@@ -10426,6 +10426,37 @@ repo's handover.md (including mavins-web's):**
    and would have caught this exact failure before the product owner
    did.
 
+9. **⭐ STARRED — a session working on CI failures always hands over
+   the exact `gh run view --log-failed` command (with the exact save
+   path), never just a description of what's failing — MANDATORY,
+   effective 2026-09-12, product-owner instruction.** Job/step
+   *status* (pass/fail/cancelled per job) is retrievable unauthenticated
+   from this sandbox (`GET /repos/.../actions/runs/{id}/jobs`, `core`
+   rate limit only) and a session should still pull and report that
+   itself rather than asking the product owner for it. The actual
+   compiler/tool *output* inside a failed step is a different story:
+   `GET /repos/.../actions/jobs/{id}/logs` reliably 403s unauthenticated
+   from this sandbox (two different 403 causes on file already —
+   `Must have admin rights to Repository` one session, a rate-limit
+   body another — same practical result both times: no session has
+   ever gotten raw log text this way). A session hitting this wall
+   does **not** stop at reporting the block — it hands over the
+   retrieval command itself, every time, so the product owner can run
+   it once and paste the result back:
+   ```
+   gh run view --repo Zapier-codes/B-Pay-backend --log-failed \
+     > ~/storage/downloads/ci-errors-latest.txt
+   ```
+   (swap in an explicit run ID in place of the bare `gh run view` if a
+   specific historical run — not the latest — is what needs
+   inspecting, e.g. `gh run view 34678839780 --repo ... --log-failed`).
+   `--log-failed` scopes the dump to only the steps that actually
+   failed, across every failing job in the run at once — one file,
+   one paste, no picking one job at a time. This isn't a one-off
+   instruction for whichever session first needed it; it's a standing
+   requirement for CI-triage work generally, same status as rules 1–8
+   above.
+
 ---
 
 ## DB-Ops Handoff Process — second environment, MANDATORY whenever a live Supabase/DB command is needed (effective 2026-09-08)
@@ -20685,3 +20716,61 @@ before this entry** — `git fetch origin` showed `origin/main` unchanged at
 therefore still unapplied, so per rule 6 this session's work goes on the
 same branch/base rather than a second independent one — see the combined
 patch series handed over below, not a new standalone patch.
+
+## Task — Nix CI job fixed (missing Nix + om installs), new standing rule 9 added for CI log retrieval (2026-09-12)
+
+**Trigger:** product owner asked to move to the next standalone CI failure
+while the previous patch's real run is pending, and to make "hand over the
+`gh run view --log-failed` command" a standing rule rather than something
+each session has to be asked for.
+
+**`Nix CI (x86_64-linux, ubuntu-latest)` — fixed, not yet confirmed by a
+real run.** Root cause found by re-reading the same pasted `--log-failed`
+dump this file's previous entry already used (no new log needed): the
+job's only real line was `om: command not found`, exit 127. Reading
+`ci.yml`'s `nix-check` job end to end: it checks out, runs
+`magic-nix-cache-action` (a *cache* action, doesn't install Nix), then
+runs `om ci run` directly — no step anywhere installs Nix itself, and no
+step installs `om` (omnix) either. Checked `flake.nix` and the repo root
+for an `om.yaml` in case `om` needed repo-specific config first: none
+found, and the flake (flake-parts + `nixos-unified`, same author as
+omnix) doesn't need one for `ci run` to work per omnix's own docs.
+**Fix applied:** added `DeterminateSystems/nix-installer-action@main`
+before the existing cache step (matches the well-known standard pairing
+of those two actions), and changed the bare `om ci run ...` invocation to
+`nix run github:juspay/omnix -- ci run ...` — the documented no-install
+way to run omnix, avoiding a separate version-pinned install step for
+`om` itself. **Not confirmed against a real run** — same reviewed-by-
+reading flag as this session's other fixes; no working `nix`/`om` in this
+sandbox to test against either.
+
+**⚠️ Rule 8 actually fired this session, worth recording as a positive
+case rather than only ever showing up in the "missed it" write-ups
+elsewhere in this file:** `git fetch origin` before generating this
+patch found `origin/main` had moved to `094fb3b75` — the product owner
+had already run `git am` + `git push` on both patches from the previous
+two entries in the time since. Confirmed the local `d95c40985` commit was
+content-identical to the new `origin/main` HEAD (`git diff HEAD
+origin/main` on every file outside this session's own new edits came back
+empty — expected, since `git am` re-hashes but doesn't change content),
+then rebuilt this session's actual new work (the two files above) on a
+fresh branch off the real `origin/main` per rule 8.3, rather than handing
+over a patch built on the now-stale local base. Patch below is verified
+to actually be new-work-only, not a rebuild of already-landed changes.
+
+**New standing rule added:** Patch Handoff Convention rule 9 (search
+"a session working on CI failures always hands over") — every session
+doing CI-failure triage owes the product owner the literal `gh run view
+--log-failed` command with its save path, every time, not just when
+explicitly asked. Added because this was asked for as a one-off twice in
+a row before being asked to become a rule; recording it as one now so a
+third session doesn't need to be asked again.
+
+**Not done, still open (unchanged from last entry):** the V2
+`get_pg_kv_store` design gap, the pre-existing typos, and now also this
+session's own Nix fix — three real, unconfirmed-by-a-real-run items
+waiting on the next `gh run view --log-failed` pull.
+
+**Per the Patch Handoff Convention, rule 8: drift-checked immediately
+before this entry, and acted on** — see the rule-8 paragraph above; this
+is the fetch that found the drift, not a separate one.

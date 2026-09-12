@@ -584,7 +584,24 @@ jobs:
       # same inputs restores instead of rebuilding from scratch -- the same
       # "don't redo already-done work" goal as the cargo/sccache caching
       # above, for the one job here `cargo`-based caching doesn't cover.
+      #
+      # Nix itself has to actually be on the runner before this step (it
+      # only caches, it doesn't install) -- confirmed against a real
+      # failed run (2026-09-12) that it wasn't: the job's real error was
+      # `om: command not found` (exit 127) a few steps down, and neither
+      # Nix nor `om` had an install step anywhere in this job.
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@main
+
       - name: Cache Nix store
         uses: DeterminateSystems/magic-nix-cache-action@v9
 
-      - run: om ci run --extra-access-tokens ${{ secrets.GITHUB_TOKEN }} --systems "${{ matrix.system }}"
+      # Invoked via `nix run` rather than a separate install step for
+      # `om` itself: omnix's own docs document this as the standard
+      # no-install way to run it, and this flake (flake-parts +
+      # nixos-unified, from the same author as omnix) needs no extra
+      # `om.yaml` for `ci run` to work. NOT confirmed against a real
+      # run yet -- flagged reviewed-by-reading only, same as the other
+      # fixes in this session (no working `om`/`nix` in this sandbox to
+      # test against either; see legacy-node/handover.md).
+      - run: nix run github:juspay/omnix -- ci run --extra-access-tokens ${{ secrets.GITHUB_TOKEN }} --systems "${{ matrix.system }}"

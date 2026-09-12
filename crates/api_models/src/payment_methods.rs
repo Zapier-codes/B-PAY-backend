@@ -20,7 +20,6 @@ use common_utils::{
 };
 use error_stack::ResultExt;
 use hyperswitch_masking::PeekInterface;
-use router_env::logger;
 use rust_decimal::{
     prelude::{FromPrimitive, ToPrimitive},
     Decimal,
@@ -1958,17 +1957,16 @@ impl TryFrom<PaymentMethodDataWalletInfo> for Box<payments::ApplepayPaymentMetho
             pm_type: card_type.clone(),
             // If `card_type` doesn't parse into a known `CardType` variant, it is treated as
             // `None` instead of erroring.
-            card_type: card_type
-                .to_uppercase()
-                .parse::<api_enums::CardType>()
-                .inspect_err(|error| {
-                    logger::error!(
-                        ?error,
-                        unparsed_card_type = %card_type,
-                        "Received an unrecognized card_type value from Apple Pay; defaulting to None"
-                    )
-                })
-                .ok(),
+            // If `card_type` doesn't parse into a known `CardType` variant, it is silently
+            // treated as `None` (see the comment on the field above). This crate has no
+            // logging dependency (`router_env` was deliberately removed here, mirroring
+            // #11177 for the same reason: nothing else in `api_models` needs it, and it
+            // pulls `actix-web`/`opentelemetry-otlp`/`tokio` into every downstream consumer,
+            // including the wasm32 `euclid_wasm` build, which cannot support them), so this
+            // parse failure is not logged. If this ever needs to be observable again, log it
+            // at the call site (which does have a real logger) instead of re-adding this
+            // dependency here.
+            card_type: card_type.to_uppercase().parse::<api_enums::CardType>().ok(),
             card_exp_month: item.card_exp_month,
             card_exp_year: item.card_exp_year,
             auth_code: item.auth_code,

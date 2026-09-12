@@ -20314,3 +20314,27 @@ claims for them:
 No new findings from these two; recording them as **audited, no gap** so
 they don't get re-walked from scratch next session. ~58 of the ~60
 remaining sites are still unwalked.
+
+## Task 73/a — batching convention set by product owner (2026-09-12): audit 10 call sites per session, documented each time
+
+**Standing instruction, effective immediately:** future sessions working the
+per-call-site audit (the ~58-60 of the 63/102 real Redis call sites still
+unwalked as of the last status entry, search "still unwalked") should read
+and check **10 files per session**, not more, not fewer, and write up that
+batch's findings in this file before stopping — same format prior passes
+already use (running total read / remaining, any new `pg_kv_store.rs`/
+`pg_lock.rs` gaps found, "not done / still open" section, Patch Handoff
+block). This replaces the earlier ad hoc pace (2, 4, 5, 6, or 9 files per
+pass depending on the session) with a fixed batch size going forward.
+
+Reason this is being recorded here rather than left as a one-off spoken
+instruction: this file is what the *next* session reads, not this
+conversation — same rationale as every other standing rule in the New-Clone
+Checklist above.
+
+Does not change anything else about how a batch is conducted: still
+read-only (no wiring into `RedisStore` or real call sites until the
+toolchain-or-audit-complete gate in the New-Clone Checklist is actually
+met), still needs a rule-8 drift check (`git fetch origin`) before handing
+off, still one patch via `git format-patch` for the product owner to
+`git am` + push — never pushed directly by the session itself.

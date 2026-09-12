@@ -189,7 +189,7 @@ pub trait StorageInterface:
     /// site shares the master pool regardless of whether `deja` is on or
     /// off — no compile-time trip wire needed, because there's no longer a
     /// hidden type mismatch for one to catch.
-    fn get_pg_kv_store(&self) -> PgKvStore;
+    fn get_pg_kv_store(&self) -> CustomResult<PgKvStore, StorageError>;
     fn set_key_manager_state(&mut self, key_manager_state: KeyManagerState);
 }
 
@@ -303,11 +303,11 @@ impl StorageInterface for Store {
     // instead of opening a second one; only the type name it targeted was
     // wrong. Not recompiled locally (see legacy-node/handover.md
     // New-Clone Checklist) -- reviewed by reading only.
-    fn get_pg_kv_store(&self) -> PgKvStore {
-        PgKvStore::new(
+    fn get_pg_kv_store(&self) -> CustomResult<PgKvStore, StorageError> {
+        Ok(PgKvStore::new(
             self.get_master_pool().pg_pool.clone(),
             consts::PG_KV_STORE_DEFAULT_TTL_IN_SECONDS,
-        )
+        ))
     }
 
     fn get_subscription_store(
@@ -352,15 +352,19 @@ impl StorageInterface for MockDb {
     fn get_cache_store(&self) -> Box<dyn RedisConnInterface + Send + Sync + 'static> {
         Box::new(self.clone())
     }
-    fn get_pg_kv_store(&self) -> PgKvStore {
+    fn get_pg_kv_store(&self) -> CustomResult<PgKvStore, StorageError> {
         // MockDb has no real Postgres pool to build one from (it isn't a
-        // `DatabaseStore`), so this is intentionally not implemented rather
-        // than silently faked. Tests that need `PgKvStore` behaviour should
-        // exercise a real `Store` (e.g. `test_transaction`), same pattern
-        // as any other real-Postgres-only path this codebase doesn't mock.
-        unimplemented!(
+        // `DatabaseStore`), so a `PgKvStore` genuinely cannot be constructed
+        // here. Propagate `StorageError::MockDbError` instead of panicking,
+        // same convention every other MockDb-unsupported operation in this
+        // codebase already follows (see e.g. `db/fraud_check.rs`,
+        // `db/payment_link.rs`, `db/dynamic_routing_stats.rs`). Callers get
+        // a typed, catchable error and can fail closed instead of the
+        // process aborting. Tests that need real `PgKvStore` behaviour
+        // should exercise a real `Store` (e.g. `test_transaction`).
+        Err(StorageError::MockDbError).attach_printable(
             "PgKvStore is not available on MockDb — no real Postgres pool backs it; \
-             tests needing it should use a real `Store` (test_transaction)"
+             tests needing it should use a real `Store` (test_transaction)",
         )
     }
     fn get_subscription_store(

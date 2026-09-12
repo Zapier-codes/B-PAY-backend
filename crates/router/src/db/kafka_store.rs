@@ -3685,7 +3685,7 @@ impl StorageInterface for KafkaStore {
     // working rustc >=1.85 in this sandbox (see legacy-node/handover.md
     // New-Clone Checklist). Flag as reviewed-by-reading only until a
     // session with a real toolchain confirms.
-    fn get_pg_kv_store(&self) -> PgKvStore {
+    fn get_pg_kv_store(&self) -> CustomResult<PgKvStore, errors::StorageError> {
         self.diesel_store.get_pg_kv_store()
     }
 

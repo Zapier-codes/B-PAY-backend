@@ -111,7 +111,7 @@ async fn read_counter(
 
     match state
         .store
-        .get_pg_kv_store()
+        .get_pg_kv_store()?
         .get_hash_field::<u64>(&key, COUNTER_FIELD)
         .await
     {
@@ -299,7 +299,7 @@ async fn write_counter(
     state: &SessionState,
     rollout_scope: &str,
 ) -> error_stack::Result<i64, storage_impl::errors::StorageError> {
-    let store = state.store.get_pg_kv_store();
+    let store = state.store.get_pg_kv_store()?;
     let key = counter_key(rollout_scope);
 
     let new_value = store
@@ -350,6 +350,8 @@ pub async fn reset(state: SessionState, listed_key: String) -> errors::RouterRes
     let rows_deleted = state
         .store
         .get_pg_kv_store()
+        .change_context(errors::ApiErrorResponse::InternalServerError)
+        .attach_printable("Failed to delete the UCS kill switch counter")?
         .delete_hash_field(&counter_key(rollout_scope), COUNTER_FIELD)
         .await
         .change_context(errors::ApiErrorResponse::InternalServerError)

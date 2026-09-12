@@ -68,6 +68,26 @@ fi
 # List of cargo commands that will be executed
 all_commands=()
 
+# Crates that expose their own `fred`/`redis-rs` selector features (which just
+# forward to `redis_interface/fred` / `redis_interface/redis-rs`) have a hard
+# (non-optional) dependency on `redis_interface` with its own default features
+# turned off. `redis_interface` requires exactly one of `fred`/`redis-rs` to be
+# active -- a real `compile_error!` in `redis_interface/src/lib.rs` otherwise --
+# so any *other* feature of these crates tested in isolation below still needs
+# one of the two as a baseline, the same way `v1` is already unconditionally
+# appended. Detected generically here (crates with both `fred` and `redis-rs`
+# in their feature list) rather than hardcoded to one crate name, so this
+# keeps working if another crate adopts the same redis-backend-selector
+# pattern later.
+crates_requiring_redis_backend="$(
+  jq --monochrome-output --raw-output \
+    --argjson crates_with_features "${crates_with_features}" \
+    --null-input \
+    '$crates_with_features[]
+    | select( ( IN("fred"; .features[]) ) and ( IN("redis-rs"; .features[]) ) )
+    | .name'
+)"
+
 # Process the metadata to generate the cargo check commands for crates which have v1 features
 # We need to always have the v1 feature with each feature
 # This is because, no crate should be run without any features
@@ -83,6 +103,13 @@ crates_with_v1_feature="$(
     | "\(.name) \(.features)" # Print out package name and features separated by space'
 )"
 while IFS=' ' read -r crate features && [[ -n "${crate}" && -n "${features}" ]]; do
+  # See `crates_requiring_redis_backend` above: append the `redis-rs`
+  # baseline for crates that need one of `fred`/`redis-rs` active to
+  # compile at all, unless the feature under test already is one of them.
+  if grep --fixed-strings --line-regexp --quiet "${crate}" <<< "${crates_requiring_redis_backend}" \
+    && [[ "${features}" != *"redis-rs"* && "${features}" != *"fred"* ]]; then
+    features="${features},redis-rs"
+  fi
   command="cargo check --all-targets --package \"${crate}\" --no-default-features --features \"${features}\""
   all_commands+=("$command")
 done <<< "${crates_with_v1_feature}"

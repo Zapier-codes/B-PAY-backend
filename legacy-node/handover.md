@@ -20025,3 +20025,57 @@ git add legacy-node/handover.md
 git commit -m "docs(handover): real first-pass TTL/atomicity audit -- interface parity + 3 real callers checked; set_expire_at gap found, not yet fixed"
 git push
 ```
+
+### Storage — Finding #16: `pg_kv_store::set_expire_at`, the absolute-timestamp expiry gap the prior audit entry flagged (candidate, unverified — same toolchain wall) (2026-09-11, same session, continued)
+
+Fixes the one real gap the previous "real first pass" audit entry surfaced and
+left open: `pg_kv_store.rs` had no absolute-Unix-timestamp expiry method,
+while `db/ephemeral_key.rs`'s `create_ephemeral_key` calls `redis_interface`'s
+`set_expire_at` twice — once for `secret_key`, once for `id_key` — with the
+*same* precomputed `expire_at` instant, so both keys expire together.
+
+**What was added, additive-only, same pattern as every other Finding in this
+file (#6-#15):** `PgKvStore::set_expire_at(key, timestamp: i64)`, an
+`EXPIREAT` analog. Two things worth flagging explicitly rather than leaving
+implicit:
+- It's scoped to `WHERE cache_key = $1` (every field row under that key), not
+  `field = ''`. `ephemeral_key.rs` writes its value under a named hash field
+  (`"ephkey"`), not the plain-key row every other expiry method in this file
+  targets — a `field = ''`-scoped version would compile, run without error,
+  and silently do nothing to the row that actually holds the data. Caught by
+  re-reading the real caller (`ephemeral_key.rs:90-138`) before writing the
+  SQL, not assumed from the method's own name.
+- It takes one absolute instant, not two independent relative-seconds calls —
+  the specific thing the previous audit entry flagged as a real (if small)
+  behavioural difference from current Redis semantics: two separate
+  `now() + Duration::seconds(n)` calls would drift apart by whatever wall-clock
+  time elapses between them.
+
+**Not done, still open:**
+- **Not wired into `ephemeral_key.rs` itself.** Same as every other Finding
+  in this file — Finding #12's `kill_switch.rs` wiring is still the one
+  precedent for actually wiring a Finding into its real call site; this one
+  is additive-only, same as #6-#11 and #13-#15.
+- **Not compiled.** Same toolchain wall as every entry above: no `rustc`
+  ≥1.85 reachable in this sandbox (checked again this session — apt's
+  candidate is still 1.75.0, `static.rust-lang.org` still returns
+  `host_not_allowed`). Reviewed by reading against the real caller and the
+  existing methods' own SQL patterns, not proven by a build.
+- The remaining ~60 of the 63/102 call sites from the per-call-site audit are
+  still unwalked — this is one gap the interface-parity pass surfaced, not a
+  continuation of walking the rest of them.
+
+**Per the Patch Handoff Convention, rule 8: drift-checked first** — `git fetch
+origin` before generating this patch showed local `main` and `origin/main`
+both at `44ddc9088` (the previous entry's applied commit), unmoved, so this is
+a fresh commit on top of it, not a stacked/unapplied base. **Per rule 7, only
+the Patch Handoff block is owed this time** — no `db/migrations/` file
+touched; the `expires_at` column this reuses already exists from the
+original `pg_kv_cache` migration.
+
+**Exact command(s) for the product owner:**
+```
+cd ~/B-PAY-backend
+git am ~/storage/downloads/0001-feat-storage-Finding-16-pg_kv_store-set_expire_at-ab.patch
+git push
+```

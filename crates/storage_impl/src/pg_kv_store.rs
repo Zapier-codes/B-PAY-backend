@@ -60,6 +60,15 @@
 //!   (all three overwrite). Not wired into either real call site, not
 //!   compiled — same caveats as every other finding above.
 //!
+//! - **Finding #16 — fixed this session (per-call-site audit, real first
+//!   pass), same additive pattern as #6–#12.** `set_expire_at`, an
+//!   absolute-Unix-timestamp expiry (Redis `EXPIREAT` analog) for
+//!   `db/ephemeral_key.rs`'s two same-instant `set_expire_at` calls, which
+//!   every existing relative-`expiry_seconds` method here had no way to
+//!   serve without reintroducing clock drift between the two calls. Not
+//!   wired into the real call site, not compiled — same caveats as every
+//!   other finding above.
+//!
 //! Not done, left for the per-call-site review Task 73/a explicitly calls
 //! out as separate follow-up work:
 //! - **Expiry sweep — fixed this session, via `pg_cron`, not the
@@ -92,7 +101,12 @@
 //!   of an in-memory store) — real for high-QPS call sites, not assumed
 //!   away here.
 //! - Per-call-site TTL/atomicity audit (Task 73/a's own explicit next step
-//!   for all 63 files) has not started.
+//!   for all 63 files): a real first pass has happened (interface-level
+//!   parity check plus 3 real callers checked against it — see
+//!   `legacy-node/handover.md`'s 2026-09-11 "real first pass" entry for the
+//!   write-up), not all 63/102 call sites individually. Finding #16 above
+//!   came out of that pass; the rest of the ~60 remaining sites are still
+//!   unwalked.
 //! - This module has not been compiled against the real workspace yet —
 //!   a real attempt was made this session (this sandbox can reach
 //!   `crates.io`), and hit a diagnosed blocker: the workspace pins
@@ -532,6 +546,69 @@ impl PgKvStore {
         )
         .bind::<Text, _>(key.to_owned())
         .bind::<diesel::sql_types::Binary, _>(bytes)
+        .bind::<diesel::sql_types::Timestamp, _>(expires_at)
+        .execute_async(&*conn)
+        .await
+        .map_err(StorageError::from)?;
+
+        Ok(())
+    }
+
+    /// Finding #16 (per-call-site audit, real first pass, 2026-09-11):
+    /// analog of `redis_interface::set_expire_at` — sets an *absolute*
+    /// Unix-timestamp expiry on an already-written key, same as Redis
+    /// `EXPIREAT`. Distinct from every other expiry method in this file,
+    /// which all take a *relative* `expiry_seconds`/duration computed from
+    /// "now" at the time of the call — no method here could take an
+    /// absolute instant before this one.
+    ///
+    /// Concrete need: `db/ephemeral_key.rs`'s `create_ephemeral_key`
+    /// computes one `expire_at` timestamp, then calls the Redis analog of
+    /// this method twice — once for `secret_key`, once for `id_key` — so
+    /// both keys share the exact same expiry instant. Two separate
+    /// relative-seconds calls (`now() + Duration::seconds(n)`), one per
+    /// key, would each recompute "now" at the moment of *that* call and so
+    /// drift apart by however long elapses between the two calls — a real,
+    /// if small, behavioural difference from the current Redis semantics.
+    /// This method preserves the "same instant, applied twice" property
+    /// instead of reintroducing that drift.
+    ///
+    /// Scoped to every field row under `cache_key`, not just `field = ''`:
+    /// Redis's `EXPIREAT` sets the TTL on the whole key regardless of which
+    /// hash fields live under it, and `ephemeral_key.rs` itself writes its
+    /// value under a named hash field (`"ephkey"`), not the plain-key
+    /// `field = ''` row every other expiry method here targets — a
+    /// `field = ''`-scoped version of this method would silently update a
+    /// row that was never written and leave the real data's `expires_at`
+    /// untouched, which is worse than not having the method at all.
+    ///
+    /// Not wired into `ephemeral_key.rs` this pass — that's a separate
+    /// wiring task, same as every other Finding in this file (see Finding
+    /// #12's own kill_switch.rs wiring as the one precedent so far). Not
+    /// compiled — same toolchain wall as everything else here.
+    pub async fn set_expire_at(
+        &self,
+        key: &str,
+        timestamp: i64,
+    ) -> error_stack::Result<(), StorageError> {
+        let conn = self
+            .pool
+            .get()
+            .await
+            .change_context(StorageError::DatabaseConnectionError)?;
+
+        let odt = time::OffsetDateTime::from_unix_timestamp(timestamp).map_err(|_| {
+            report!(StorageError::InvalidDataFormat(format!(
+                "invalid unix timestamp passed to set_expire_at: {timestamp}"
+            )))
+        })?;
+        let expires_at = PrimitiveDateTime::new(odt.date(), odt.time());
+
+        sql_query(
+            "UPDATE pg_kv_cache SET expires_at = $2, updated_at = now() \
+             WHERE cache_key = $1",
+        )
+        .bind::<Text, _>(key.to_owned())
         .bind::<diesel::sql_types::Timestamp, _>(expires_at)
         .execute_async(&*conn)
         .await

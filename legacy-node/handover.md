@@ -20570,3 +20570,118 @@ gh run view --repo Zapier-codes/B-Pay-backend --log-failed \
 ```
 Either file can be pasted back into a session for actual triage —
 that's the input this task has been blocked on all session.
+
+## Task — full CI failure triage from a real `--log-failed` dump, 3 real fixes applied, 2 real gaps left open (2026-09-12)
+
+**Trigger:** product owner ran the `gh run view --log-failed` command from the
+previous entry themselves and pasted the resulting ~324KB / 2373-line log
+back in. This is the first session that's had the actual compiler/tool
+output in hand rather than just run/job status — worth recording in full,
+since several "still not confirmed" lines elsewhere in this file are
+resolved by it.
+
+**Per-job root cause, all read directly from the pasted log (tab-separated
+`job\tstep\ttimestamped-line` format from `gh run view --log-failed`):**
+
+1. **`cargo check -p storage_impl (pinned 1.85.0)`** — **fixed, not yet
+   confirmed by a real run.** Root cause had nothing to do with
+   `pg_kv_store.rs`/`pg_lock.rs`/`pg_pub_sub.rs`: the job's `cargo check`
+   step failed in `grpc-api-types`' build script with `Could not find
+   protoc` (plus an unrelated `axum: expected 0.8.3, found 0.7.9` warning
+   from the same build script, printed but not itself fatal). This job
+   (added for Task 73/a) never had an `Install Protoc` step; the `test`
+   job a few hundred lines up in the same `ci.yml` does
+   (`arduino/setup-protoc@v3`) and doesn't hit this. **Fix applied:** added
+   the identical step to `storage-impl`, right after the Rust toolchain
+   install. Pure CI-config change, nothing to compile-check.
+
+2. **`cargo clippy -p storage_impl` (part of the same job, `continue-on-
+   error: true` so it didn't block the job on its own, but was flagged in
+   the log too)** — **fixed, flagged reviewed-by-reading only, per this
+   file's standing rule for uncompiled `.rs` changes.** All 7
+   `unused_qualifications` errors (`-D warnings` promotes it) sit on the
+   sole field of 7 different single-field `#[derive(QueryableByName)]`
+   structs across `pg_kv_store.rs` (5), `pg_lock.rs` (1), `pg_pub_sub.rs`
+   (1) — `RawValueRow`, `InsertedRow`, `TtlRow`, `IncrementedRow`,
+   `ExistsRow`, `AcquiredRow`, `InsertedPayloadRow`. This is Diesel's
+   `QueryableByName` derive fully-qualifying its own generated
+   `sql_type` path and rustc misattributing the resulting warning back to
+   the field's own span — not a real qualification any of these sessions
+   wrote. Fixed with a narrow `#[allow(unused_qualifications)]` directly
+   on each struct (with an inline comment explaining why, so a future
+   session doesn't "clean it up" back to a failure) rather than a
+   crate-wide or lint-group-wide allow. **Not recompiled** — same
+   no-`rustc`-≥1.85 sandbox wall as everywhere else in this file; needs
+   confirming against a real run same as the protoc fix above.
+
+3. **`Check formatting` (`cargo +nightly fmt --all --check`)** — **fixed,
+   trivial, high-confidence.** One diff, in
+   `crates/router/src/core/unified_connector_service/kill_switch.rs:120`
+   — a single-line `if`-guard on a match arm that's too long for
+   rustfmt's width, needing the multi-line `if matches!(...)` form. The
+   tool's own log gave the exact target formatting as a diff; applied
+   that diff verbatim rather than re-deriving it, so this one carries
+   less uncertainty than the two above despite the same can't-run-
+   `cargo-fmt`-locally constraint (formatting is deterministic given the
+   diff was already computed by the real tool, not guessed).
+
+4. **`Check compilation for V2 features`** — **real gap, NOT fixed this
+   pass, needs a design call.** Two linked errors when the workspace is
+   built with the `v2` feature: (a) `E0046`, `KafkaStore` (
+   `crates/router/src/db/kafka_store.rs:3650`) doesn't implement
+   `get_pg_kv_store` — a method `StorageInterface` (`db.rs:188`) now
+   requires, added as part of Task 73/a's PgKvStore work, and nobody's
+   added the `KafkaStore` wrapper's implementation of it yet; (b) `E0308`
+   in `db.rs`'s own default `get_pg_kv_store` impl: it calls
+   `PgKvStore::new(self.get_master_pool().pg_pool.clone(), ...)`, but
+   under `v2`, `get_master_pool()`'s pool is wrapped in
+   `DejaLoadConnection` (a v2-only shadow-read/load-testing wrapper), so
+   its type doesn't match `PgKvStore::new`'s plain `Pool<ConnectionManager
+   <PgConnection>>` parameter. Not attempted: needs someone who knows
+   whether `KafkaStore` should delegate to its inner store's
+   `get_pg_kv_store()` (likely correct, mirrors how `KafkaStore` handles
+   most other `StorageInterface` methods, but not verified this pass by
+   reading `kafka_store.rs` in full) and whether `PgKvStore` should grow a
+   `DejaLoadConnection`-aware constructor path or whether `db.rs` should
+   unwrap/adapt the pool before calling `PgKvStore::new`. Real next-task
+   candidate for a session that has time to read `kafka_store.rs` and the
+   `DejaLoadConnection` type in full first.
+
+5. **`Spell check` / `typos`** — **not fixed, out of scope for this
+   pass.** ~8 pre-existing typos (`Occurence`→`Occurrence`,
+   `connnector`→`connector`, `supoorted`→`supported`, `tak`→`take`,
+   `resonse`→`response` ×3) across `hyperswitch_connectors` (paysafe,
+   stripebilling, adyen, generic utils) and `subscriptions/src/core.rs` —
+   none of them anywhere near `storage_impl`/Task 73/a, none introduced by
+   any session working this file's tasks. Recording the exact locations
+   here so a future session doesn't have to re-derive them from a fresh
+   log pull, but not fixing them as part of this pass — real fix but
+   unrelated scope, and `resonse`/`Occurence` in particular touch a
+   public-ish struct/field name (`MandateOccurence` enum,
+   `subscriptions_resonse` local var) where a rename should probably be
+   its own reviewed change, not folded silently into a storage-focused
+   patch.
+
+6. **`Nix CI (x86_64-linux, ubuntu-latest)`** — log for this job wasn't
+   distinguishable from the others in the pasted dump (no lines tagged
+   with this exact job name found on a `cut -f1 | sort -u` pass over the
+   file) — either this job's failure output wasn't included in
+   `--log-failed`'s selection for this run, or it shares an underlying
+   cause with one of the jobs above (plausible: Nix CI still builds the
+   same Rust workspace, so the protoc gap or the same clippy errors could
+   independently explain it). Not confirmed either way this pass — flagged
+   rather than guessed at.
+
+**Not done, still open:** item 4 (V2 `get_pg_kv_store` design gap, real
+compile errors, no fix attempted) and item 5 (typos, real, out of scope)
+above; `Nix CI` job's actual cause unconfirmed (item 6); none of tonight's
+3 fixes recompiled against a real toolchain — all three need the *next*
+`storage-impl` CI run (or a session with working `rustc` ≥1.85) to actually
+confirm before treating them as done rather than "reviewed by reading."
+
+**Per the Patch Handoff Convention, rule 8: drift-checked immediately
+before this entry** — `git fetch origin` showed `origin/main` unchanged at
+`55e3a83de`; the previous session's patch (docs-only, `20a4a8945`) is
+therefore still unapplied, so per rule 6 this session's work goes on the
+same branch/base rather than a second independent one — see the combined
+patch series handed over below, not a new standalone patch.

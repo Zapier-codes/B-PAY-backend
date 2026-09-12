@@ -150,12 +150,34 @@ pub enum PgHsetnxReply {
     KeyNotSet,
 }
 
+// diesel's QueryableByName derive fully-qualifies its generated sql_type
+// path (e.g. diesel::sql_types::Binary) and, for a single-field struct,
+// that generated qualification gets misattributed to this field's own
+// span under -D warnings -- not a real redundant-path issue in code we
+// wrote. Silenced narrowly rather than at the crate/lint-group level.
+// Confirmed against a real failed CI run (2026-09-12, cargo check -p
+// storage_impl pinned 1.85.0 job); NOT recompiled locally -- no working
+// rustc >=1.85 in this sandbox (see legacy-node/handover.md New-Clone
+// Checklist). Flag as reviewed-by-reading only until a session with a
+// real toolchain confirms.
+#[allow(unused_qualifications)]
 #[derive(QueryableByName)]
 struct RawValueRow {
     #[diesel(sql_type = diesel::sql_types::Binary)]
     value: Vec<u8>,
 }
 
+// diesel's QueryableByName derive fully-qualifies its generated sql_type
+// path (e.g. diesel::sql_types::Binary) and, for a single-field struct,
+// that generated qualification gets misattributed to this field's own
+// span under -D warnings -- not a real redundant-path issue in code we
+// wrote. Silenced narrowly rather than at the crate/lint-group level.
+// Confirmed against a real failed CI run (2026-09-12, cargo check -p
+// storage_impl pinned 1.85.0 job); NOT recompiled locally -- no working
+// rustc >=1.85 in this sandbox (see legacy-node/handover.md New-Clone
+// Checklist). Flag as reviewed-by-reading only until a session with a
+// real toolchain confirms.
+#[allow(unused_qualifications)]
 #[derive(QueryableByName)]
 struct InsertedRow {
     #[diesel(sql_type = diesel::sql_types::BigInt)]
@@ -672,6 +694,17 @@ impl PgKvStore {
             .await
             .change_context(StorageError::DatabaseConnectionError)?;
 
+        // diesel's QueryableByName derive fully-qualifies its generated sql_type
+        // path (e.g. diesel::sql_types::Binary) and, for a single-field struct,
+        // that generated qualification gets misattributed to this field's own
+        // span under -D warnings -- not a real redundant-path issue in code we
+        // wrote. Silenced narrowly rather than at the crate/lint-group level.
+        // Confirmed against a real failed CI run (2026-09-12, cargo check -p
+        // storage_impl pinned 1.85.0 job); NOT recompiled locally -- no working
+        // rustc >=1.85 in this sandbox (see legacy-node/handover.md New-Clone
+        // Checklist). Flag as reviewed-by-reading only until a session with a
+        // real toolchain confirms.
+        #[allow(unused_qualifications)]
         #[derive(QueryableByName)]
         struct TtlRow {
             #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Double>)]
@@ -872,6 +905,17 @@ impl PgKvStore {
         let initial_expires_at = initial_expiry_seconds
             .map(|secs| common_utils::date_time::now() + time::Duration::seconds(secs));
 
+        // diesel's QueryableByName derive fully-qualifies its generated sql_type
+        // path (e.g. diesel::sql_types::Binary) and, for a single-field struct,
+        // that generated qualification gets misattributed to this field's own
+        // span under -D warnings -- not a real redundant-path issue in code we
+        // wrote. Silenced narrowly rather than at the crate/lint-group level.
+        // Confirmed against a real failed CI run (2026-09-12, cargo check -p
+        // storage_impl pinned 1.85.0 job); NOT recompiled locally -- no working
+        // rustc >=1.85 in this sandbox (see legacy-node/handover.md New-Clone
+        // Checklist). Flag as reviewed-by-reading only until a session with a
+        // real toolchain confirms.
+        #[allow(unused_qualifications)]
         #[derive(QueryableByName)]
         struct IncrementedRow {
             #[diesel(sql_type = diesel::sql_types::BigInt)]
@@ -972,6 +1016,17 @@ impl PgKvStore {
             .await
             .change_context(StorageError::DatabaseConnectionError)?;
 
+        // diesel's QueryableByName derive fully-qualifies its generated sql_type
+        // path (e.g. diesel::sql_types::Binary) and, for a single-field struct,
+        // that generated qualification gets misattributed to this field's own
+        // span under -D warnings -- not a real redundant-path issue in code we
+        // wrote. Silenced narrowly rather than at the crate/lint-group level.
+        // Confirmed against a real failed CI run (2026-09-12, cargo check -p
+        // storage_impl pinned 1.85.0 job); NOT recompiled locally -- no working
+        // rustc >=1.85 in this sandbox (see legacy-node/handover.md New-Clone
+        // Checklist). Flag as reviewed-by-reading only until a session with a
+        // real toolchain confirms.
+        #[allow(unused_qualifications)]
         #[derive(QueryableByName)]
         struct ExistsRow {
             #[diesel(sql_type = diesel::sql_types::Bool)]

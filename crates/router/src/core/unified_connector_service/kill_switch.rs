@@ -120,7 +120,12 @@ async fn read_counter(
         // the old `redis_interface::get_hash_field::<Option<u64>>` call did — translate that one
         // specific case back into "0 failures so far", same as before. Any other error still
         // propagates so the caller fails closed.
-        Err(error) if matches!(error.current_context(), storage_impl::errors::StorageError::ValueNotFound(_)) => {
+        Err(error)
+            if matches!(
+                error.current_context(),
+                storage_impl::errors::StorageError::ValueNotFound(_)
+            ) =>
+        {
             Ok(0)
         }
         Err(error) => Err(error),

@@ -208,7 +208,7 @@ impl TryFrom<&api_enums::PaymentMethodType> for NovalNetPaymentTypes {
             api_enums::PaymentMethodType::GooglePay => Ok(Self::GOOGLEPAY),
             api_enums::PaymentMethodType::Paypal => Ok(Self::PAYPAL),
             api_enums::PaymentMethodType::Sepa => Ok(Self::DirectDebitSepa),
-            api_enums::PaymentMethodType::SepaGuaranteedDebit => {
+            api_enums::PaymentMethodType::SepaGuarenteedDebit => {
                 Ok(Self::GuaranteedDirectDebitSepa)
             }
             _ => Err(errors::ConnectorError::NotImplemented(
@@ -464,7 +464,7 @@ impl TryFrom<&NovalnetRouterData<&PaymentsAuthorizeRouterData>> for NovalnetPaym
 
                             (iban, account_holder, None)
                         }
-                        BankDebitData::SepaGuaranteedBankDebit {
+                        BankDebitData::SepaGuarenteedBankDebit {
                             iban,
                             bank_account_holder_name,
                         } => {

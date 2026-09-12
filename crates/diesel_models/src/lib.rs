@@ -28,7 +28,6 @@ pub mod fraud_check;
 pub mod generic_link;
 pub mod gsm;
 pub mod invoice;
-#[cfg(feature = "kv_store")]
 pub mod kv;
 pub mod list;
 pub mod locker_mock_up;

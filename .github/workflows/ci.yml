@@ -194,18 +194,41 @@ jobs:
       - name: Install sccache
         uses: mozilla-actions/sccache-action@v0.0.9
 
+      # Aggressive caching, matching the Swatinem/rust-cache and sccache
+      # strategy above: jq/cargo-hack/just are re-downloaded from
+      # github.com on every single run otherwise, which is both slow and
+      # exactly the network dependency that caused the "Could not
+      # resolve host: github.com" flake on 2026-09-12 (see the "Run
+      # tests on stable toolchain" job's own Install jq step, same
+      # script). Caching them means a warm run needs no network access
+      # for these three tools at all.
+      - name: Cache CI tool binaries (jq, cargo-hack, just)
+        id: tool-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.local/bin/jq
+            ~/.cargo/bin/cargo-hack
+            ~/.cargo/bin/just
+          key: ci-tools-${{ runner.os }}-${{ runner.arch }}-jq-cargohack-just-v1
+
       - name: Install cargo-hack
+        if: steps.tool-cache.outputs.cache-hit != 'true'
         uses: taiki-e/install-action@v2
         with:
           tool: cargo-hack
           checksum: true
 
       - name: Install just
+        if: steps.tool-cache.outputs.cache-hit != 'true'
         uses: taiki-e/install-action@v2
         with:
           tool: just
           checksum: true
 
+      # install-jq.sh itself checks for an already-present binary and
+      # skips its download on a cache hit -- always run this step (not
+      # gated on cache-hit) so PATH still gets set either way.
       - name: Install jq
         shell: bash
         run: .github/scripts/install-jq.sh
@@ -281,13 +304,27 @@ jobs:
       - name: Install sccache
         uses: mozilla-actions/sccache-action@v0.0.9
 
+      # See the "Check compilation on MSRV toolchain" job for why this
+      # binary cache exists and what flake it's covering for.
+      - name: Cache CI tool binaries (jq, cargo-hack, just)
+        id: tool-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.local/bin/jq
+            ~/.cargo/bin/cargo-hack
+            ~/.cargo/bin/just
+          key: ci-tools-${{ runner.os }}-${{ runner.arch }}-jq-cargohack-just-v1
+
       - name: Install cargo-hack
+        if: steps.tool-cache.outputs.cache-hit != 'true'
         uses: taiki-e/install-action@v2
         with:
           tool: cargo-hack
           checksum: true
 
       - name: Install just
+        if: steps.tool-cache.outputs.cache-hit != 'true'
         uses: taiki-e/install-action@v2
         with:
           tool: just
@@ -558,21 +595,15 @@ jobs:
 
   nix-check:
     name: Nix CI
-    runs-on: ${{ matrix.runner }}
+    runs-on: ubuntu-latest
     permissions:
       contents: read
-    strategy:
-      matrix:
-        # `system` is the Nix system identifier passed to `om ci run
-        # --systems` below; `runner` is the GitHub-hosted label that can
-        # actually build for it. Kept as separate keys (not a lookup on
-        # `system` alone) because GitHub-hosted `runs-on` labels and Nix
-        # system strings aren't the same vocabulary.
-        include:
-          - system: x86_64-linux
-            runner: ubuntu-latest
-          - system: aarch64-darwin
-            runner: macos-latest # currently arm64 (Apple Silicon) -- see PR discussion
+    # Was a `strategy.matrix` covering x86_64-linux (ubuntu-latest) and
+    # aarch64-darwin (macos-latest). The macOS leg is dropped: this app
+    # ships Android and Windows only, no macOS/iOS, so paying for an
+    # Apple Silicon runner on every push bought nothing except slower,
+    # more expensive CI. `system` is hardcoded below instead of read
+    # from a matrix var now that there's only one value.
     steps:
       - uses: actions/checkout@v7
 
@@ -604,4 +635,4 @@ jobs:
       # run yet -- flagged reviewed-by-reading only, same as the other
       # fixes in this session (no working `om`/`nix` in this sandbox to
       # test against either; see legacy-node/handover.md).
-      - run: nix run github:juspay/omnix -- ci run --extra-access-tokens ${{ secrets.GITHUB_TOKEN }} --systems "${{ matrix.system }}"
+      - run: nix run github:juspay/omnix -- ci run --extra-access-tokens ${{ secrets.GITHUB_TOKEN }} --systems "x86_64-linux"

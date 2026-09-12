@@ -43,12 +43,14 @@ use crate::store::schema::{
     address::all_columns as addr_all_columns, customers::all_columns as cust_all_columns,
     payout_attempt::all_columns as poa_all_columns, payouts::all_columns as po_all_columns,
 };
+#[cfg(feature = "olap")]
+use crate::utils::pg_connection_read_replica;
 use crate::{
     diesel_error_to_data_error,
     errors::{RedisErrorExt, StorageError},
     kv_router_store::KVRouterStore,
     redis::kv_store::{decide_storage_scheme, kv_wrapper, KvOperation, Op, PartitionKey},
-    utils::{self, pg_connection_read, pg_connection_read_replica, pg_connection_write},
+    utils::{self, pg_connection_read, pg_connection_write},
     DataModelExt, DatabaseStore,
 };
 

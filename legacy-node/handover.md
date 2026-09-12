@@ -20873,3 +20873,101 @@ cd ~/B-PAY-backend
 git am ~/storage/downloads/0001-fix-spell-check-typos-cli-cleanly-fix-all-240-real-typos-errors.patch
 git push
 ```
+
+## Rule 10 — Reliable CI-status-check procedure for flaky/mobile connections (2026-09-12)
+
+**Trigger:** a session running from Termux on a phone needed to pull CI job
+results and full failure logs for the current HEAD, and repeatedly hit
+`TLS handshake timeout` on the larger requests — both against
+`productionresultssa2.blob.core.windows.net` (where `gh api .../logs`
+redirects to) and, once, against `api.github.com` itself. Small requests
+(`gh run list`) kept working throughout; only the larger log-fetch
+requests were affected. This is a real, reproducible connection issue on
+constrained/mobile networks, not a one-off — worth a standing procedure
+so future sessions don't rediscover it from scratch.
+
+**Do this in order, immediately on cloning, before diagnosing any CI
+failure:**
+
+1. **Get the run overview (cheap, has not failed in practice):**
+   ```
+   gh run list --repo Zapier-codes/B-Pay-backend --branch main --limit 5 \
+     --json databaseId,headSha,status,conclusion,displayTitle \
+     --jq '.[] | "\(.databaseId)  \(.headSha[0:9])  \(.status)  \(.conclusion)  \(.displayTitle)"'
+   ```
+   Identifies the current run's ID and, from the SHA column, the run(s) for
+   prior commits too.
+
+2. **Get the per-job status for the current run, and save it — this is
+   the file that tells you which jobs are actually worth pulling full logs
+   for:**
+   ```
+   gh run view --repo Zapier-codes/B-Pay-backend <RUN_ID> --json jobs \
+     --jq '.jobs[] | "\(.databaseId)  \(.status)  \(.conclusion)  \(.name)"' \
+     > ~/storage/downloads/ci_current_jobs.txt
+   ```
+
+3. **Before pulling any logs, diff against the last *fully completed,
+   non-cancelled* prior run** (a `cancelled` run means it was superseded
+   mid-flight — its still-`in_progress` jobs are not a real pass/fail and
+   are not safe to use as a baseline; walk back further to a real
+   `completed` run if the immediately-prior one is `cancelled`). This
+   separates jobs that are newly broken by the latest commit from jobs
+   that were already failing beforehand (e.g. MSRV toolchain, which has
+   been broken across multiple commits independent of this rule — see the
+   toolchain-retired note in step 2 of the New-Clone Checklist). Only the
+   newly-broken jobs need a fresh root-cause investigation; don't
+   re-diagnose a pre-existing failure as if this commit caused it.
+
+4. **Pull full logs one job at a time, never in a single unwrapped call —
+   `gh run view --log-failed` and a bare `gh api .../logs` both hang
+   indefinitely on this kind of connection with no feedback that anything
+   is wrong.** Wrap each job in a bounded retry loop instead:
+   ```
+   JOB_ID=<job's databaseId from step 2>
+   for attempt in 1 2 3 4 5; do
+     echo "attempt $attempt..."
+     timeout 60 gh api "/repos/Zapier-codes/B-Pay-backend/actions/jobs/${JOB_ID}/logs" --allow-escape-sequences \
+       > ~/storage/downloads/ci_${JOB_ID}.txt
+     size=$(wc -c < ~/storage/downloads/ci_${JOB_ID}.txt)
+     if [ "$size" -gt 1000 ]; then
+       echo "SUCCESS: $size bytes"
+       break
+     fi
+     echo "failed ($size bytes), retrying in 5s..."
+     sleep 5
+   done
+   tail -c 200 ~/storage/downloads/ci_${JOB_ID}.txt
+   ```
+   The `size -gt 1000` check matters: a failed/interrupted download can
+   still produce a small non-empty file (one real case this session
+   produced a 203-line file that silently cut off mid-line during
+   toolchain setup, before the job's actual output). Always confirm size
+   and check that `tail` ends on a clean, complete line — not mid-word —
+   before trusting a downloaded log as complete.
+
+**Result this session:** using this procedure to compare the current run
+(`df7876aca`, 5 of 9 jobs failing) against the last fully-completed prior
+run (`45924390c`, only 2 of 9 failing) correctly isolated 3 genuine new
+regressions — `Check formatting`, `cargo check -p storage_impl (pinned
+1.85.0)`, and `Check compilation for V2 features` — from 2 pre-existing,
+unrelated failures (`Check compilation on MSRV toolchain`, `Run tests on
+stable toolchain`) that needed no new investigation. Full logs for the 3
+regressions were pulled cleanly via the retry loop above after the
+unwrapped single-shot commands had failed or hung repeatedly. Root-cause
+analysis of those 3 logs is the next open task — not done as part of this
+entry.
+
+**Per the Patch Handoff Convention, rule 8: drift-checked immediately
+before this entry** — `git fetch origin` confirmed `origin/main`
+unchanged at `df7876aca` (the commit this session's clone started from);
+no rebuild needed.
+
+**Per rule 7: command block for this session's handoff (doc-only change,
+`legacy-node/handover.md` — no `db/migrations/` changes, no DB-Ops block
+owed):**
+```
+cd ~/B-PAY-backend
+git am ~/storage/downloads/0001-docs-add-rule-10-reliable-ci-log-fetch-procedure.patch
+git push
+```

@@ -809,6 +809,7 @@ impl webhooks::IncomingWebhook for Trustly {
         Err(report!(ConnectorError::WebhooksNotImplemented))
     }
 
+    #[cfg_attr(not(feature = "payouts"), allow(unused_variables))]
     fn get_webhook_event_type(
         &self,
         request: &webhooks::IncomingWebhookRequestDetails<'_>,
@@ -819,9 +820,16 @@ impl webhooks::IncomingWebhook for Trustly {
             .parse_struct("TrustlyWebhookBody")
             .change_context(ConnectorError::ResponseDeserializationFailed)?;
 
-        trustly::get_payout_webhook_event(webhook_body.method)
+        #[cfg(feature = "payouts")]
+        {
+            return trustly::get_payout_webhook_event(webhook_body.method);
+        }
+
+        #[cfg(not(feature = "payouts"))]
+        Err(report!(ConnectorError::WebhooksNotImplemented))
     }
 
+    #[cfg_attr(not(feature = "payouts"), allow(unused_variables))]
     fn get_webhook_resource_object(
         &self,
         request: &webhooks::IncomingWebhookRequestDetails<'_>,
@@ -830,8 +838,15 @@ impl webhooks::IncomingWebhook for Trustly {
             .body
             .parse_struct("TrustlyWebhookBody")
             .change_context(ConnectorError::ResponseDeserializationFailed)?;
-        let event = trustly::get_payout_webhook_event(webhook_body.method)?;
-        Ok(Box::new(event))
+
+        #[cfg(feature = "payouts")]
+        {
+            let event = trustly::get_payout_webhook_event(webhook_body.method)?;
+            return Ok(Box::new(event));
+        }
+
+        #[cfg(not(feature = "payouts"))]
+        Err(report!(ConnectorError::WebhooksNotImplemented))
     }
 
     fn get_webhook_api_response(

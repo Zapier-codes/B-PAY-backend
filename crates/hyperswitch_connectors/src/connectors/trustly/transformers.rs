@@ -6,7 +6,9 @@ use base64::{engine::general_purpose, Engine as _};
 use common_enums::enums;
 #[cfg(feature = "payouts")]
 use common_enums::{CountryAlpha2, PayoutStatus};
-use common_utils::{errors::CustomResult, id_type::CustomerId, pii, types::StringMajorUnit};
+use common_utils::{id_type::CustomerId, types::StringMajorUnit};
+#[cfg(feature = "payouts")]
+use common_utils::{errors::CustomResult, pii};
 use error_stack::{report, ResultExt};
 #[cfg(feature = "payouts")]
 use hyperswitch_domain_models::types::{PayoutsResponseData, PayoutsRouterData};
@@ -28,13 +30,16 @@ use openssl::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::types::{RefundsResponseRouterData, ResponseRouterData};
+use crate::{
+    types::{RefundsResponseRouterData, ResponseRouterData},
+    utils,
+};
 #[cfg(feature = "payouts")]
 use crate::{
     types::PayoutsResponseRouterData,
     utils::{
-        self, get_unimplemented_payment_method_error_message, AddressData,
-        PayoutFulfillRequestData, PayoutsData, RouterData as _,
+        get_unimplemented_payment_method_error_message, AddressData, PayoutFulfillRequestData,
+        PayoutsData, RouterData as _,
     },
 };
 
@@ -294,6 +299,7 @@ impl TrustlyMethod {
     }
 }
 
+#[cfg(feature = "payouts")]
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
 pub struct RegisterAccountRequest {
     method: TrustlyMethod,
@@ -301,6 +307,7 @@ pub struct RegisterAccountRequest {
     version: String,
 }
 
+#[cfg(feature = "payouts")]
 #[derive(Default, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "PascalCase")]
 pub struct RegisterAccountParams {
@@ -310,6 +317,7 @@ pub struct RegisterAccountParams {
     uuid: String,
 }
 
+#[cfg(feature = "payouts")]
 #[derive(Default, Debug, Serialize, Deserialize, PartialEq)]
 #[serde_with::skip_serializing_none]
 #[serde(rename_all = "PascalCase")]
@@ -325,6 +333,7 @@ pub struct RegisterAccountData {
     attributes: Option<RegisterAccountAttributes>,
 }
 
+#[cfg(feature = "payouts")]
 #[derive(Default, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "PascalCase")]
 #[serde_with::skip_serializing_none]
@@ -338,7 +347,6 @@ pub struct RegisterAccountAttributes {
     email: Option<pii::Email>,
 }
 
-#[cfg(feature = "payouts")]
 fn trustly_serialize<T: Serialize>(data: &T) -> String {
     let value = serde_json::to_value(data).unwrap_or_default();
     serialize_value(&value)
@@ -1136,6 +1144,7 @@ pub fn is_refund_webhook_event(webhook_method: TrustlyWebhookMethod, message_id:
     ) && !message_id.starts_with("payout_")
 }
 
+#[cfg(feature = "payouts")]
 pub fn get_payout_webhook_event(
     webhook_method: TrustlyWebhookMethod,
 ) -> CustomResult<api_models::webhooks::IncomingWebhookEvent, ConnectorError> {

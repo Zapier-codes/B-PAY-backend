@@ -106,6 +106,35 @@
 > task's own section. Nothing else in this file is required reading to
 > start work.**
 >
+> **🟢🟢 NEWEST NEXT TASK (2026-09-12, supersedes the 🟢 box directly
+> below — that box's item 2 is now done, item 3 is what's left):**
+> `worldpayxml/transformers.rs`'s `get_payout_webhook_event` (item 2)
+> was defined unconditionally but its only caller
+> (`worldpayxml.rs::get_webhook_event_type`) already wraps the call in
+> `#[cfg(feature = "payouts")]` with a fallback to
+> `get_payment_webhook_event` — the "caller already branches" sibling
+> case the box below explicitly contrasted with trustly. Fix: gated the
+> function definition itself, no fallback needed since the caller
+> already has one. Verified (grep across the connectors crate) it's the
+> only call site, and that the `IncomingWebhookEvent::Payout*` variants
+> it returns aren't themselves cfg-gated, so nothing downstream needed
+> un-gating too. Branch `fix/worldpayxml-payouts-cfg-gate-item-2`,
+> commit `32427150e` (based on `origin/main` at `c16d967e7` —
+> re-confirmed via `git fetch origin` immediately before branching, no
+> drift). **Not compiled** — same toolchain wall as every prior session
+> (`which rustc cargo` → nothing this session too); reviewed by reading
+> against the call site and sibling connector patterns only.
+>
+> **Next real task: item 3 of the "NEXT SESSION: start here" list
+> below** — the not-yet-root-caused remainder (`truelayer/transformers.rs`,
+> remaining `gotyme_sanlam.rs` errors, `envoy/transformers.rs`,
+> `cybersourcedecisionmanager.rs` + `transformers.rs`,
+> `paypal/transformers.rs`, `adyenplatform.rs`, plus the 4
+> likely-downstream-fallout files) — re-check these fresh now that both
+> connector-level items (1 and 2) have landed, per item 3's own original
+> instruction not to look at the downstream type files until the
+> connector-level fixes were in.
+>
 > **🟢 NEW NEXT TASK (2026-09-12, supersedes the 🔴🔴 box directly below —
 > that box's item 1 is now done, items 2–3 are what's left) — item 1 of
 > the "NEXT SESSION: start here" list (below) is fixed: the three named

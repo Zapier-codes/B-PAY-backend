@@ -175,16 +175,20 @@ pub trait StorageInterface:
     /// since this deployment runs no Redis and Supabase's own pooler is
     /// already the shared connection budget for everything else.
     ///
-    /// Relies on `get_master_pool()`'s `PgPool::pg_pool` (`bb8::Pool<
-    /// ConnectionManager<DejaPgConnection>>`) and `PgKvStore`'s own pool
-    /// type (`bb8::Pool<ConnectionManager<diesel::PgConnection>>`) being the
-    /// *same type*, which only holds when `DejaPgConnection` resolves to
-    /// plain `diesel::PgConnection` — true under this workspace's default
-    /// features (`deja` is optional, off by default in both `router` and
-    /// `storage_impl`). If `deja` is ever enabled this call site fails to
-    /// compile rather than silently misbehaving, which is the point: a
-    /// build break here is a real signal to revisit the sharing decision,
-    /// not something to work around quietly.
+    /// Corrected 2026-09-12: this doc comment used to say the pool-sharing
+    /// only type-checked when `deja` was off, and that a `deja`-enabled
+    /// build failing here was the intended signal to revisit the sharing
+    /// decision. That was describing a real bug, not a real design: a
+    /// `deja`-enabled build (e.g. the `v2` CI feature set) did fail here
+    /// (E0308, confirmed by a real failing `Check compilation for V2
+    /// features` run), but not on purpose — `PgKvStore`'s pool type
+    /// (`storage_impl::pg_kv_store::PgKvPool`) was just hardcoded to plain
+    /// `diesel::PgConnection` instead of tracking the workspace's real
+    /// `DejaPgConnection` type alias. `PgKvPool` now aliases
+    /// `storage_impl::database::store::RawPgPool` directly, so this call
+    /// site shares the master pool regardless of whether `deja` is on or
+    /// off — no compile-time trip wire needed, because there's no longer a
+    /// hidden type mismatch for one to catch.
     fn get_pg_kv_store(&self) -> PgKvStore;
     fn set_key_manager_state(&mut self, key_manager_state: KeyManagerState);
 }

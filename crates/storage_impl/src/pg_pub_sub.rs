@@ -35,6 +35,20 @@
 //! Nothing in this file changed; the sweep is pure SQL/pg_cron and has no
 //! Rust-side dependency.
 
+// Corrected 2026-09-12: a prior session's struct-level
+// `#[allow(unused_qualifications)]` on `InsertedPayloadRow` did NOT
+// suppress the lint (confirmed by a real failing `Run tests on stable
+// toolchain` clippy run, pointing at the exact `id: i64,` field line the
+// struct-level allow already covered) -- same
+// `#[derive(QueryableByName)]`-expansion-scope gap as `pg_kv_store.rs`'s
+// `RawValueRow`/`InsertedRow` and `pg_lock.rs`'s `AcquiredRow`. Matching
+// those files' fix: a module-level inner attribute, placed before any
+// item as Rust requires, rather than the per-struct attribute that
+// already failed once here too. Not recompiled locally (see
+// legacy-node/handover.md New-Clone Checklist) -- reviewed by reading
+// only.
+#![allow(unused_qualifications)]
+
 use async_bb8_diesel::AsyncRunQueryDsl;
 use diesel::{
     sql_query,
@@ -45,13 +59,10 @@ use error_stack::ResultExt;
 
 use crate::{errors::StorageError, pg_kv_store::PgKvPool};
 
-// Corrected 2026-09-12: a prior session's #[allow(unused_qualifications)]
-// on this struct did NOT suppress the lint (confirmed by a real failing
-// `Run tests on stable toolchain` clippy run) -- shortened the qualified
-// path (BigInt now imported directly) instead, keeping the #[allow] as a
-// fallback. Not recompiled locally (see legacy-node/handover.md
-// New-Clone Checklist) -- reviewed by reading only.
-#[allow(unused_qualifications)]
+// Struct-level #[allow(unused_qualifications)] here was tried and
+// confirmed NOT to suppress the lint in a real CI run -- see the
+// module-level #![allow(unused_qualifications)] near the top of this
+// file, which is the fix that actually applies.
 #[derive(QueryableByName)]
 struct InsertedPayloadRow {
     #[diesel(sql_type = BigInt)]

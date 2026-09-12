@@ -89,6 +89,19 @@
 //! `try_acquire_multiple` method is reviewed by reading only, same
 //! standing caveat as every other change in this file.
 
+// Corrected 2026-09-12: a prior session's struct-level
+// `#[allow(unused_qualifications)]` on `AcquiredRow` did NOT suppress the
+// lint (confirmed by a real failing `Run tests on stable toolchain`
+// clippy run, pointing at the exact `pg_try_advisory_lock: bool,` field
+// line the struct-level allow already covered) -- same
+// `#[derive(QueryableByName)]`-expansion-scope gap as `pg_kv_store.rs`'s
+// `RawValueRow`/`InsertedRow`. Matching that file's fix: a module-level
+// inner attribute, placed before any item as Rust requires, rather than
+// the per-struct attribute that already failed once here too. Not
+// recompiled locally (see legacy-node/handover.md New-Clone Checklist)
+// -- reviewed by reading only.
+#![allow(unused_qualifications)]
+
 use async_bb8_diesel::AsyncRunQueryDsl;
 use bb8::PooledConnection;
 use diesel::{
@@ -96,6 +109,7 @@ use diesel::{
     sql_types::{BigInt, Bool},
     QueryableByName,
 };
+use diesel_models::DejaPgConnection;
 use error_stack::ResultExt;
 
 use crate::{errors::StorageError, pg_kv_store::PgKvPool};
@@ -146,13 +160,10 @@ fn lock_key_to_bigint(key: &str) -> i64 {
     }
 }
 
-// Corrected 2026-09-12: a prior session's #[allow(unused_qualifications)]
-// on this struct did NOT suppress the lint (confirmed by a real failing
-// `Run tests on stable toolchain` clippy run) -- shortened the qualified
-// path (Bool now imported directly) instead, keeping the #[allow] as a
-// fallback. Not recompiled locally (see legacy-node/handover.md
-// New-Clone Checklist) -- reviewed by reading only.
-#[allow(unused_qualifications)]
+// Struct-level #[allow(unused_qualifications)] here was tried and
+// confirmed NOT to suppress the lint in a real CI run -- see the
+// module-level #![allow(unused_qualifications)] near the top of this
+// file, which is the fix that actually applies.
 #[derive(QueryableByName)]
 struct AcquiredRow {
     #[diesel(sql_type = Bool)]
@@ -167,7 +178,19 @@ struct AcquiredRow {
 /// lifetime, not decoration, and is why there is no owned/`'static` variant
 /// of this type today.
 pub struct PgLock<'a> {
-    conn: PooledConnection<'a, async_bb8_diesel::ConnectionManager<diesel::PgConnection>>,
+    // Corrected 2026-09-12: was hardcoded to
+    // `async_bb8_diesel::ConnectionManager<diesel::PgConnection>`, which
+    // only matches `PgKvPool`'s real element type when the `deja` feature
+    // is off (E0308, confirmed by a real failing `Run tests on stable
+    // toolchain` / `Check compilation for V2 features` run — "expected
+    // `PgConnection`, found `DejaLoadConnection<PgConnection>`"). This
+    // struct already borrows a connection acquired from `PgKvPool`
+    // (`pg_kv_store::PgKvPool`, imported above); its own field type just
+    // wasn't kept in sync with that pool's real connection type after
+    // `PgKvPool` was fixed to alias `RawPgPool`/`DejaPgConnection`. Not
+    // recompiled locally (see legacy-node/handover.md New-Clone
+    // Checklist) -- reviewed by reading only.
+    conn: PooledConnection<'a, async_bb8_diesel::ConnectionManager<DejaPgConnection>>,
     // Sorted, deduplicated set of every advisory-lock key this instance
     // currently holds. A single-key `try_acquire` is just the len-1 case of
     // `try_acquire_multiple` (see below) — no behaviour change for existing

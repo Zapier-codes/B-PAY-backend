@@ -96,24 +96,24 @@ crates_without_v1_feature="$(
     | "\(.name)" # Print out package name'
 )"
 while IFS= read -r crate && [[ -n "${crate}" ]]; do
-  # Corrected 2026-09-12: `--each-feature` includes a bare
-  # `--no-default-features`-only pass with nothing else enabled. For most
-  # crates that's a valid (if minimal) configuration, but crates like
-  # `redis_interface` require exactly one backend feature to be active
-  # (`fred` xor `redis-rs`, guarded by a real `compile_error!` in
-  # `src/lib.rs`) and have no valid "zero features" build -- that's not a
-  # code bug, it's the crate correctly rejecting an unsupported
-  # configuration, but cargo-hack was still asking it to compile that way
-  # (confirmed via a real failing `Check compilation on MSRV toolchain`
-  # run, E0412 cascading from the `compile_error!`). `--exclude-no-default-features`
-  # is cargo-hack's own documented flag for skipping exactly that
-  # all-features-off baseline, applied here across the board rather than
-  # only for `redis_interface`: a crate with every optional feature
-  # disabled isn't a configuration any real deployment runs, so checking
-  # it isn't giving up meaningful coverage for the other crates in this
-  # loop either. Not recompiled locally (see legacy-node/handover.md
-  # New-Clone Checklist) -- reviewed by reading only.
+  # Corrected 2026-09-12: `--exclude-no-default-features` alone wasn't
+  # enough for `redis_interface` (confirmed by a second real failing
+  # `Check compilation on MSRV toolchain` run, same E0412 cascade) --
+  # `--each-feature` also runs each *other* feature (`deja`,
+  # `multitenancy_fallback`, `metrics`) in isolation with
+  # `--no-default-features`, so those combinations still have neither
+  # `fred` nor `redis-rs` active. `redis_interface` requires exactly one
+  # of the two (real `compile_error!` in its own `src/lib.rs` if neither
+  # is set); cargo-hack's own `--at-least-one-of` /
+  # `--mutually-exclusive-features` flags exist precisely for a
+  # mutually-exclusive, exactly-one-required feature pair like this, so
+  # scoping them to `redis_interface` specifically (not every crate in
+  # this loop, most of which have no such constraint) is the targeted
+  # fix rather than a blanket one.
   command="cargo hack check --all-targets --each-feature --exclude-no-default-features --package \"${crate}\""
+  if [[ "${crate}" == "redis_interface" ]]; then
+    command="${command} --at-least-one-of fred,redis-rs --mutually-exclusive-features fred,redis-rs"
+  fi
   all_commands+=("$command")
 done <<< "${crates_without_v1_feature}"
 

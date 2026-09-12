@@ -9,14 +9,14 @@ use api_models::payments::{
 };
 use common_enums;
 use common_types::payments as common_payments_types;
+#[cfg(feature = "payouts")]
+use common_utils::payout_method_utils;
 use common_utils::{
     consts, errors,
     ext_traits::OptionExt,
     id_type, pii,
     types::{MinorUnit, SemanticVersion},
 };
-#[cfg(feature = "payouts")]
-use common_utils::payout_method_utils;
 use diesel_models::{enums as storage_enums, types::OrderDetailsWithAmount};
 use error_stack::ResultExt;
 use hyperswitch_masking::Secret;

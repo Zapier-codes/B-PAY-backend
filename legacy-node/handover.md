@@ -19937,3 +19937,91 @@ cd ~/B-PAY-backend
 git am ~/storage/downloads/<patch-file-name>
 git push
 ```
+
+### Docs — per-call-site TTL/atomicity audit, real first pass (interface-level, not all 63 sites individually walked) (2026-09-11, new session)
+
+**Correction, stated plainly:** an earlier turn this session was told the audit was
+"already completed" and was asked to just update this file to reflect that. It
+wasn't done — no prior write-up existed anywhere in the repo (checked: no other
+branch on `origin` besides `main`, no other `.md` file, and the one code comment
+that mentions "per-call-site TTL/atomicity audit" — `pg_kv_store.rs:94` — just
+restates the open task, not results). Recording a claimed-complete audit with no
+underlying findings would have been exactly the kind of stale, trust-without-
+verification entry this file has had to correct elsewhere (see e.g. the
+"15-vs-18 pub/sub count discrepancy" and stale-NEXT-TASK corrections above). So:
+real findings below, honestly scoped as a first pass, not a closed-out audit.
+
+**Scope actually covered this pass, and what wasn't:** rather than walking all 63
+named call sites one at a time (not done — no enumerated list of the 63 exists in
+this file or the repo; `grep -rl "get_redis_conn()" crates/router/src` alone
+returns 102 call sites across 37 files, a superset of whatever curated 63 an
+earlier session had in mind), this pass did an interface-level parity check —
+comparing every public method on `redis_interface`'s command surface
+(`crates/redis_interface/src/module/redis_rs/commands.rs`, ~30 methods) against
+`storage_impl::pg_kv_store`'s public surface (17 methods) — then spot-checked
+real callers of the methods that don't have a Postgres-side equivalent, to tell
+real gaps from harmless ones.
+
+**Real gap found and confirmed against an actual caller:**
+`redis_interface::set_expire_at` (absolute Unix-timestamp expiry) has no
+equivalent anywhere in `pg_kv_store.rs` — every Postgres-side expiry method
+(`set_key_with_expiry`, `set_key_if_not_exist_with_expiry`,
+`set_key_with_expiry_override`, `increment_hash_field`'s
+`initial_expiry_seconds`) takes a relative `expiry_seconds`/`i64` duration, not
+an absolute timestamp. This isn't hypothetical: `crates/router/src/db/
+ephemeral_key.rs` calls `.set_expire_at(&secret_key.into(), expire_at)` /
+`.set_expire_at(&id_key.into(), expire_at)` directly on a raw
+`get_redis_conn()` at both the create path (lines ~127, ~132) and what looks
+like a second path (lines ~224, ~229) — computing `expire_at` once as
+`expires.assume_utc().unix_timestamp()` and applying the *same* absolute
+instant to two separate keys. A relative-seconds call computed from "now" at
+each of the two call sites would drift from that shared instant by whatever
+wall-clock time elapses between the two calls — small, but a real behavioural
+difference from the current Redis semantics, and ephemeral keys are an
+auth-adjacent construct where expiry-time precision isn't a place to shrug at.
+**Not fixed this pass** — flagging it as the concrete next unblocked step:
+`pg_kv_store` needs a `set_key_if_not_exist_with_expiry_at`/equivalent that
+takes an absolute `expires_at` (the underlying SQL already computes and stores
+an absolute `expires_at` column either way — see `expires_at` binds throughout
+the file — so this is a new public entry point over existing storage, not a
+schema change).
+
+**Two suspected gaps checked and found to be non-issues in practice, not assumed
+away:**
+- `delete_multiple_keys` (batch key deletion) has no `pg_kv_store` equivalent by
+  name, and is used at exactly one real call site: `core/api_locking.rs:221`,
+  releasing all of `HoldMultiple`'s keys at once. But `pg_lock.rs`'s `release()`
+  already loops `pg_advisory_unlock` over every key on the one held connection
+  (see that method) — same net effect via a different mechanism, not a gap.
+- `increment_fields_in_hash` (Redis: increment several hash fields atomically in
+  one call) has no multi-field equivalent — `pg_kv_store::increment_hash_field`
+  only takes one `field: &str` at a time. The one real caller,
+  `core/payments/routing/utils.rs:1285`, calls it as
+  `.increment_fields_in_hash(&counter_key.as_str().into(), &[("count", 1)])` —
+  a single field in the slice. Single-field `increment_hash_field` covers this
+  specific call site's actual usage; the *interface* is less general, but no
+  real caller currently needs the generality.
+
+**Not done, still open, unchanged by this entry:** the other ~29 caching-side
+call sites and remaining locking-side call sites beyond `api_locking.rs`,
+`ephemeral_key.rs`, and `routing/utils.rs` haven't been individually walked —
+this pass checked interface parity plus the 3 real callers the parity gaps
+pointed to, not all 63/102 call sites one by one. Everything from prior entries
+("Not done, still open") stands: `wasm_check.log`/`spell_check.log` unread;
+`check-msrv` status unknown; Findings #6-#15 not wired into remaining real call
+sites; the `set_expire_at` gap above not yet fixed.
+
+**Per the Patch Handoff Convention: `handover.md` only, no `.rs` file touched —
+this was a read-only interface/caller audit, no code changed. Base confirmed
+against local `origin/main` (`f7478d14d`) — this sandbox has no network path to
+re-`git fetch origin` beyond the initial clone this session (`github.com` is
+allowed for the clone itself; re-fetching mid-session wasn't attempted since
+nothing else has touched `origin/main` since the clone).**
+
+**Exact command(s) for the product owner:**
+```
+cd ~/B-PAY-backend
+git add legacy-node/handover.md
+git commit -m "docs(handover): real first-pass TTL/atomicity audit -- interface parity + 3 real callers checked; set_expire_at gap found, not yet fixed"
+git push
+```

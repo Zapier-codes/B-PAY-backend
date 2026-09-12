@@ -144,7 +144,10 @@ use error_stack::{report, ResultExt};
 use serde::{de::DeserializeOwned, Serialize};
 use time::PrimitiveDateTime;
 
-use crate::errors::StorageError;
+use crate::{
+    errors::StorageError,
+    redis::cache::{CacheKind, CacheRedact},
+};
 
 /// Corrected 2026-09-12: this was hardcoded to
 /// `bb8::Pool<async_bb8_diesel::ConnectionManager<diesel::PgConnection>>`,
@@ -805,6 +808,87 @@ impl PgKvStore {
             .map_err(StorageError::from)?;
 
         Ok(rows_deleted)
+    }
+
+    /// Postgres-side analog of `redis::cache::redact_from_redis_and_publish`
+    /// (Task 73/a, Finding #17 — `handover.md`, "per-call-site audit, batch
+    /// 2"). Deletes each of `keys` from `pg_kv_cache`, then publishes one
+    /// `CacheRedact { tenant, kind }` payload per key via `pg_pub_sub::publish`
+    /// on `channel`, so every other running instance's in-memory `Cache`
+    /// (`moka`) also drops it — the same two-step "redact, then broadcast"
+    /// contract `routes/cache.rs`'s invalidation endpoint needs.
+    ///
+    /// **Ordering matches the Redis version deliberately**: every delete
+    /// runs before any publish, on the same reasoning the Redis
+    /// implementation already relies on — a peer that reloads in the
+    /// delete-done-but-not-yet-published window sees a real cache miss and
+    /// re-fetches correctly, while the reverse order (publish before
+    /// delete) would let a peer re-populate its in-memory cache from a
+    /// store row this call is about to delete out from under it.
+    ///
+    /// **Not a single atomic transaction** — this workspace's pattern
+    /// throughout `pg_kv_store.rs`/`pg_lock.rs` is per-statement
+    /// correctness (each individual delete/publish is atomic on its own),
+    /// not a wrapping `BEGIN`/`COMMIT` across the whole batch; the Redis
+    /// version this mirrors has the identical property (`delete_multiple_keys`
+    /// then N independent `publish` calls, no MULTI/EXEC around the pair),
+    /// so this preserves rather than weakens the existing consistency
+    /// contract. A partial failure (some keys deleted, then a later delete
+    /// or publish errors) surfaces via `?` immediately and stops the batch
+    /// — same fail-fast shape `redact_from_redis_and_publish` has today,
+    /// not a new gap introduced here.
+    ///
+    /// `CacheKind::All` carries a plain string key like every other
+    /// variant (see `get_key_without_prefix`), so it needs no special case
+    /// here: deleting a key that doesn't exist in `pg_kv_cache` is already
+    /// a safe no-op (see `delete_key` above), matching Redis `DEL`'s own
+    /// behaviour on a missing key.
+    ///
+    /// Returns the number of keys processed (delete-attempted and
+    /// published), mirroring `redact_from_redis_and_publish`'s `usize`
+    /// return — that function's count is actually "sum of publish
+    /// subscriber-receipt counts," which this can't reproduce (Postgres
+    /// `NOTIFY` has no subscriber-count return value), so callers that
+    /// depend on the exact semantics of that number rather than just "how
+    /// many keys were processed" need to be checked before this is wired
+    /// into a real call site — flagged here rather than glossed over.
+    ///
+    /// Not wired into `core/cache.rs::invalidate`/`routes/cache.rs` yet —
+    /// per the New-Clone Checklist, wiring waits on either a working
+    /// toolchain or the full per-call-site audit finishing, neither of
+    /// which is true yet. This only builds the storage-layer primitive
+    /// Finding #17 said was missing. Not compiled — same toolchain wall as
+    /// every other file in this crate; reviewed by reading against
+    /// `redact_from_redis_and_publish`'s real implementation
+    /// (`redis/cache.rs`) line-for-line.
+    pub async fn redact_and_publish<'a, K>(
+        &self,
+        tenant: &str,
+        channel: &str,
+        keys: K,
+    ) -> error_stack::Result<usize, StorageError>
+    where
+        K: IntoIterator<Item = CacheKind<'a>>,
+    {
+        let keys: Vec<CacheKind<'a>> = keys.into_iter().collect();
+
+        for key in &keys {
+            self.delete_key(key.get_key_without_prefix()).await?;
+        }
+
+        for key in keys.iter().cloned() {
+            let redact = CacheRedact {
+                tenant: tenant.to_owned(),
+                kind: key,
+            };
+            let payload = serde_json::to_vec(&redact)
+                .change_context(StorageError::SerializationFailed)
+                .attach_printable("Failed to serialize CacheRedact for pg_pub_sub publish")?;
+
+            crate::pg_pub_sub::publish(&self.pool, channel, &payload).await?;
+        }
+
+        Ok(keys.len())
     }
 
     // ---- batch hash write (Finding #7) ----------------------------------

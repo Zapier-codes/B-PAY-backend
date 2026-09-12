@@ -21616,3 +21616,102 @@ git push
 (`git am` applies both commits — the code fix, then this handover.md
 entry — from the one file in order; standard multi-patch mbox, not a
 squash, so history stays as two separate commits after `git am`.)
+
+## Task — Task 73/a item 3: re-checked the 6 named files for the trustly/worldpayxml cfg-gate-mismatch pattern — none reproduce it (2026-09-12, new session)
+
+**Trigger:** product owner asked to pick up the next unblocked task per this
+file's own pointer box (🟢🟢 box: "Next real task: item 3 ... re-check these
+fresh now that both connector-level items (1 and 2) have landed") and push a
+patch through the established Patch Handoff Convention.
+
+**First, per the New-Clone Checklist:** `git log --oneline -1` showed
+`4ddfda5c4` on clone, matching the checklist's expectation of "or something
+newer." Toolchain step (2) not re-run, per the 2026-09-11 retirement already
+on record — `which rustc cargo` returned nothing this session too, consistent
+with every prior session, not re-litigated further.
+
+**Scope:** the six files named in item 3 — `truelayer/transformers.rs`,
+`gotyme_sanlam.rs`, `envoy/transformers.rs`,
+`cybersourcedecisionmanager.rs` + `transformers.rs`, `paypal/transformers.rs`,
+`adyenplatform.rs` — re-checked against the exact bug family items 1 and 2
+fixed: a `get_*_payout_webhook_event`-style function defined unconditionally
+while its caller only reaches it behind `#[cfg(feature = "payouts")]`
+(trustly: caller had no fallback, needed one added; worldpayxml: caller
+already had a fallback, definition just needed gating to match).
+
+**Finding: none of the six reproduce the bug.** Traced each connector's own
+webhook call chain (not just grepped for the string `payout`) end to end:
+
+- **`truelayer`**: `get_payout_webhook_event` (transformers.rs:780) and its
+  only caller, `truelayer.rs::get_webhook_event_type` (line 1022, inside the
+  *unconditional* `impl webhooks::IncomingWebhook for Truelayer` at line 978),
+  are both unconditional — no `#[cfg(feature = "payouts")]` anywhere in this
+  chain, including `TruelayerPayoutsWebhookEvent` and
+  `TruelayerPayoutsWebhookBody`. Internally consistent; not the item-1/2
+  pattern (that requires a *mismatch* between definition and call site, not
+  uniform absence of gating).
+- **`envoy`**: `envoy.rs::get_webhook_event_type` unconditionally returns
+  `WebhooksNotImplemented` and never calls into `transformers.rs`'s
+  `#[cfg(feature = "payouts")]`-gated `EnvoyPayoutSoapResponse` conversion at
+  all — that conversion has no caller found anywhere in the connector
+  (grepped the whole `envoy/` module for its type name). No mismatch, because
+  there's no live call site to mismatch against.
+- **`adyenplatform`**: every payouts-only branch in
+  `get_webhook_object_reference_id` / `get_webhook_event_type` /
+  `get_webhook_resource_object` uses the paired
+  `#[cfg(feature = "payouts")]` / `#[cfg(not(feature = "payouts"))]` arms on
+  both the parameter list and the body, with an explicit
+  `WebhooksNotImplemented` fallback in the `not` arm — the exact shape items
+  1/2 were pushing the other five connectors toward. Already correct.
+- **`paypal`**: `PayoutSync`/`PayoutFulfill`/`PayoutCreate` impls and every
+  `PaypalResource::PaypalBatchPayoutWebhooks` /
+  `PaypalItemPayoutWebhooks` match arm in `get_webhook_resource_object` (and
+  the equivalent arms in `get_webhook_event_type` /
+  `get_webhook_object_reference_id`, checked separately) are consistently
+  `#[cfg(feature = "payouts")]`-gated on both sides. Already correct.
+- **`gotyme_sanlam`**: `PayoutFulfill`/`PayoutSync` impls are consistently
+  gated (lines 178/180/182 pair with 179/181/183); `get_webhook_event_type`
+  (line 511) doesn't call into any unconditional payout-only helper. No
+  mismatch found.
+- **`cybersourcedecisionmanager` (+ its `transformers.rs`)**: zero matches
+  for `payout` (case-insensitive) across both files — this connector doesn't
+  implement payouts at all, so the bug family doesn't apply.
+
+**No code change made.** Item 3's own framing ("not-yet-root-caused
+remainder") anticipated these might still need the same fix as items 1/2;
+tracing each call chain end-to-end instead of pattern-matching on the
+`#[cfg(feature = "payouts")]` string shows they don't. Shipping a gate change
+nobody's call chain needs would be the same class of unverified,
+uncompiled-risk change this handover process exists to avoid — so the honest
+result of this audit is "checked, clean," not a diff.
+
+**Not compiled** (no working `rustc`/`cargo` in this sandbox, same wall as
+every prior session) — this session's output is a reading-based audit result,
+not a code change, so there's nothing to compile-check.
+
+**Not done, still open:**
+- The per-call-site TTL/atomicity audit's "batch 3" (New-Clone Checklist
+  item 4 / prior sessions' "batch 2" entries) — unrelated to item 3, still
+  outstanding on its own track.
+- If a future session gets a working `rustc` ≥ 1.85, re-running `cargo check
+  -p hyperswitch_connectors --no-default-features` vs
+  `--features payouts` on these six files would give a compiler-verified
+  second opinion on this session's reading-based conclusion — cheap
+  confirmation once the toolchain wall lifts, not required before trusting
+  this entry.
+
+**Per the Patch Handoff Convention, rule 8: drift-checked immediately before
+this entry** — `git fetch origin` confirmed `origin/main` unchanged at
+`4ddfda5c4` (this session's clone base); no rebuild needed.
+
+**Per rule 4: this stayed off `main`** — committed on branch
+`audit/task-73a-item3-payouts-cfg-recheck`, not `main`, regardless of how the
+request for this work was phrased.
+
+**Per rule 7: command block for this session's handoff (doc-only entry, no
+code diff, no `db/migrations/` changes, no DB-Ops block owed):**
+```
+cd ~/B-Pay-backend
+git am ~/storage/downloads/0001-task-73a-item3-payouts-cfg-recheck-and-handover.patch
+git push
+```

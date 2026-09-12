@@ -20338,3 +20338,115 @@ toolchain-or-audit-complete gate in the New-Clone Checklist is actually
 met), still needs a rule-8 drift check (`git fetch origin`) before handing
 off, still one patch via `git format-patch` for the product owner to
 `git am` + push — never pushed directly by the session itself.
+
+## Task 73/a — per-call-site audit, batch 2 of the 10-per-session convention (2026-09-12): 6 genuinely new real call sites confirmed, one real gap found (Finding #17)
+
+**Following the batching convention set last session** (search "batching
+convention"). Short version up front: this batch does **not** deliver 10
+newly-walked files — it delivers 6, plus a documented list of candidates
+that looked real from a keyword match but turned out not to be real
+production Redis call sites on inspection. Padding to 10 by counting those
+would misrepresent audit coverage to the next session, which is the exact
+failure mode this file's own standing practice already warns against
+(recording things as found, not as assumed/rounded up).
+
+**Methodology, stated so it's reproducible:** grep'd `crates/router/src` for
+actual usage patterns (`get_redis_conn()`, `redis_conn\.`, `redis_interface::`,
+`\.publish\(`, `CacheKind::`, `storage_impl::redis::cache`, etc.), not just
+the word "redis" — the word-only match the original 63-file/102-file counts
+apparently used pulls in a lot of noise (test setup, comments, unrelated
+`.insert()` calls, error-variant names). Cross-checked every hit against
+every filename already named anywhere in this file's audit history (~124
+distinct `.rs` names, extracted mechanically, not from memory) to find what's
+actually still unwalked.
+
+**6 files confirmed as genuine, previously-unwalked, real production call
+sites — all read in depth this pass:**
+
+1. **`routes/cache.rs`** → **`core/cache.rs::invalidate`** → `storage_impl::
+   redis::cache::redact_from_redis_and_publish` — **real gap, see Finding #17
+   below.** This isn't a plain get/set/delete: it's delete-and-broadcast in
+   one call (invalidate a key, then publish the invalidation so every other
+   instance's in-memory cache drops it too). Neither `pg_kv_store.rs`
+   (delete-only) nor `pg_pub_sub.rs` (publish-only) has a combined method for
+   this, and nothing wires the two together yet.
+2. **`core/payment_methods/client.rs`** (`store_payment_token_in_redis`) —
+   audited, no gap. Calls `ParentPaymentMethodToken::insert`, whose actual
+   implementation lives in `routes/payment_methods.rs` (already an audited
+   file) and uses `serialize_and_set_key_with_expiry` — a plain relative-TTL
+   overwrite, exactly `pg_kv_store::set_key_with_expiry`'s shape. This file
+   is a caller into an already-covered abstraction, not a new interface
+   need.
+3. **`core/unified_authentication_service.rs`** (`execute_check` /
+   `authentication_retrieve_eligibility_check_core`) — audited, no gap. One
+   `serialize_and_set_key_with_expiry` (relative TTL,
+   `AUTHENTICATION_ELIGIBILITY_CHECK_DATA_TTL`) and one plain `get_key`.
+   Both already covered by `set_key_with_expiry`/`get_key`.
+4. **`core/surcharge_decision_config.rs`** — audited, no gap. Builds a
+   `CacheKind::Surcharge` key and hands it to
+   `update_merchant_active_algorithm_ref` in `core/routing/helpers.rs`
+   (already audited) — a caller, not an independent interface need.
+5. **`core/payouts/helpers.rs`** — audited, no gap. Plain
+   `get_redis_conn()` + `get_key::<Option<String>>` to resolve a payout
+   token — exactly `pg_kv_store::get_key`'s shape, nothing conditional or
+   TTL-bearing about this specific read.
+6. **`utils/db_utils.rs`** — audited, no gap, and arguably not a call site
+   at all. `try_redis_get_else_try_database_get` is a generic redis-then-db
+   fallback wrapper — it takes the caller's already-constructed futures, so
+   it has no TTL/atomicity shape of its own. Its only real callers
+   (`db/address.rs`, `db/reverse_lookup.rs`, `db/mandate.rs`, `db/refund.rs`,
+   `db/dispute.rs`) are all already-audited files. Recording this as checked
+   so nobody re-derives the same "wait, is this a 64th site?" question.
+
+**Checked and ruled out as false positives (matched "redis" as a keyword,
+not real production call sites) — recording these so they aren't re-checked
+from scratch:**
+- `core/errors.rs` — "redis" appears only in error-variant names
+  (`RevenueRecoveryRedisInsertFailed`) and a `pub use redis_interface::
+  errors::RedisError` re-export; no call site.
+- `db/events.rs`, `db/locker_mock_up.rs`, `db/merchant_key_store.rs` — each
+  only references `redis_interface::RedisSettings::default()` inside
+  `#[cfg(test)]` test setup, not production code.
+- `types/storage/payment_method.rs` — a code comment mentioning Redis, no
+  actual call.
+- `core/payment_methods/transformers.rs` — the `.insert(` hits here are
+  `parent_headers.insert(...)`, a plain `HashMap`/header insert unrelated
+  to Redis; coincidental name collision with the token-store pattern in
+  finding #2 above.
+- `core/payments/operations/payment_confirm_external_vault_proxy.rs` — one
+  comment referencing Redis conceptually, no call.
+- `core/payment_methods/access_token.rs` — no Redis reference found on
+  re-check; an earlier broad keyword pass apparently mismatched this file.
+
+### Finding #17 — `redact_from_redis_and_publish`'s combined delete+broadcast semantics have no Postgres-side equivalent yet (real, not fixed this pass)
+
+`routes/cache.rs`'s cache-invalidation endpoint needs one atomic-in-intent
+operation: redact (delete) a key from every affected key variant, then
+publish an invalidation event so every other running instance's in-process
+cache also drops it. `pg_kv_store::delete_key` deletes; `pg_pub_sub::publish`
+publishes; nothing currently combines them the way
+`redact_from_redis_and_publish` does in one call, and `CacheKind`'s several
+variants (`All`, plus whatever the others are — not enumerated this pass)
+suggest more than one key shape may need redacting per call, similar in
+spirit to `pg_lock`'s `try_acquire_multiple` batch shape.
+
+**Not fixed this pass** (read-only audit, same toolchain wall as every other
+entry — no `rustc`/`cargo` available in this sandbox, re-confirmed via
+`which cargo rustc` before this pass). Concrete next unblocked step for
+whoever picks this up: a `PgKvStore`/`pg_pub_sub` combined helper (or a
+small orchestration function in `storage_impl` that calls both) mirroring
+`redact_from_redis_and_publish`'s shape — needs `CacheKind`'s actual variant
+list read first (`crates/storage_impl/src/redis/cache.rs`, not yet opened
+this pass) before designing the Postgres-side signature.
+
+**Not done, still open:** `CacheKind`'s full variant list unread; Finding #17
+not fixed; the remaining real call sites beyond this batch's 6 (exact count
+now lower than the standing "~58-60" estimate, since several previously-
+uncounted files turn out to be false positives rather than unwalked real
+sites — a precise remaining count needs a full re-run of this batch's
+keyword methodology across the whole ~102/63 candidate set, not done this
+pass) are still unwalked.
+
+**Per the Patch Handoff Convention, rule 8: drift-checked immediately before
+this entry** — `git fetch origin` showed `origin/main` unchanged at
+`ab1c26a8d`, no drift.

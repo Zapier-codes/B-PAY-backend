@@ -159,6 +159,44 @@
 > product owner for this, this session (search "gh run view" below),
 > rather than re-attempted here.
 >
+> **⚠️ POINTER CORRECTION (2026-09-12, later same day) — the 🔴 "NEW NEXT
+> TASK" box directly above this one is now RESOLVED, not open; recorded
+> as a correction on top of it rather than edited away, per this file's
+> own standing practice.** The actual compiler error text for `cargo
+> check -p storage_impl (pinned 1.85.0)` finally arrived this session —
+> not via the previously-blocked unauthenticated `GET .../actions/jobs/
+> {id}/logs` call (still walled, not re-attempted), but handed directly
+> to the session as a raw workflow log (job "Check compilation on MSRV
+> toolchain (ubuntu-latest)", run `103562679573`, commit `b81bf68c3` —
+> the exact commit the prior session's `payment_attempt.rs` fix landed
+> as). Confirmed against the log: `error: unused import:
+> \`pg_connection_read_replica\`` at
+> `crates/storage_impl/src/payouts/payouts.rs:51:39`, under
+> `cargo check --all-targets --package storage_impl --no-default-features
+> --features payouts,v1,redis-rs` (no `olap`) — the identical bug shape
+> as the just-landed `payment_attempt.rs` fix, this time in a different
+> file: `pg_connection_read_replica` has exactly one call site in
+> `payouts.rs` (`get_total_count_of_filtered_payouts`, gated
+> `#[cfg(feature = "olap")]`), but the import lived in the file's
+> unconditional `use crate::{...}` block, so any non-`olap` build (this
+> MSRV job's feature set) compiles out the only consumer and trips
+> `-D unused-imports`. Fixed the same way: import split onto its own
+> `#[cfg(feature = "olap")]`-gated line, positioned directly before the
+> big `use crate::{...}` block, matching the exact convention already
+> in `payment_attempt.rs` line 36. Branch
+> `fix/payouts-storage-impl-olap-cfg-gate`, patch
+> `0001-fix-storage_impl-gate-pg_connection_read_replica-imp.patch`. Not
+> compiled — same toolchain wall as every prior session (see step 2 of
+> the New-Clone Checklist); reviewed by reading against the CI error
+> line-for-line. **Next real task: get this fix's own next CI run and
+> confirm `cargo check -p storage_impl (pinned 1.85.0)` actually goes
+> green** — plus the other jobs still red in the "Current full CI
+> picture" bullet list above (`Run tests on stable toolchain`, `Nix CI`
+> both platforms, `Check compilation for V2 features`, `Spell check`,
+> `Check formatting`) remain unexamined this session; none of their logs
+> were pulled, so their root causes are still genuinely open, not just
+> unfixed.
+>
 > **⚠️ POINTER CORRECTION (2026-09-11) — the box below this one (marked
 > "NINTH PASS... newest") stopped being accurate several sessions ago
 > and nobody updated it when they moved on; recorded as a correction,
@@ -21060,3 +21098,70 @@ cd ~/B-PAY-backend
 git am ~/storage/downloads/0001-fix-storage_impl-restore-futureext-and-widen-pg_connection_read_replica-cfg.patch
 git push
 ```
+
+## Task — fixed the payouts.rs unused-import regression flagged by CI on `b81bf68c3` (2026-09-12, later same day)
+
+**Trigger:** raw workflow log for run `103562679573` (job "Check
+compilation on MSRV toolchain (ubuntu-latest)") handed directly to this
+session — not pulled via the API (the log-download auth wall documented
+in the "🔴 NEW NEXT TASK" box above was never cleared this session; this
+log arrived through a different channel).
+
+**Root cause:** same shape as the just-landed `payment_attempt.rs` fix
+(commit `b81bf68c3`), one file over. `cargo check --all-targets --package
+storage_impl --no-default-features --features "payouts,v1,redis-rs"` (no
+`olap`) failed with:
+```
+error: unused import: `pg_connection_read_replica`
+ --> crates/storage_impl/src/payouts/payouts.rs:51:39
+```
+`pg_connection_read_replica` has exactly one call site in this file
+(`get_total_count_of_filtered_payouts`, `#[cfg(feature = "olap")]`), but
+the import lived in the file's unconditional `use crate::{...}` block
+alongside `pg_connection_read`/`pg_connection_write` (both of which *do*
+have unconditional call sites, so they're fine ungated). Any build
+without `olap` — like this MSRV job's feature set — compiles out the
+only consumer and trips `-D unused-imports`.
+
+**Fix applied:** split `pg_connection_read_replica` onto its own
+`#[cfg(feature = "olap")]`-gated `use crate::utils::pg_connection_read_replica;`
+line, positioned directly before the big `use crate::{...}` block —
+exactly the convention already established in
+`crates/storage_impl/src/payments/payment_attempt.rs:35-36` for the
+identical bug pattern. No `v1`/`v2` split needed here (unlike
+`payment_attempt.rs`'s two call sites across v1/v2): `payouts.rs` has
+only the one, `olap`-only call site, so a plain `feature = "olap"` gate
+covers it exactly with nothing extra loosened.
+
+**Not compiled** — no working `rustc` ≥ 1.85 in this sandbox (toolchain
+installer hosts blocked on the network allowlist, per the New-Clone
+Checklist). Reviewed by reading against the CI error line-for-line, not
+compiler-verified — the next CI run against this commit is the real
+confirmation.
+
+**Not done, still open:** the rest of the "Current full CI picture" list
+in the NEXT TASK box (`Run tests on stable toolchain`, both `Nix CI`
+jobs, `Check compilation for V2 features`, `Spell check`, `Check
+formatting`) — none of those logs were pulled or read this session; this
+entry only covers the one job whose log was supplied.
+
+**Per the Patch Handoff Convention, rule 8: drift-checked immediately
+before this entry** — `git fetch origin` confirmed `origin/main`
+unchanged at `b81bf68c3` (the commit this session's clone and the
+supplied CI log both started from); no rebuild needed.
+
+**Per rule 4: this stayed off `main`** — committed on branch
+`fix/payouts-storage-impl-olap-cfg-gate`, not `main`, regardless of how
+the request for this fix was phrased.
+
+**Per rule 7: command block for this session's handoff (code fix + doc
+update, combined into one patch file per product-owner request — no
+`db/migrations/` changes, no DB-Ops block owed):**
+```
+cd ~/B-PAY-backend
+git am ~/storage/downloads/0001-payouts-rs-olap-cfg-gate-fix-and-handover.patch
+git push
+```
+(`git am` applies both commits — code fix, then the handover.md entry —
+from the one file in order; it's a standard multi-patch mbox, not a
+squash, so history stays as two separate commits after `git am`.)

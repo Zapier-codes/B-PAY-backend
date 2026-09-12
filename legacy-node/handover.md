@@ -106,6 +106,51 @@
 > task's own section. Nothing else in this file is required reading to
 > start work.**
 >
+> **🔴 NEW NEXT TASK (2026-09-12, latest) — Task 73/a, Finding #17's
+> storage-layer primitive is now built; the CI-blocked items in the
+> "Current full CI picture" box below remain genuinely open and
+> untouched this session (the unauthenticated `GET .../actions/runs`
+> and `.../actions/jobs/{id}/logs` calls both hit the same
+> already-documented rate-limit/auth wall again this session — not
+> re-diagnosed further, per this file's own standing practice of not
+> re-spending a session on a confirmed wall).** Per the New-Clone
+> Checklist's step 4 (real work not needing a toolchain or CI access),
+> continued the per-call-site audit's established "batch 2" follow-up:
+> read `redis/cache.rs` directly for `CacheKind`'s full variant list
+> (11 variants: `Config`, `Accounts`, `Routing`, `DecisionManager`,
+> `Surcharge`, `CGraph`, `SuccessBasedDynamicRoutingCache`,
+> `EliminationBasedDynamicRoutingCache`,
+> `ContractBasedDynamicRoutingCache`, `PmFiltersCGraph`, `All` — the
+> "not enumerated this pass" gap Finding #17's own writeup flagged) and
+> `redact_from_redis_and_publish`'s exact implementation, then added
+> `PgKvStore::redact_and_publish` in `pg_kv_store.rs`: deletes each key
+> via the existing `delete_key`, then publishes one
+> `CacheRedact{tenant, kind}` payload per key via `pg_pub_sub::publish`
+> — same delete-then-publish ordering and fail-fast-on-first-error
+> shape as the Redis original, no new atomicity contract invented.
+> Branch `fix/pg-kv-store-redact-and-publish-finding-17`, commit
+> `2dcaa3368`. **Explicitly not done, flagged rather than glossed
+> over:** not wired into `core/cache.rs::invalidate`/`routes/cache.rs`
+> (New-Clone Checklist step 4's wiring prerequisites — working
+> toolchain or completed audit — still aren't met); the returned
+> `usize` counts keys processed, not "subscriber receipts" the way the
+> Redis version's return value technically does, so a future wiring
+> pass needs to confirm no caller depends on that distinction before
+> treating the two as interchangeable; not compiled (same toolchain
+> wall as everything else, reviewed by reading only). **Next real
+> task, in order of what's actually unblocked:** either (a) resume the
+> per-call-site audit's batch-3 pass over the remaining unwalked real
+> Redis call sites (exact count still not precisely known — see batch
+> 2's own note that a full re-run of its keyword methodology across the
+> whole ~102/63 candidate set hasn't been done), or (b) once a
+> product-owner-authenticated `gh` session can pull the walled CI logs,
+> get the actual compiler error text for whichever of "Run tests on
+> stable toolchain" / "Check compilation for V2 features" / "Spell
+> check" / "Check formatting" is cheapest to fix first, plus the still-
+> unpulled `cargo clippy -p storage_impl` soft-fail lint output
+> (`continue-on-error: true`, `ci.yml:551`, exit 101, not yet
+> diagnosed).
+>
 > **⚠️ POINTER CORRECTION (2026-09-12) — the 🟡 euclid_wasm box directly
 > below this one is now RESOLVED, not open; recorded as a correction on
 > top of it rather than edited away, per this file's own standing
@@ -21251,3 +21296,118 @@ cd ~/B-PAY-backend
 git am ~/storage/downloads/0001-ci-drop-flakehub-and-node20-cleanup-and-handover.patch
 git push
 ```
+
+## Task — Task 73/a, Finding #17: built `PgKvStore::redact_and_publish`, the missing combined delete+broadcast storage primitive (2026-09-12, new session)
+
+**Trigger:** product owner asked to pick up the next real, unblocked task
+per this file's own pointer box and push a patch through the established
+Patch Handoff Convention.
+
+**First, per the New-Clone Checklist:** confirmed current `origin/main` at
+`c941ae6ab` (matches this session's clone base, no drift). Re-attempted the
+unauthenticated GitHub Actions API pull for current CI status on that
+commit (`GET /repos/Zapier-codes/B-Pay-backend/actions/runs?branch=main`)
+— hit the identical `403 API rate limit exceeded` wall every prior session
+has hit on this same unauthenticated endpoint. Not re-diagnosed further;
+this is the already-documented wall (New-Clone Checklist / prior CI-status
+entries), not new information. Per the checklist's own step 2/3 guidance
+against re-spending a session confirming an already-confirmed wall, moved
+straight to step 4's list of real work that doesn't need CI/toolchain
+access.
+
+**Picked:** Finding #17 (`routes/cache.rs`'s cache-invalidation endpoint
+needing a combined delete+broadcast primitive that neither `pg_kv_store.rs`
+nor `pg_pub_sub.rs` had on its own) — flagged in the "per-call-site audit,
+batch 2" entry as the concrete next unblocked step, with its own stated
+prerequisite ("`CacheKind`'s actual variant list read first
+(`crates/storage_impl/src/redis/cache.rs`, not yet opened this pass)")
+still outstanding. Read that file directly this session.
+
+**Findings from reading `redis/cache.rs`:**
+- `CacheKind<'a>` has 11 variants total (not enumerated in the batch-2
+  entry): `Config`, `Accounts`, `Routing`, `DecisionManager`, `Surcharge`,
+  `CGraph`, `SuccessBasedDynamicRoutingCache`,
+  `EliminationBasedDynamicRoutingCache`, `ContractBasedDynamicRoutingCache`,
+  `PmFiltersCGraph`, `All` — every variant wraps a plain `Cow<'a, str>` key,
+  and `get_key_without_prefix()` returns that inner string uniformly across
+  all 11, including `All`. So no per-variant special-casing is needed on
+  the Postgres side either.
+- `redact_from_redis_and_publish`'s real shape: batch-delete every key via
+  `delete_multiple_keys`, log the per-key deletion result, then `publish`
+  each `CacheKind` (wrapped by the caller/framework into `CacheRedact` for
+  wire serialization — see `TryFrom<CacheRedact> for RedisValue`) to
+  `IMC_INVALIDATION_CHANNEL`, returning the summed publish-receipt count.
+  Delete-then-publish ordering is deliberate in the original, not
+  incidental — a peer that reloads mid-window gets a clean cache-miss and
+  re-fetches, rather than re-populating from a row about to be deleted.
+
+**Fix applied:** added `PgKvStore::redact_and_publish(&self, tenant: &str,
+channel: &str, keys: K)` to `pg_kv_store.rs`, right after
+`delete_hash_field`. Deletes every key via the already-existing
+`delete_key` (Finding #9), then publishes one `CacheRedact{tenant, kind}`
+JSON payload per key via `pg_pub_sub::publish(&self.pool, channel,
+&payload)` — same ordering as the Redis original, same fail-fast-on-first-
+`?`-error behavior (no new partial-failure handling invented; this matches
+`redact_from_redis_and_publish`'s own lack of a `MULTI`/`EXEC` wrapper
+around its delete+publish pair, so the consistency contract isn't weakened
+relative to what's already shipping). Added `redis::cache::{CacheKind,
+CacheRedact}` to the file's `use crate::{...}` block — both already `pub`,
+same crate, no visibility changes needed. `serde_json::to_vec` used
+unqualified, matching this same file's existing convention at lines 248
+and 299 (crate dependency already declared in `storage_impl/Cargo.toml`,
+no explicit `use` needed).
+
+**Explicitly flagged, not glossed over:**
+- **Not wired into any real call site.** `core/cache.rs::invalidate` /
+  `routes/cache.rs` still call the Redis version directly. Per the
+  New-Clone Checklist step 4's explicit prerequisites, wiring waits on
+  either a working `rustc` ≥ 1.85 or the per-call-site audit finishing —
+  neither is true yet, so this session built the primitive Finding #17
+  was missing and stopped there, deliberately.
+- **Return-value semantics gap, real and worth a caller check before
+  wiring:** `redact_from_redis_and_publish` returns the *summed publish
+  subscriber-receipt count* (a Redis `PUBLISH` return value), which
+  Postgres `NOTIFY` has no equivalent for. `redact_and_publish` returns
+  "how many keys were processed" instead — the same number in the common
+  case, but not the same *meaning*. Whoever wires this in needs to confirm
+  `core/cache.rs::invalidate`'s caller doesn't branch on the Redis
+  version's return value meaning something more specific than "count of
+  keys handled" before treating the two as drop-in equivalent.
+- **Not compiled** — no working `rustc` ≥ 1.85 in this sandbox (same
+  toolchain wall, re-confirmed via `which cargo rustc` returning nothing
+  before this session's work, not re-litigated at length per the
+  checklist's step 2/3 guidance). Reviewed by reading against
+  `redact_from_redis_and_publish`'s real implementation line-for-line, not
+  compiler-verified.
+
+**Not done, still open:**
+- The per-call-site audit's "batch 3" — the remaining unwalked real Redis
+  call sites beyond batch 2's 6 (exact remaining count still not precisely
+  known; batch 2's own entry already flagged that a full re-run of its
+  keyword methodology across the whole ~102/63 candidate set hasn't been
+  done).
+- The CI-log-blocked items: `Run tests on stable toolchain`, `Check
+  compilation for V2 features`, `Spell check`, `Check formatting`, and the
+  `cargo clippy -p storage_impl` soft-fail (exit 101, `continue-on-error:
+  true` at `ci.yml:551`) — none of these logs were pulled this session
+  (same auth/rate-limit wall), so their root causes remain genuinely open.
+
+**Per the Patch Handoff Convention, rule 8: drift-checked immediately
+before this entry** — `git fetch origin` confirmed `origin/main` unchanged
+at `c941ae6ab` (this session's clone base); no rebuild needed.
+
+**Per rule 4: this stayed off `main`** — committed on branch
+`fix/pg-kv-store-redact-and-publish-finding-17`, not `main`, regardless of
+how the request for this work was phrased.
+
+**Per rule 7: command block for this session's handoff (code fix + doc
+update, combined into one patch file — no `db/migrations/` changes, no
+DB-Ops block owed):**
+```
+cd ~/B-PAY-backend
+git am ~/storage/downloads/0001-pg-kv-store-redact-and-publish-finding-17-and-handover.patch
+git push
+```
+(`git am` applies both commits — the code fix, then this handover.md
+entry — from the one file in order; standard multi-patch mbox, not a
+squash, so history stays as two separate commits after `git am`.)

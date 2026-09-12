@@ -21165,3 +21165,89 @@ git push
 (`git am` applies both commits — code fix, then the handover.md entry —
 from the one file in order; it's a standard multi-patch mbox, not a
 squash, so history stays as two separate commits after `git am`.)
+
+## Task — dropped FlakeHub dependency and cleared Node-20 deprecation warnings from ci.yml (2026-09-12, later same day)
+
+**Trigger:** product owner flagged the `Cache Nix store` step's FlakeHub
+annotation on run `34699292118` / job `103568117727`
+(`.../actions/runs/34699292118/job/103568117727#step:4:43`), asked what
+registering on FlakeHub.com would actually buy, then said to use GitHub
+Actions caching instead "like we did for the rest" and drop the FlakeHub
+requirement entirely. Separately, also asked to clean up the various
+"Node.js 20 is deprecated" notices showing on `Check wasm build`, `Nix
+CI`, and `cargo check -p storage_impl` — jobs that already succeeded,
+but noisily.
+
+**First established none of this was actually blocking anything:**
+fetched both job pages directly (`web_fetch` on the run/job URLs — the
+GitHub API log-download endpoint is still walled off from this sandbox,
+same 403/rate-limit as every prior session, confirmed again this
+session). `Nix CI` succeeded (2m 0s) despite the FlakeHub annotations;
+`cargo check -p storage_impl (pinned 1.85.0)` also succeeded (6m 13s) —
+its own "exit code 101" annotation turned out to belong to a *different*
+sub-step, `cargo clippy -p storage_impl`, which has `continue-on-error:
+true` at `ci.yml:551` (a deliberate, pre-existing soft-fail lint check,
+not a build blocker). So all of this was cache/lint noise on green jobs,
+not the storage_impl build regression from the entry above — genuinely
+different in kind.
+
+**Fix 1 — FlakeHub:** `magic-nix-cache-action` defaults to attempting
+*both* FlakeHub Cache and the GitHub Actions cache every run. This org
+has no FlakeHub account, so that half fails every time — confirmed the
+"Failed to save" annotation's embedded HTML is literally FlakeHub's own
+outage page copy, not a GitHub Actions cache error. Added `with:
+use-flakehub: false`, leaving `use-gha-cache` at its default (`true`) —
+same caching mechanism the `cargo`/`sccache` jobs already use
+successfully, no external account. Registering on FlakeHub.com remains
+available later (faster, purpose-built binary cache; also usable outside
+CI) but is a product-owner account decision, not forced by this fix.
+
+**Fix 2 — Node 20 deprecation, checked action-by-action (not just
+version-bumped blind):** read each action's actual `action.yml` at
+`raw.githubusercontent.com` for both its pinned ref and its latest tag,
+rather than assuming a bump would help:
+- `mozilla-actions/sccache-action@v0.0.9` → **`@v0.0.11`**. `v0.0.9`'s
+  `action.yml` is `using: node20`; `v0.0.10` (upstream PR #245, "Bump to
+  node24") and `v0.0.11` (latest tag, confirmed no `v0.0.12` exists) are
+  both `using: node24`. Bumped all 5 occurrences in `ci.yml`.
+- `DeterminateSystems/magic-nix-cache-action@v9` → **`@v15`**. Checked
+  `v9` through `v13` directly — all still `using: node20` — `v14` is the
+  first `node24` tag, `v15` is latest (confirmed no `v16`) and keeps the
+  identical `use-flakehub`/`use-gha-cache` input names, so Fix 1 above
+  needed no further adjustment after the bump.
+- `arduino/setup-protoc@v3` → **left as-is, deliberately, not a fix
+  gap.** Checked both the `v3` tag and the `master` branch's
+  `action.yml` directly — both still `using: node20`, no `v4` tag exists
+  anywhere in the repo yet. This is upstream's move to make, not a
+  version this repo is behind on. Documented inline in `ci.yml` so a
+  future session doesn't re-spend time re-diagnosing the same
+  no-fix-available conclusion; revisit only once arduino actually ships
+  a node24-compatible release.
+
+**Not run against a real CI job** — no working `nix`/`gh`/`cargo` in
+this sandbox to verify beyond reading each action's actual `action.yml`
+at the pinned ref. The next CI run against this commit is the real
+confirmation the annotations are gone and every job still passes.
+
+**Not touched, still open:** the `cargo clippy -p storage_impl` soft-fail
+itself (exit 101, tolerated via `continue-on-error: true`) — its real
+lint output still hasn't been pulled (same log-download wall); fixing the
+underlying lint issue, if wanted, is a separate task from this session's
+cache/Node-version cleanup.
+
+**Per the Patch Handoff Convention, rule 8: drift-checked immediately
+before this entry** — `git fetch origin` confirmed `origin/main` at
+`b65ee158d` (this session's clone base, the payouts.rs fix + its
+handover entry from the prior session); no rebuild needed.
+
+**Per rule 4: this stayed off `main`** — committed on branch
+`fix/nix-ci-drop-flakehub-requirement`, not `main`.
+
+**Per rule 7: command block for this session's handoff (single combined
+patch file per product-owner preference — no `db/migrations/` changes,
+no DB-Ops block owed):**
+```
+cd ~/B-PAY-backend
+git am ~/storage/downloads/0001-ci-drop-flakehub-and-node20-cleanup-and-handover.patch
+git push
+```

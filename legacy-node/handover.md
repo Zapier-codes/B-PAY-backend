@@ -106,6 +106,59 @@
 > task's own section. Nothing else in this file is required reading to
 > start work.**
 >
+> **⚠️ POINTER CORRECTION (2026-09-12) — the 🟡 euclid_wasm box directly
+> below this one is now RESOLVED, not open; recorded as a correction on
+> top of it rather than edited away, per this file's own standing
+> practice.** Live GitHub Actions data pulled this session
+> (unauthenticated `GET /repos/Zapier-codes/B-Pay-backend/actions/runs`,
+> `core` rate limit, not the log-download auth wall — that part's still
+> blocked, see below) for the most recent push, commit `55e3a83de`
+> (`main`, run `34678839780`): **`Check wasm build` = `success`.** Commit
+> `f686a2a75` (`fix(router_env): gate tokio/opentelemetry-otlp/
+> opentelemetry_sdk out of wasm32`) — the three-commit candidate the
+> 🟡 box below describes as "well-grounded" but "not compiled, not run
+> against the actual failing CI log" — did in fact land on `main` (see
+> `git log`: `f686a2a75` sits right after `ab1c26a8d`, both already on
+> `main`, well before this session's `55e3a83de` HEAD) and the next real
+> CI run after it confirms the fix actually works. Nothing left to do on
+> euclid_wasm; the 🟡 box is kept below as history, not as a live task.
+>
+> **Current full CI picture for `55e3a83de` (run `34678839780`, 10
+> jobs), pulled the same way — this is the "only 2 passing" state the
+> product owner flagged this session, confirmed independently rather
+> than taken on their word:**
+> - ✅ `Spell check specific critical directories`
+> - ✅ `Check wasm build`
+> - ❌ `Run tests on stable toolchain`
+> - ❌ `Nix CI (x86_64-linux, ubuntu-latest)`
+> - ❌ `Check compilation for V2 features`
+> - ⚪ `Nix CI (aarch64-darwin, macos-latest)` — `cancelled`, not a failure in its own right (almost certainly cancelled because a required same-run job failed first; not investigated further this pass)
+> - ❌ `Spell check`
+> - ❌ `Check formatting`
+> - ❌ `Check compilation on MSRV toolchain (ubuntu-latest)`
+> - ❌ `cargo check -p storage_impl (pinned 1.85.0)`
+>
+> **🔴 NEW NEXT TASK, real and unblocked-to-diagnose (2026-09-12):** get
+> the actual compiler error text for `cargo check -p storage_impl
+> (pinned 1.85.0)` — this is the exact job the "✅ CI" box below this one
+> already flagged as the single highest-value target, and it's still
+> the top pick: it's the pinned-1.85 toolchain this sandbox has never
+> had, running for real on a GitHub-hosted runner, so whatever it prints
+> is the first real signal on Task 73/a's actual compile status. **Still
+> blocked from this sandbox specifically at the log-download step**:
+> `GET /repos/.../actions/jobs/{id}/logs` returned `403` again this
+> session (`{"message":"API rate limit exceeded..."}` this time, vs the
+> prior session's `403 Must have admin rights to Repository` — two
+> different 403 causes now on file for the same unauthenticated
+> endpoint, but the practical result is identical: no session has yet
+> gotten the raw log text from an unauthenticated call, full stop).
+> This is a real auth-scope wall, not a toolchain problem, so it isn't
+> something the next session should re-attempt unauthenticated either —
+> it needs a `gh auth login`-equivalent credential, which only the
+> product owner has on their own device. Exact commands handed to the
+> product owner for this, this session (search "gh run view" below),
+> rather than re-attempted here.
+>
 > **⚠️ POINTER CORRECTION (2026-09-11) — the box below this one (marked
 > "NINTH PASS... newest") stopped being accurate several sessions ago
 > and nobody updated it when they moved on; recorded as a correction,
@@ -20450,3 +20503,70 @@ pass) are still unwalked.
 **Per the Patch Handoff Convention, rule 8: drift-checked immediately before
 this entry** — `git fetch origin` showed `origin/main` unchanged at
 `ab1c26a8d`, no drift.
+
+## Task — live CI status check + euclid_wasm resolution confirmed (2026-09-12)
+
+**Trigger:** product owner asked to jump to the next task and to get real
+CI error output, having noticed only 2 of the current jobs are green.
+
+**What was actually done, in order:**
+1. Fresh `git clone` of `Zapier-codes/B-Pay-backend`, confirmed HEAD
+   `55e3a83de` (newer than the New-Clone Checklist's `9ffba4103`
+   baseline — clone is current, not stale).
+2. Read `git log --oneline -5` before touching anything: confirmed
+   `f686a2a75` (the euclid_wasm tokio/mio fix) and its handover commit
+   `ab1c26a8d` are both already on `main`, ahead of the 🟡 box that
+   described the fix as merely a "candidate."
+3. Pulled live GitHub Actions data (unauthenticated `GET .../actions/
+   runs?per_page=5` then `GET .../actions/runs/34678839780/jobs`) for
+   the current HEAD's own CI run — `core` rate limit only, no auth
+   needed for run/job status, as previous sessions already found.
+   Result: 2 green (`Spell check specific critical directories`,
+   `Check wasm build`), 6 red, 1 cancelled — matches the product
+   owner's "only 2 passing" exactly. Full per-job breakdown moved into
+   the pointer-correction box above (search "POINTER CORRECTION
+   (2026-09-12)") rather than duplicated here.
+4. Tried to go one level deeper — the actual compiler error text for
+   the `storage_impl` job — via `GET .../actions/jobs/{id}/logs`.
+   Blocked, same as the prior session's finding (search "Must have
+   admin rights to Repository"): unauthenticated log downloads don't
+   work from this sandbox. This session's 403 body was a rate-limit
+   message rather than the admin-rights message the prior session saw,
+   which just means there are now two independent unauthenticated-403
+   causes on file for the same endpoint — not a sign either one was
+   wrong. **Conclusion is the same as before: this needs product-owner
+   credentials, not another sandbox attempt.**
+5. No Rust code touched this session — nothing to compile-check, no
+   new toolchain gap. Only `legacy-node/handover.md` changed.
+
+**Not done, still open:** the actual `cargo check -p storage_impl`
+compiler error text (blocked on auth, see above — command for the
+product owner to get it themselves is below); the 6 other red jobs
+(`Run tests on stable toolchain`, `Nix CI x86_64-linux`, `Check
+compilation for V2 features`, `Spell check`, `Check formatting`,
+`Check compilation on MSRV toolchain`) not triaged at all this pass —
+picking one of those instead of `storage_impl` is a reasonable next
+session's call, but `storage_impl` stays the standing top pick per the
+🔴 box above until its actual error text is in hand.
+
+**Per the Patch Handoff Convention, rule 8: drift-checked immediately
+before this entry** — `git fetch origin` showed `origin/main`
+unchanged at `55e3a83de`, no drift.
+
+**Getting the real CI failure text — commands for the product owner to
+run on their own device (not runnable from this sandbox, see point 4
+above):**
+```
+gh auth login          # once, if not already authenticated
+gh run view 34678839780 --repo Zapier-codes/B-Pay-backend --log-failed \
+  > ~/storage/downloads/ci-errors-34678839780.txt
+```
+That pulls every failed step's real output for this run in one file.
+If a newer push has already produced a newer run by the time this is
+run, drop the run ID to get the latest automatically:
+```
+gh run view --repo Zapier-codes/B-Pay-backend --log-failed \
+  > ~/storage/downloads/ci-errors-latest.txt
+```
+Either file can be pasted back into a session for actual triage —
+that's the input this task has been blocked on all session.

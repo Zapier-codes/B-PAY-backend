@@ -4307,6 +4307,7 @@ pub struct OrderStatusEvent {
     pub payment: Payment,
 }
 
+#[cfg(feature = "payouts")]
 pub fn get_payout_webhook_event(status: LastEvent) -> api_models::webhooks::IncomingWebhookEvent {
     match status {
         LastEvent::PushRequested | LastEvent::PushPending => {

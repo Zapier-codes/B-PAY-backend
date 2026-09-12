@@ -358,7 +358,7 @@ pub fn construct_connector_webhook_registration_details(
         .transpose()?;
 
     Ok(
-        domain::MerchantConnectorAccountUpdate::ConnectorWebhookRegisterationUpdate {
+        domain::MerchantConnectorAccountUpdate::ConnectorWebhookRegistrationUpdate {
             connector_webhook_registration_details,
             connector_webhook_details,
             metadata,

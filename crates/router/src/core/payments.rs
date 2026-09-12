@@ -14315,7 +14315,7 @@ impl EligibilityHandler {
 
     // Run all eligibility checks in sequence, short-circuiting on the first deny.
     // Returns Confirm if no check denies.
-    async fn run_all_eligiblity_checks(
+    async fn run_all_eligibility_checks(
         &self,
     ) -> CustomResult<api_models::payments::SdkNextAction, errors::ApiErrorResponse> {
         let sdk_next_action = self
@@ -14359,7 +14359,7 @@ pub async fn payments_submit_eligibility_check(
         })?;
     let eligibility_handler =
         EligibilityHandler::new(state, platform, payment_eligibility_data, business_profile);
-    let sdk_next_action = eligibility_handler.run_all_eligiblity_checks().await?;
+    let sdk_next_action = eligibility_handler.run_all_eligibility_checks().await?;
     Ok(services::ApplicationResponse::Json(
         api_models::payments::PaymentsEligibilityCheckResponse {
             payment_id,
@@ -14885,7 +14885,7 @@ pub async fn payments_submit_eligibility(
 
     let eligibility_handler =
         EligibilityHandler::new(state, platform, payment_eligibility_data, business_profile);
-    let sdk_next_action = eligibility_handler.run_all_eligiblity_checks().await?;
+    let sdk_next_action = eligibility_handler.run_all_eligibility_checks().await?;
 
     let surcharge_details = match sdk_next_action.next_action {
         api_models::payments::NextActionCall::Deny { .. } => None,

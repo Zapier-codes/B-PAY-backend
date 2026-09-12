@@ -6,6 +6,7 @@ extend-ignore-identifiers-re = [
 
 [default.extend-identifiers]
 # Would have to break the api contract for fixing this. Not worth the fix.
+MandateOccurence = "MandateOccurence" # pub enum in paysafe/transformers.rs; renaming is an API-surface change, not a safe text fix
 sepa_guarenteed_debit = "sepa_guarenteed_debit"
 sepa_guarenteed_bank_debit = "sepa_guarenteed_bank_debit"
 SepaGuarenteedDebit = "SepaGuarenteedDebit"
@@ -103,6 +104,22 @@ acct_3epxuNyAtNd77zShIaaL1 = "acct_3epxuNyAtNd77zShIaaL1" # example Stripe conne
 
 
 [default.extend-words]
+nd = "nd" # closure/local binding name used pervasively in unified_connector_service transformers, not "and"
+fo = "fo" # closure/local binding name (e.g. `Ok(fo) => ...`) in hyperswitch_interfaces gateway.rs, not a typo
+tak = "tak" # lowercase form of the Thailand state abbreviation "Tak", used as a match-arm string literal
+threed = "threed" # substring of "threeds" (3D Secure), matches existing ThreedsInvokeAndCompleteAutorize exception
+unparseable = "unparseable" # valid alternate spelling of "unparsable", used deliberately in error messages
+UNSUPPORT = "UNSUPPORT" # substring the tool splits out of UNSUPPORTED_ERROR_MESSAGE / UNSUPPORTED FEATURES comments
+HSA = "HSA" # Health Savings Account, a real card subtype in card_metadata
+RTO = "RTO" # Gigadat connector transaction-type code
+ETO = "ETO" # Gigadat connector transaction-type code
+Eto = "Eto" # Gigadat connector transaction-type enum variant
+Calle = "Calle" # Spanish word for "street", used in Colombian/Spanish test address fixtures
+participante = "participante" # Portuguese for "participant", a real field name in Santander's (Brazil) Pix API
+Correspondente = "Correspondente" # Portuguese for "correspondent", part of a real Santander enum variant name
+validade = "validade" # Portuguese for "validity", a real Santander API field name
+inicial = "inicial" # Portuguese for "initial", a real Santander API field name (data_inicial)
+Anual = "Anual" # Portuguese for "annual", a real Santander enum variant name
 aci = "aci" # Name of a connector
 afe = "afe" # Commit id
 ba = "ba" # ignore minor commit conversions
@@ -132,6 +149,7 @@ extend-exclude = [
     "openapi/open_api_spec.yaml", # no longer updated
     "crates/router/src/utils/user/blocker_emails.txt", # this file contains various email domains
     "CHANGELOG.md", # This file contains all the commits
+    "legacy-node/handover.md", # Append-only session log; intentionally preserves historical/quoted misspellings (e.g. "sic" quotes of vendors' own field names, and "X→Y" typo-fix documentation that must spell the wrong word to describe it) rather than editing history away
     "crates/router/locales/*.yml", # locales
     "crates/router/src/core/payment_link/locale.js", # this file contains conversion of static strings in various languages
 ]

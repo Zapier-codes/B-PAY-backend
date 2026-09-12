@@ -672,7 +672,7 @@ async fn merge_de_routing_records(
     // DE_TODO: a batch list endpoint on the Decision Engine would also cut the call count.
     let mut de_result: Vec<routing_types::RoutingDictionaryRecord> =
         futures::future::join_all(cutover_profiles.iter().map(|profile_id| async move {
-            let list_request = ListRountingAlgorithmsRequest {
+            let list_request = ListRoutingAlgorithmsRequest {
                 created_by: profile_id.get_string_repr().to_string(),
             };
             list_de_euclid_routing_algorithms(state, list_request)
@@ -3846,7 +3846,7 @@ pub async fn routing_migration_status(
         // The listing already carries each rule's id, so comparing the sets is free.
         let de_rule_ids = match list_de_euclid_routing_algorithms(
             &state,
-            ListRountingAlgorithmsRequest {
+            ListRoutingAlgorithmsRequest {
                 created_by: profile_id.get_string_repr().to_string(),
             },
         )

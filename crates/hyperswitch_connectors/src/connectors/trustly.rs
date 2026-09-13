@@ -822,7 +822,7 @@ impl webhooks::IncomingWebhook for Trustly {
 
         #[cfg(feature = "payouts")]
         {
-            return trustly::get_payout_webhook_event(webhook_body.method);
+            trustly::get_payout_webhook_event(webhook_body.method)
         }
 
         #[cfg(not(feature = "payouts"))]
@@ -842,7 +842,7 @@ impl webhooks::IncomingWebhook for Trustly {
         #[cfg(feature = "payouts")]
         {
             let event = trustly::get_payout_webhook_event(webhook_body.method)?;
-            return Ok(Box::new(event));
+            Ok(Box::new(event))
         }
 
         #[cfg(not(feature = "payouts"))]

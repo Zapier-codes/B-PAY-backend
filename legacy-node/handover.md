@@ -23216,3 +23216,75 @@ cd ~/B-PAY-backend
 git am ~/storage/downloads/0001-docs-task-74-ci-run-34753510276-triage.patch
 git push
 ```
+
+## Task 74 part c — real CI's `Check formatting` still failed after part b; stable-rustfmt placement was wrong, fixed against the real nightly diff (2026-09-13, later same day)
+
+**Trigger:** the fresh CI run (`34755361638`) triggered by part b's own
+commit landing on `main` came back with `Check formatting` failing
+again — pulled via the per-job log endpoint
+(`gh api .../actions/jobs/103719059145/logs`), same pattern as every
+prior triage in this file.
+
+**Root cause:** part b placed the new `#[cfg(feature = "payouts")] use
+crate::utils::RouterData as _;` import at the very top of
+`truelayer/transformers.rs`'s import block, based on what *stable*
+`rustfmt --check` in this sandbox accepted as clean. That was
+incomplete: stable rustfmt can't apply this project's nightly-only
+`imports_granularity = Crate`/`group_imports = StdExternalCrate`
+settings (it warns and silently skips them, confirmed both times this
+session), so it had no way to know the file already had a **separate,
+pre-existing `crate::` import group further down** (`#[cfg(feature =
+"payouts")] use crate::types::PayoutsResponseRouterData; use
+crate::{types::{...}, utils};`, right before `const PREFIX`). Real
+nightly `cargo +nightly fmt` merges *all* `crate::`-rooted imports into
+one group at that group's own position, not a new group at the top of
+the file — the exact opposite of where the top-of-file placement put
+it.
+
+**Real fix, applied directly from the fresh CI diff (not
+re-guessed):** removed the top-of-file line entirely; folded it into
+the existing `crate::` group instead:
+```rust
+#[cfg(feature = "payouts")]
+use crate::types::PayoutsResponseRouterData;
+#[cfg(feature = "payouts")]
+use crate::utils::RouterData as _;
+use crate::{
+    types::{RefundsResponseRouterData, ResponseRouterData},
+    utils,
+};
+```
+Stable `rustfmt --check` still returns exit 0/no diff on the result
+(expected — it never objected to the placement either way, both times;
+it can only catch what it can evaluate without the nightly-only
+settings). **The real test is the next CI run, same caveat as every
+"stable rustfmt says clean" claim in this file's Task 74 entries** —
+this local tool genuinely cannot fully validate this project's actual
+formatting rule.
+
+**Lesson for future formatting fixes in this repo, worth stating
+plainly rather than re-learning next time:** when this sandbox only has
+stable rustfmt and the project pins nightly-only import-grouping
+settings, "stable rustfmt says clean" is necessary but **not
+sufficient** confirmation for any hunk that involves a `crate::`-rooted
+import specifically (or any other import whose grouping depends on the
+nightly-only settings) — it's sufficient for plain reordering within an
+already-existing group (proven correct across Part a's 4
+non-nightly-only hunks and hasn't been wrong there), but insufficient
+for placement questions across groups. When in doubt about where a new
+`crate::` import belongs, grep the file for any existing `use
+crate::` line first and fold into that group's position rather than
+defaulting to the top.
+
+**Per rule 4: stayed off `main`** — committed on branch
+`fix/task-74-part-c-formatting-followup-2026-09-13`. One `.rs` file
+plus this entry, no `db/migrations/` changes, no DB-Ops block owed. Per
+rule 8: confirmed via `git fetch origin` that `f4bf39c22` (part b) was
+tip of `origin/main` with no drift before starting.
+
+**Per rule 7: command block for this session's handoff:**
+```
+cd ~/B-PAY-backend
+git am ~/storage/downloads/0001-fix-task-74-part-c-formatting-followup.patch
+git push
+```

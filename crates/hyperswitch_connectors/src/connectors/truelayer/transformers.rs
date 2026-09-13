@@ -1,7 +1,5 @@
 use std::collections::{BTreeMap, HashMap};
 
-#[cfg(feature = "payouts")]
-use crate::utils::RouterData as _;
 use actix_web::http::header::HeaderMap;
 #[cfg(feature = "payouts")]
 use api_models::payouts::{BankTransfer, PayoutMethodData};
@@ -48,6 +46,8 @@ use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "payouts")]
 use crate::types::PayoutsResponseRouterData;
+#[cfg(feature = "payouts")]
+use crate::utils::RouterData as _;
 use crate::{
     types::{RefundsResponseRouterData, ResponseRouterData},
     utils,

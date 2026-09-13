@@ -3,8 +3,9 @@ pub mod transformers;
 use std::sync::LazyLock;
 
 use common_enums::enums;
+use common_utils::request::Request;
 #[cfg(feature = "payouts")]
-use common_utils::request::{Method, Request, RequestBuilder, RequestContent};
+use common_utils::request::{Method, RequestBuilder, RequestContent};
 use common_utils::{
     errors::CustomResult,
     ext_traits::ByteSliceExt,

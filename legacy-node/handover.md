@@ -23288,3 +23288,298 @@ cd ~/B-PAY-backend
 git am ~/storage/downloads/0001-fix-task-74-part-c-formatting-followup.patch
 git push
 ```
+
+## Task 74 part d — CI run `34755857157`'s `Check compilation on MSRV toolchain` failure, fully root-caused against the real log; corrects part of Task 73/a's own "built" claim for `gotyme_sanlam.rs` (item 7) — both fixes now applied, not compiled (2026-09-13, later same day, continued)
+
+**Trigger:** the fresh CI run triggered by part c's commit (`a63e4c6a0`)
+landing on `main`. The run-level `--log-failed` bundle would not
+assemble because other jobs (`Nix CI`, etc.) were still `in_progress`
+— same wall this file has hit before. Retrieved the one already-failed
+job directly, per rule 9's per-job template, bypassing the run-level
+wait:
+
+```
+RUN_ID=$(gh run list --repo Zapier-codes/B-Pay-backend --branch main --limit 1 --json databaseId --jq '.[0].databaseId')
+JOB_ID=$(gh run view "$RUN_ID" --repo Zapier-codes/B-Pay-backend --json jobs --jq '.jobs[] | select(.name=="Check compilation on MSRV toolchain (ubuntu-latest)") | .databaseId')
+gh run view --job "$JOB_ID" --repo Zapier-codes/B-Pay-backend --log-failed \
+  > ~/storage/downloads/ci-errors-check-msrv.txt
+```
+
+First attempt returned `run 34755857157 is still in progress; logs
+will be available when it is complete` — the MSRV *job* itself had
+already completed and failed while the *run* as a whole had not.
+Confirmed via the status/conclusion query before re-pulling:
+
+```
+gh run view "$RUN_ID" --repo Zapier-codes/B-Pay-backend --json status,conclusion,jobs \
+  --jq '.jobs[] | select(.name=="Check compilation on MSRV toolchain (ubuntu-latest)") | {status, conclusion}'
+```
+→ `{"status": "completed", "conclusion": "failure"}`. Per-job pull via
+the raw `gh api .../actions/jobs/{id}/logs` endpoint (not
+`--log-failed`, which itself still needs the *job* completed but was
+producing a run-level wait message in one attempt) then succeeded and
+was handed to the product owner as `ci-errors-check-msrv.txt`
+(3,381 lines).
+
+**Full error transcription — 11 real compiler-level failures, two
+distinct clusters, both isolated to `hyperswitch_connectors`:**
+
+**Cluster 1 — 10× `error[E0412]: cannot find type `Request` in this
+scope`, all in `crates/hyperswitch_connectors/src/connectors/gotyme_sanlam.rs`,
+at lines 367, 383, 397, 413, 427, 441, 455, 469, 483, 497** — every
+occurrence is the identical shape:
+```rust
+    ) -> CustomResult<Option<Request>, errors::ConnectorError> {
+```
+
+**Cluster 2 — 1× `error: unused import: `utils::RouterData as _``, in
+`crates/hyperswitch_connectors/src/connectors/envoy/transformers.rs:33:5`**
+(denied via `-D unused-imports`, implied by `-D warnings`).
+
+**Job-ending summary lines, transcribed verbatim:**
+```
+error: could not compile `hyperswitch_connectors` (lib) due to 10 previous errors; 1 warning emitted
+warning: build failed, waiting for other jobs to finish...
+error: could not compile `hyperswitch_connectors` (lib test) due to 11 previous errors
+error: recipe `ci_hack` failed on line 273 with exit code 101
+##[error]Process completed with exit code 101.
+```
+The 10 (lib) vs. 11 (lib test) discrepancy is exactly cluster 1 (10)
+vs. cluster 1 + cluster 2 (11) — no additional, not-yet-transcribed
+errors are hiding in the gap; confirmed by grepping the full log for
+every `^error`/`error\[E` line, not just eyeballing the summary count.
+
+---
+
+### Root cause, cluster 1 — confirmed by reading the actual current source, not guessed from the error text alone
+
+`gotyme_sanlam.rs`'s own import line, as it stands on `main` right now:
+```rust
+use common_enums::enums;
+#[cfg(feature = "payouts")]
+use common_utils::request::{Method, Request, RequestBuilder, RequestContent};
+```
+This line is the direct product of **Task 73/a's own Part d** (search
+"Item 7 — `gotyme_sanlam.rs`" in this file) — that entry gated the
+whole four-symbol import behind `#[cfg(feature = "payouts")]` on the
+strength of the doc's own callout that this connector's payout code
+was the only place using `Method`/`RequestBuilder`/`RequestContent`.
+**That premise was incomplete, not wrong about those three symbols —
+`Request` itself is a fourth symbol swept into the same gate, and
+`Request` is NOT payout-only.** Confirmed directly by reading every
+`build_request` impl in the file: 10 of them —
+`Session`, `PaymentMethodToken`, `AccessTokenAuth`, `SetupMandate`,
+`Authorize`, `PSync`, `Capture`, `Void`, `Execute`, `RSync` (i.e. every
+standard payment/refund flow this connector stubs out, none of them
+payout-specific) — are **not** `#[cfg(feature = "payouts")]`-gated at
+all, and every one of them returns
+`CustomResult<Option<Request>, errors::ConnectorError>` unconditionally
+(this is where all 10 line numbers in the error log come from, in
+file order). Only the genuinely payout-specific usages of the other
+three symbols — `Method::Post`, `RequestBuilder::new()`,
+`RequestContent::Json(...)` — sit inside the two impls that already
+carry their own `#[cfg(feature = "payouts")]` (`PoFulfill` at line
+~184, `PoSync` at line ~268 confirmed via direct read of both impl
+headers) or inside `get_request_body`/`build_request` methods nested
+inside those same gated impls. **`Request` alone needs to be visible
+regardless of the `payouts` feature; the other three do not.**
+
+**Correction to this file's own prior record, stated plainly per this
+file's own standing practice rather than silently re-fixed:** Task
+73/a's Part d entry (and the ⚫/older-NEXT-TASK summary boxes at the
+top of this file that list "`gotyme_sanlam.rs` (item 7) — built") are
+**not wrong about the payouts-side content**, but "built" overstated
+what was actually confirmed — this gating change was never run through
+a real `cargo check` (same standing toolchain-wall caveat as every
+other `.rs` entry in this file), and the one case that would have
+caught this immediately — a non-`payouts` feature build — is exactly
+what the MSRV job's own feature matrix exercises. This is the second
+time in this file's history that a `#[cfg(feature = "payouts")]` gate
+applied to an entire `use` line has actually needed a **per-symbol**
+split rather than an all-or-nothing gate (the first being Task 45a's
+JuicyWay find, a different repo/language entirely, but the same shape
+of mistake: gating a whole import statement when only some of its
+symbols are actually conditional). Worth remembering as a general
+lesson for this crate specifically: before gating a multi-symbol `use`
+line behind any feature flag, grep every symbol in that line
+individually across the whole file, not just the symbols the
+originating bug report happened to mention.
+
+**Exact fix to apply, once picked up — a per-symbol split, no logic
+change:**
+```rust
+// current (wrong — Request swept into a gate it doesn't belong in):
+#[cfg(feature = "payouts")]
+use common_utils::request::{Method, Request, RequestBuilder, RequestContent};
+
+// fix:
+use common_utils::request::Request;
+#[cfg(feature = "payouts")]
+use common_utils::request::{Method, RequestBuilder, RequestContent};
+```
+Verified by direct read that `Method`, `RequestBuilder`, and
+`RequestContent` have **no** usage anywhere in the file outside the
+`PoFulfill`/`PoSync` payout impls (`grep -n` for each of the three
+returned only the already-gated lines) — so narrowing the gate to just
+those three, and leaving `Request` unconditional, should not
+re-introduce an unused-import warning on either feature configuration.
+**Not run through a real `cargo check` in either config (default or
+`--features payouts`)** — same standing caveat as everything else in
+this file; the real confirmation is the next CI run.
+
+---
+
+### Root cause, cluster 2 — same "gate follows the use site, not the file" lesson, different file
+
+`envoy/transformers.rs`'s current import block:
+```rust
+#[cfg(feature = "payouts")]
+use crate::types::PayoutsResponseRouterData;
+use crate::{
+    types::{RefundsResponseRouterData, ResponseRouterData},
+    utils::RouterData as _,
+};
+```
+`RefundsResponseRouterData`/`ResponseRouterData` are used unconditionally
+(confirmed: `ResponseRouterData` at line 129's `TryFrom` impl,
+`RefundsResponseRouterData` at lines 202/217's `TryFrom` impls — none
+of the three surrounding impls are `payouts`-gated). **`utils::RouterData
+as _` is different — its only two call sites in the whole file** (the
+trait-extension methods `get_payout_method_data()` and
+`get_billing_country()`, confirmed via `grep -n` across the file) **are
+both inside a single `impl` block that already carries its own
+`#[cfg(feature = "payouts")]`** (`impl<F> TryFrom<&EnvoyRouterData<&PayoutsRouterData<F>>>
+for PayToBankAccountV3`, confirmed directly above the impl at the file's
+current line ~496). So in a non-`payouts` build, the trait import has
+no call site at all — hence `-D unused-imports` correctly, if
+unhelpfully, treats it as dead weight and fails the build.
+
+**Worth noting for whoever picks this up:** this file's own Task 74
+Part b/c entries (immediately above, same session) already fixed the
+*identical* bug shape in `truelayer/transformers.rs` — same trait,
+same alias, same fix pattern (gate the import to match its only
+gated use site) — and even cited `envoy/transformers.rs:33` **by name**
+as one of two existing files this crate already uses this pattern in,
+without those entries' own author having actually re-checked whether
+`envoy/transformers.rs`'s own copy of the pattern was itself correctly
+gated. It was not — the precedent cited as a working example was
+itself broken, just not yet caught by CI at the time it was cited
+(this MSRV run is what surfaces it). Lesson: citing a sibling file as
+"already does this correctly" is not the same as confirming it, and
+should not be treated as such going forward — verify the cited file's
+own gate/use-site alignment directly, the same way this entry just did
+for both clusters, rather than trusting that a passing reference
+implies a passing CI history.
+
+**Exact fix to apply, once picked up:**
+```rust
+// current (wrong — utils::RouterData as _ swept into an ungated group,
+// but its only call site is payouts-gated):
+#[cfg(feature = "payouts")]
+use crate::types::PayoutsResponseRouterData;
+use crate::{
+    types::{RefundsResponseRouterData, ResponseRouterData},
+    utils::RouterData as _,
+};
+
+// fix:
+#[cfg(feature = "payouts")]
+use crate::types::PayoutsResponseRouterData;
+use crate::types::{RefundsResponseRouterData, ResponseRouterData};
+#[cfg(feature = "payouts")]
+use crate::utils::RouterData as _;
+```
+**Formatting caveat, learned the hard way in this same session's Task
+74 part c (search "stable-rustfmt placement was wrong" above) —
+apply here too, don't repeat that mistake a third time:** this
+project's real formatting rule runs nightly `cargo +nightly fmt` with
+`imports_granularity = Crate`/`group_imports = StdExternalCrate`, which
+this sandbox's stable `rustfmt` cannot fully validate (it silently
+skips those settings rather than erroring). The split above keeps both
+`crate::types::...` lines adjacent to each other and the new
+`crate::utils::RouterData as _` line immediately after them, all still
+within the file's single existing `crate::`-rooted import group,
+mirroring the placement precedent part c already had to learn for
+`truelayer/transformers.rs`. Treat "stable rustfmt says clean" as
+necessary-but-not-sufficient the same way part c documented — the real
+check is the next actual `Check formatting` CI job, not this sandbox.
+
+---
+
+### Both fixes applied this session — still not compiled, same standing caveat
+
+**Both `use`-line edits above are now applied exactly as written**, to
+`crates/hyperswitch_connectors/src/connectors/gotyme_sanlam.rs` and
+`crates/hyperswitch_connectors/src/connectors/envoy/transformers.rs`.
+**Not run through a real compiler or `rustfmt`** — re-checked this
+session or the standing wall: `apt-cache policy rustc cargo` still
+offers only `1.75.0+dfsg0ubuntu1-0ubuntu7.4` (below this workspace's
+pinned `1.85.0`), and `rustfmt` isn't installed at all in this sandbox
+(`rustfmt: not found`) — per the retired New-Clone-Checklist step 2,
+this isn't re-litigated with a fresh `apt-get`/`curl` probe every
+session, just re-confirmed via the quick `which`/`apt-cache` check
+above. Per this file's own standing decision ("GitHub Actions is the
+sole source of truth for `storage_impl` (and any Rust) compiler
+verification" — search that heading above), **neither fix counts as
+compiler-verified until this session's own triggered CI run goes green
+against it** — everything below is "reviewed by reading, tool-checked
+where a tool was available" only, same as every other `.rs` change in
+this file.
+
+**Per rule 4: committed off `main`, not onto it.** Branch
+`fix/task-74-part-d-gotyme-envoy-cfg-gate-split-2026-09-13`, based on
+`origin/main` at `a63e4c6a0` (part c's own commit) — confirmed via
+`git fetch origin` immediately before branching (rule 8): `origin/main`
+was still exactly `a63e4c6a0`, no drift since part c landed, so this is
+a fresh commit on the real current tip, not a stack on a stale base.
+Commit `bea40c0cc` (this session's own local hash, pre-`git am` — per
+this file's own established caveat elsewhere, e.g. Task 3's patch-log
+entry, a local hash commonly differs from the real hash once the
+product owner's own `git am` applies it; confirm against `git log -1`
+after applying rather than trusting this literal string), touching the
+two `.rs` files plus this handover entry in one commit, per this
+file's own practice of keeping a part's write-up with its diff. No
+`db/migrations/` changes in this diff — Patch Handoff only, no DB-Ops
+block owed.
+
+**Patch generated and test-applied per rule 8.3** — `git format-patch`
+against `a63e4c6a0`, then re-applied with `git am` against a fresh
+throwaway clone of `origin/main` to confirm it lands cleanly before
+handoff. Patch file: `0001-fix-task-74-part-d-gotyme-envoy-cfg-gate-split.patch`.
+
+**Per rule 7 — exact command block for this handoff:**
+```
+cd ~/B-PAY-backend
+git am ~/storage/downloads/0001-fix-task-74-part-d-gotyme-envoy-cfg-gate-split.patch
+git push
+```
+
+**Once pushed, the verification step for whoever picks this up next**
+— re-run the exact per-job retrieval command block from the top of
+this entry (with a fresh `RUN_ID`, since a new run will have been
+triggered) against the newly-triggered run's MSRV job:
+```
+RUN_ID=$(gh run list --repo Zapier-codes/B-Pay-backend --branch main --limit 1 --json databaseId --jq '.[0].databaseId')
+gh run view "$RUN_ID" --repo Zapier-codes/B-Pay-backend --json status,conclusion,jobs \
+  --jq '.jobs[] | select(.name=="Check compilation on MSRV toolchain (ubuntu-latest)") | {status, conclusion}'
+```
+An empty `grep -n "^error"` on that job's pulled log, **cross-checked
+against `conclusion: "success"`** (not just the absence of grep
+output — a job can still fail on a later step with no
+`error[E...]`-prefixed line, per this file's own standing caution),
+is what success looks like.
+
+**Do not assume this closes out MSRV as a job.** This entry only
+covers the two clusters present in run `34755857157`. If the next real
+run surfaces new, different errors (in either of these two files or
+elsewhere), treat that as new information per this file's own
+Discovery Convention, not as a sign this fix was wrong. Also
+unconfirmed by this session, deliberately out of scope: whether the
+`--features payouts` / `--features frm` / `--features
+revenue_recovery,v1` matrix legs (queued but never reached in every
+prior triage in this file, per the standing note under Task 73/a's
+cross-check audit) are affected by either edit — both edits were
+designed specifically to leave payouts-feature behavior unchanged
+(same symbols, same gate, just narrowed to the correct scope), but
+that claim is unverified against a real `--features payouts` build for
+the same reason everything else here is unverified.

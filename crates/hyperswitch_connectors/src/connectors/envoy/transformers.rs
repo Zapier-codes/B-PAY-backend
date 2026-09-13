@@ -28,10 +28,9 @@ use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "payouts")]
 use crate::types::PayoutsResponseRouterData;
-use crate::{
-    types::{RefundsResponseRouterData, ResponseRouterData},
-    utils::RouterData as _,
-};
+use crate::types::{RefundsResponseRouterData, ResponseRouterData};
+#[cfg(feature = "payouts")]
+use crate::utils::RouterData as _;
 
 pub struct EnvoyRouterData<T> {
     pub amount: FloatMajorUnit, // The type of amount that a connector accepts, for example, String, i64, f64, etc.

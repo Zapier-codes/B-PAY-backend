@@ -2,13 +2,13 @@
 use api_models::payouts::{
     self, AchBankTransfer, BacsBankTransfer, PayoutMethodData, SepaBankTransfer,
 };
-use common_enums::{enums, CountryAlpha2, Currency};
-use common_utils::{
-    ext_traits::OptionExt,
-    id_type::PayoutId,
-    pii::Email,
-    types::{FloatMajorUnit, StringMinorUnit},
-};
+use common_enums::enums;
+#[cfg(feature = "payouts")]
+use common_enums::{CountryAlpha2, Currency};
+use common_utils::types::{FloatMajorUnit, StringMinorUnit};
+#[cfg(feature = "payouts")]
+use common_utils::{ext_traits::OptionExt, id_type::PayoutId, pii::Email};
+#[cfg(feature = "payouts")]
 use error_stack::ResultExt;
 #[cfg(feature = "payouts")]
 use hyperswitch_domain_models::router_flow_types::PoFulfill;
@@ -493,6 +493,7 @@ impl SoapEnvelope {
 
 // --- Payout Request Implementation ---
 
+#[cfg(feature = "payouts")]
 impl<F> TryFrom<&EnvoyRouterData<&PayoutsRouterData<F>>> for PayToBankAccountV3 {
     type Error = error_stack::Report<errors::ConnectorError>;
     fn try_from(item: &EnvoyRouterData<&PayoutsRouterData<F>>) -> Result<Self, Self::Error> {

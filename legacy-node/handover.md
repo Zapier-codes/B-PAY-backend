@@ -106,9 +106,30 @@
 > task's own section. Nothing else in this file is required reading to
 > start work.**
 >
-> **🔴 NEWEST NEXT TASK (2026-09-13, later same day — supersedes the 🟣 box
+> **⚫ NEWEST NEXT TASK (2026-09-13, later same day — supersedes the 🔴 box
 > directly below for "what to work on" purposes; nothing in that box is
-> lost):** search this file for "Task 73/a — cross-check audit: other
+> lost):** search this file for "Task 73/a — implementing the 10 documented
+> CI fixes, split a–e per the standing mandatory task-splitting rule" and
+> read that entry. **Part a (`envoy/transformers.rs`, items 1–2) is now
+> built** — reviewed-by-reading only, no working `rustc` yet, same caveat
+> as everything else in this file. **Parts b, c, d, e are each independent
+> and not started** — pick the next one (b/c/d/e, any order, no dependency
+> between them):
+> - **b** — `adyenplatform.rs` (item 3) + `trustly/transformers.rs`
+>   missing-gate half (item 4)
+> - **c** — `worldpayxml/transformers.rs` inverted-gate structs (item 5)
+> - **d** — `cybersourcedecisionmanager.rs`+`transformers.rs` (item 6) +
+>   `gotyme_sanlam.rs` (item 7)
+> - **e** — `truelayer.rs`+`transformers.rs` (items 8, 9, 10) +
+>   `trustly/transformers.rs` unused-import half of item 10
+> Build only **one** part this session, per the standing splitting rule —
+> do not chain into a second part because it "was right there." Once all
+> five parts land, run all four queued `hyperswitch_connectors` feature
+> checks the moment a working `rustc` ≥ 1.85 exists.
+>
+> **🔴 NEXT TASK (2026-09-13, superseded by the ⚫ box above — kept for
+> history, not for "what to work on" purposes):** search this file for "Task
+> 73/a — cross-check audit: other
 > connectors for the same payouts/frm gate-mismatch bug family" and read
 > that entry, then the "item 3 continued" entry it points back to (the 🟣
 > box below). **This session cross-checked the other 15 connector groups
@@ -22427,3 +22448,86 @@ cd ~/B-PAY-backend
 git am ~/storage/downloads/0001-docs-task-73a-ci-audit-other-connectors.patch
 git push
 ```
+
+## Task 73/a — implementing the 10 documented CI fixes, split a–e per the standing mandatory task-splitting rule (2026-09-13, later session)
+
+**Per the "Build-focus + mandatory task-splitting" rule above: this task is
+split into 5 lettered parts, one built per session, never the whole thing at
+once.** The natural split follows the 10 documented items' own file
+grouping, since each part's fixes are independent of the others:
+
+- **Part a — `envoy/transformers.rs` (items 1–2, ~20 of the 29 lib errors)
+  [x] built this session.**
+- **Part b — `adyenplatform.rs` (item 3) + `trustly/transformers.rs`
+  missing-gate half (item 4) [ ] not started.**
+- **Part c — `worldpayxml/transformers.rs` inverted-gate structs (item 5)
+  [ ] not started.**
+- **Part d — `cybersourcedecisionmanager.rs` + `transformers.rs` (item 6) +
+  `gotyme_sanlam.rs` (item 7) [ ] not started.**
+- **Part e — `truelayer.rs` + `truelayer/transformers.rs` (items 8, 9, 10)
+  + `trustly/transformers.rs` unused-import half of item 10 [ ] not started.**
+
+### Part a — built, `envoy/transformers.rs`, items 1–2
+
+**Item 1 (line 496 → now 498):** added `#[cfg(feature = "payouts")]` above
+`impl<F> TryFrom<&EnvoyRouterData<&PayoutsRouterData<F>>> for PayToBankAccountV3`,
+exactly as documented.
+
+**Item 2 (top-of-file imports, lines 1–16):** split the ungated imports so
+only the payout-only symbols are gated, per the documented fix — with one
+small addition over the original draft fix in the entry above: that draft
+left `use error_stack::ResultExt;` un-decided ("wait — see note below"), but
+its own note right after resolved it ("gate the whole line, don't leave it
+bare"). Applied that resolved version directly:
+```rust
+use common_enums::enums;
+#[cfg(feature = "payouts")]
+use common_enums::{CountryAlpha2, Currency};
+use common_utils::types::{FloatMajorUnit, StringMinorUnit};
+#[cfg(feature = "payouts")]
+use common_utils::{ext_traits::OptionExt, id_type::PayoutId, pii::Email};
+#[cfg(feature = "payouts")]
+use error_stack::ResultExt;
+```
+Re-verified every usage site named in the doc against the actual file before
+editing (`CountryAlpha2`/`Currency` at 299/300/303, `OptionExt` via
+`get_required_value` at 392/426/463, `PayoutId` at 274/308, `Email` at 310,
+`ResultExt` via `.change_context` at 393/427/464) — all matched exactly, no
+drift since the doc was written. `enums` and `FloatMajorUnit`/`StringMinorUnit`
+confirmed still used unconditionally elsewhere in the file (e.g.
+`enums::RefundStatus`/`enums::PayoutStatus` at 184/210/225/642/704) and left
+ungated.
+
+**Verification:** still no working `rustc` (retired-step convention still
+holds, not re-probed this session — no new information would come from
+re-running the same probe). This is **reviewed-by-reading only**, same
+caveat as every uncompiled `.rs` change in this file so far. Re-ran the
+audit-session's own heuristic gate-mismatch scanner against the edited file
+as an extra check — comes back clean (no flagged mismatches), for whatever
+that's worth without a real compile.
+
+**Per rule 4: stayed off `main`** — committed on branch
+`fix/task-73a-envoy-payouts-gate-part-a-2026-09-13`. **This commit touches
+one `.rs` file** (`envoy/transformers.rs`) plus this handover entry — no
+`db/migrations/` changes, so no DB-Ops block owed. Per rule 6: confirmed via
+`git fetch origin` that the prior session's doc-only patch had already
+landed on `main` (`bbcb654`) before this session started, so this is a fresh
+commit on top of current `main`, not a stack on an unapplied base.
+
+**Per rule 7: command block for this session's handoff:**
+```
+cd ~/B-PAY-backend
+git am ~/storage/downloads/0001-fix-task-73a-envoy-payouts-gate-part-a.patch
+git push
+```
+
+### What this means for the next session
+
+Part a is done. Parts b, c, d, and e are each independent, self-contained,
+and explicitly not started — pick the next one (suggest b, in documented
+order, but any is genuinely unblocked). None of them touch `envoy/`, so
+there's no ordering dependency forcing a particular next pick. Once all five
+parts land, the moment a working `rustc` ≥ 1.85 exists, run all four queued
+`hyperswitch_connectors` feature checks (`dummy_connector,v1`, `frm,v1`,
+`payouts,v1`, `revenue_recovery,v1`) — the real compiler pass every part of
+this task has been deferred on so far.

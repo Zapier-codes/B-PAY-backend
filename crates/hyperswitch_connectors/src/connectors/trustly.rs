@@ -36,6 +36,8 @@ use hyperswitch_domain_models::{
     router_flow_types::{PoFulfill, PoRecipient, PoSync},
     types::{PayoutsData, PayoutsResponseData, PayoutsRouterData},
 };
+#[cfg(feature = "payouts")]
+use hyperswitch_interfaces::types::{PayoutFulfillType, PayoutSyncType};
 use hyperswitch_interfaces::{
     api::{
         self, ConnectorCommon, ConnectorCommonExt, ConnectorIntegration, ConnectorSpecifications,
@@ -47,8 +49,6 @@ use hyperswitch_interfaces::{
     types::{self, Response},
     webhooks,
 };
-#[cfg(feature = "payouts")]
-use hyperswitch_interfaces::types::{PayoutFulfillType, PayoutSyncType};
 use hyperswitch_masking::ExposeInterface;
 use transformers as trustly;
 

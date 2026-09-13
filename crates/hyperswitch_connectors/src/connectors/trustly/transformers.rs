@@ -6,9 +6,9 @@ use base64::{engine::general_purpose, Engine as _};
 use common_enums::enums;
 #[cfg(feature = "payouts")]
 use common_enums::{CountryAlpha2, PayoutStatus};
-use common_utils::{id_type::CustomerId, types::StringMajorUnit};
 #[cfg(feature = "payouts")]
 use common_utils::{errors::CustomResult, pii};
+use common_utils::{id_type::CustomerId, types::StringMajorUnit};
 use error_stack::{report, ResultExt};
 #[cfg(feature = "payouts")]
 use hyperswitch_domain_models::types::{PayoutsResponseData, PayoutsRouterData};
@@ -30,10 +30,6 @@ use openssl::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    types::{RefundsResponseRouterData, ResponseRouterData},
-    utils,
-};
 #[cfg(feature = "payouts")]
 use crate::{
     types::PayoutsResponseRouterData,
@@ -41,6 +37,10 @@ use crate::{
         get_unimplemented_payment_method_error_message, AddressData, PayoutFulfillRequestData,
         PayoutsData, RouterData as _,
     },
+};
+use crate::{
+    types::{RefundsResponseRouterData, ResponseRouterData},
+    utils,
 };
 
 //TODO: Fill the struct with respective fields

@@ -137,6 +137,7 @@ pub enum Connector {
     Juspay,
     Juspaythreedsserver,
     Klarna,
+    Korapay,
     Loonio,
     Mifinity,
     Mollie,

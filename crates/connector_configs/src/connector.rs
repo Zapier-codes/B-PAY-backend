@@ -351,6 +351,7 @@ pub struct ConnectorConfig {
     pub interpayments: Option<ConnectorTomlConfig>,
     pub jpmorgan: Option<ConnectorTomlConfig>,
     pub klarna: Option<ConnectorTomlConfig>,
+    pub korapay: Option<ConnectorTomlConfig>,
     pub loonio: Option<ConnectorTomlConfig>,
     #[cfg(feature = "payouts")]
     pub loonio_payout: Option<ConnectorTomlConfig>,

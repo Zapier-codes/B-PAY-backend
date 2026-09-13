@@ -106,14 +106,28 @@
 > task's own section. Nothing else in this file is required reading to
 > start work.**
 >
-> **🟢 NEWEST NEXT TASK (2026-09-13, latest — does NOT replace the ⚪ box
-> below, runs in parallel with it):** search this file for "Task 77 —
+> **🟣 NEWEST NEXT TASK (2026-09-13, latest — supersedes the 🟢 box
+> directly below for "what to work on" purposes; nothing in that box is
+> lost):** search this file for "Task 77/a-1-ii-X — Korapay connector
+> crate: scaffold + `ConnectorIntegration`, done this session" and read
+> that entry in full first. **a-1-i (scaffold) and a-1-ii
+> (`ConnectorIntegration` for Authorize/PSync, with Capture/Void/
+> Execute/RSync correctly left unimplemented rather than guessed) are
+> now both done, uncommitted-to-main, sitting on branch
+> `task77/a1ii-x-korapay-connector-integration` pending patch review.**
+> **The next active leaf is `a-1-iii` (Korapay payout flows —
+> `PoFulfill`/`PoSync`)** — start there, but read that entry's own
+> "Next real task" paragraph first for two real prerequisites flagged
+> (an unconfirmed response-field shape, and mechanically-copied default-
+> implementation macro entries) that don't block a-1-iii but should
+> land before this connector is trusted with real money.
+>
+> **🟢 NEXT TASK (2026-09-13, earlier same day — does NOT replace the ⚪
+> box below, runs in parallel with it):** search this file for "Task 77 —
 > \"Hyperpay\" framework ideology finalized" and read that entry in
 > full first — it records the finalized one-engine (not two-layer)
 > Hyperpay blueprint and splits the ten-provider legacy-integration
-> work across sessions. **The single active leaf across that whole task
-> is `a-1-ii-X` (Korapay connector crate's `ConnectorIntegration`
-> implementation)** — start there. This does not block or get blocked
+> work across sessions. This does not block or get blocked
 > by the ⚪ box's own CI-confirmation work below; both can proceed in
 > the same window, in different sessions, since one is Rust-authoring
 > (reviewed by reading, same as every other `.rs` change in this file)
@@ -24027,3 +24041,114 @@ legacy-integration work reads the same finalized ideology, the same
 one-layer blueprint, and starts at the same, single, currently-marked
 `X` leaf (a-1-ii-X) instead of re-deriving scope or working on
 different providers in parallel and colliding.
+
+### d. Task 77/a-1-ii-X — Korapay connector crate: scaffold + `ConnectorIntegration`, done this session
+
+**Scaffold (a-1-i) had never actually been run** despite the box above
+pointing straight at a-1-ii-X — `git log --all` shows no commit ever
+created `crates/hyperswitch_connectors/src/connectors/korapay*`. This
+session did the scaffold by hand (no working `rustc`/`cargo-generate`
+this session either, per the New-Clone Checklist — `add_connector.sh`
+itself shells out to both), copying `connector-template/`'s structure
+and filling it in directly, then did a-1-ii on top of it in the same
+session.
+
+**What's built, `crates/hyperswitch_connectors/src/connectors/korapay.rs`
++ `korapay/transformers.rs`:**
+- `ConnectorCommon`/`ConnectorCommonExt`/`ConnectorValidation` —
+  `Bearer <secretKey>` auth (`HeaderKey`), base URL
+  `https://api.korapay.com/merchant/` (confirmed directly from this
+  repo's own `legacy-node/utils/helpers.js` lines 756-758, not
+  re-guessed), currency unit `Base` (confirmed from
+  `legacy-node/providers/korapay.js`'s own Task 7 comment).
+- `Authorize` → `POST api/v1/charges/initialize`, nested `customer`
+  object, `FloatMajorUnit` amount — request shape ported directly from
+  `korapay.js#processPayment`.
+- `PSync` → `GET api/v1/charges/{reference}` — ported from
+  `korapay.js#verifyTransaction`.
+- `Capture`/`Void` → `FlowNotSupported` (Korapay's charge flow is
+  single-step auto-capture; no separate endpoint exists anywhere in the
+  legacy integration — not guessed at).
+- `Execute`/`RSync` (refunds) → `NotImplemented` — **genuinely open**,
+  not a placeholder to forget about: no refund method exists anywhere
+  in `korapay.js`, and this session did not have a live sandbox call
+  available to confirm an endpoint, so nothing was wired rather than
+  guessed. Same posture as `korapay.js#getCardEvents()`'s own "needs a
+  direct answer before this is written" note.
+- `IncomingWebhook` → `WebhooksNotImplemented` — deliberately out of
+  scope for this leaf (a-1-ii-X is `ConnectorIntegration`, not
+  webhooks); `korapay.js#verifyWebhookSignature`'s real, working HMAC
+  logic was **not** ported here and is real follow-up work, not
+  something this entry is claiming is done.
+
+**⚠️ One real, flagged unknown:** the exact response field names
+(`data.reference`, `data.checkout_url`, `data.status`) used in
+`transformers.rs`'s `KorapayPaymentsResponse` are Korapay's documented
+shape per developers.korapay.com, but — unlike the request shapes,
+which come straight from this repo's own already-battle-tested
+`korapay.js` — they were **not** re-confirmed against a real sandbox
+response this session (no working `rustc` to build a throwaway
+harness against, same wall as everything else in the New-Clone
+Checklist). `korapay.js#verifyTransaction`/`processPayment` only ever
+checked the boolean `status`/`data.status` fields and passed the rest
+through untyped, so there's no existing call site in this repo that
+already exercises `checkout_url` specifically. **Flag for a live-call
+confirmation pass before this goes anywhere near production** — same
+discipline that caught Task 42 Part B's real payout-shape bug, and the
+same reason Capture/Void/refunds above were left unwired rather than
+guessed.
+
+**Registration wiring done this session** (connector now compiles into
+the workspace's connector list, not just its own module — subject to
+the same "reviewed by reading, not compiled" caveat as everything
+above): `connectors.rs` (mod + re-export), `router/src/connector.rs`
+re-export, `common_enums::Connector` + `euclid::enums::{Connector,
+RoutableConnectors}` variants, `ConnectorParams` in
+`hyperswitch_domain_models::connector_endpoints`, base URL across all
+6 base-url TOML configs (`development`/`docker_compose`/
+`config.example`/`loadtest`/`deployments::{integration_test,sandbox,
+production}`), `connector_configs` (`toml/{sandbox,development,
+production}.toml` auth blocks + `ConnectorTomlConfig` struct field),
+`default_implementations.rs`/`default_implementations_v2.rs` (Korapay
+added to every macro block that already lists Klarna — a mechanical,
+alphabetically-adjacent mirror, **not** individually reviewed
+block-by-block for whether each default actually fits Korapay's real
+capabilities; flag if a flow behaves oddly and this is why), plus
+router test scaffolding (`tests/connectors/{main.rs,korapay.rs,
+sample_auth.toml}`, `test_utils::connector_auth`).
+
+**Deliberately NOT touched this session** (real, still-open follow-up
+work, not oversights): `is_separate_authentication_supported` and
+`supports_instant_payout` match arms in `common_enums::connector_enums`
+(Korapay's checkout redirect isn't 3DS-separate-auth in the sense that
+match models, and instant payout is a-1-iii's job, not a-1-ii's) —
+deliberately skipped rather than copied blindly the way the default-
+implementation macros above were. Also not touched: `kgraph_utils`,
+`feature_matrix`, `unified_connector_service` transformers, any
+payment-method-capability TOML matrix entries, and the actual
+`payment_required_fields_v2.toml` block for Korapay (still Task 77/b-3
+in the original ideology, unchanged) — none of these are required for
+`ConnectorIntegration` itself to be structurally complete, and wiring
+them without a working `cargo check` risks compounding, unverifiable
+mistakes across dozens of files rather than the ~24 files actually
+touched here. `add_connector.sh`'s own `connectors=(...)` array (the
+sorted list the script uses to find "the previous connector" for
+future scaffolds) was also **not** updated with `korapay` — a
+same-shaped, low-risk mechanical addition, left for whichever session
+next needs to run that script for real, so it isn't drifting further
+from a version nobody's tested.
+
+**Next real task, per the reading order already on record above:**
+**a-1-iii — Korapay payout flows (`PoFulfill`/`PoSync`)**, per Task
+42's already-confirmed `destination`-nested payload shape
+(`korapay.js#processPayout`/`verifyPayout`, lines ~173-330). Before
+that: **whoever picks this leaf up should get a real Korapay sandbox
+call in** (test key already structurally wired into
+`sample_auth.toml`/`connector_auth.rs`'s `korapay` field this session,
+just needs the actual secret filled in) to confirm the response-shape
+unknown flagged above, and to confirm/replace the mechanically-copied
+`default_implementations.rs` macro entries with ones actually reviewed
+against what Korapay supports. Neither blocks a-1-iii's own work
+(payout request/response shapes are separately confirmed already, per
+Task 42), but both should land before this connector is trusted with
+real money.

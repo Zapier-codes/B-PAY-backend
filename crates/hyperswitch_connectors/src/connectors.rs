@@ -74,6 +74,7 @@ pub mod jpmorgan;
 pub mod juspaythreedsserver;
 pub mod katapult;
 pub mod klarna;
+pub mod korapay;
 pub mod loonio;
 pub mod mifinity;
 pub mod mollie;
@@ -175,7 +176,8 @@ pub use self::{
     hyperswitch_vault::HyperswitchVault, hyperwallet::Hyperwallet, iatapay::Iatapay,
     ilixium::Ilixium, imerchantsolutions::Imerchantsolutions, inespay::Inespay,
     interpayments::Interpayments, itaubank::Itaubank, jpmorgan::Jpmorgan,
-    juspaythreedsserver::Juspaythreedsserver, katapult::Katapult, klarna::Klarna, loonio::Loonio,
+    juspaythreedsserver::Juspaythreedsserver, katapult::Katapult, klarna::Klarna,
+    korapay::Korapay, loonio::Loonio,
     mifinity::Mifinity, mollie::Mollie, moneris::Moneris, mpgs::Mpgs, multisafepay::Multisafepay,
     netcetera::Netcetera, nexinets::Nexinets, nexixpay::Nexixpay, nmi::Nmi, nomupay::Nomupay,
     noon::Noon, nordea::Nordea, novalnet::Novalnet, nuvei::Nuvei, opayo::Opayo, opennode::Opennode,

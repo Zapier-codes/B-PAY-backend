@@ -106,9 +106,30 @@
 > task's own section. Nothing else in this file is required reading to
 > start work.**
 >
-> **🟣 NEWEST NEXT TASK (2026-09-13, later same day — supersedes the 🔵 box
-> directly below for "what to work on" purposes; that box's items are now
-> folded into this one, nothing there is lost):** search this file for "Task
+> **🔴 NEWEST NEXT TASK (2026-09-13, later same day — supersedes the 🟣 box
+> directly below for "what to work on" purposes; nothing in that box is
+> lost):** search this file for "Task 73/a — cross-check audit: other
+> connectors for the same payouts/frm gate-mismatch bug family" and read
+> that entry, then the "item 3 continued" entry it points back to (the 🟣
+> box below). **This session cross-checked the other 15 connector groups
+> with `payouts`/`frm` gates for the same bug family CI caught in the 10
+> documented items — found nothing new**, every candidate the audit's
+> script flagged turned out to be either a same-named-but-unrelated symbol,
+> a trait method with a safe default (different issue class, not added to
+> the fix list), or a file that already uses the correct feature-split-block
+> pattern (`nuvei.rs`, `wise.rs` — worth reading as working examples for
+> item 8's fix). **Nothing here changes the fix list — still the same 10
+> items.** What it does add: CI only ever ran `hyperswitch_connectors` with
+> `dummy_connector,v1` (both `payouts`/`frm` off) before failing —
+> `frm,v1`, `payouts,v1`, and `revenue_recovery,v1` were queued but never
+> reached, so those remain genuinely unverified, not just unfixed. **Next
+> session's job, unchanged in substance:** apply all 10 documented fixes
+> (item 8 needs the corrected feature-split version), then once a working
+> `rustc` ≥ 1.85 exists, run **all four** queued feature checks — not just
+> re-verify the one that already failed.
+>
+> **🟣 NEXT TASK (2026-09-13, superseded by the 🔴 box above — kept for
+> history, not for "what to work on" purposes):** search this file for "Task
 > 73/a item 3 continued — full reading-audit against `ci-errors-check-msrv.txt`"
 > and read straight through to the end of that entry. **All 10 of the 10 error
 > clusters in the CI log are now root-caused and have exact fix instructions
@@ -22269,5 +22290,140 @@ base.
 ```
 cd ~/B-PAY-backend
 git am ~/storage/downloads/0001-docs-task-73a-payouts-frm-cfg-gate-audit-part2.patch
+git push
+```
+
+## Task 73/a — cross-check audit: other connectors for the same payouts/frm gate-mismatch bug family (2026-09-13, later session, doc-only)
+
+**Scope of this entry:** the product owner asked, separately from the fix work
+still pending in the entry directly above, whether any *other* connector
+carries the same bug family the CI log surfaced, undetected because CI never
+reached the feature combination that would trip it. This is a **cross-check
+against the rest of `crates/hyperswitch_connectors/src/connectors`**, not a
+re-read of the 10 already-documented items (those stand as written above).
+**Read-only, no `.rs` edits, same as every entry in this line of work.**
+
+**First, re-checked what CI actually ran, not assumed:** the log
+(`ci-errors-check-msrv.txt`) shows this is a per-feature matrix job. For
+`hyperswitch_connectors` specifically, four runs were queued: `dummy_connector,v1`,
+`frm,v1`, `payouts,v1`, `revenue_recovery,v1`. Only the first
+(`dummy_connector,v1` — **both `payouts` and `frm` off**) produced output
+before the job failed; the other three never ran. So the 10 documented items
+are everything CI caught with *both* features off — `frm,v1`-only and
+`payouts,v1`-only are **completely unverified**, not just the fixes for the
+10 items.
+
+**Method:** grepped every connector file for any `#[cfg(feature = "payouts")]`
+or `#[cfg(feature = "frm")]` occurrence, then subtracted the files already
+covered by the 10 documented items (`envoy`, `adyenplatform`, `trustly`,
+`worldpayxml`, `cybersourcedecisionmanager`, `gotyme_sanlam`, `truelayer`).
+Fifteen connector groups remained unaudited: `adyen`, `cybersource`, `ebanx`,
+`gigadat`, `loonio`, `nomupay`, `nuvei`, `payload`, `payone`, `paypal`,
+`riskified`, `signifyd`, `stripe`, `wise`, `worldpay`. Wrote a small script to
+find the same shape as items 1–10: a gated definition/import referenced from
+a line with no matching gate (or a gate on the *other* feature), and the
+mirror case (an ungated import whose only real uses sit inside gated code).
+Every candidate the script flagged was then checked by hand against the
+actual source — the script is a lead-finder, not a verdict, same discipline
+as the reading passes above.
+
+### Result: no new instance of the bug found. Candidates considered and ruled out, with reasoning, so the next session doesn't have to re-derive this:
+
+1. **`adyen/transformers.rs:6164` — `struct RecurringContract` (gated
+   `payouts`).** Flagged because "RecurringContract" also appears at lines
+   5648/5666/5870/5972. Checked: that's `WebhookEventCode::RecurringContract`,
+   an unrelated, already-ungated enum variant with the same name. No
+   connection to the gated struct. Not a bug.
+
+2. **`gigadat/transformers.rs` and `loonio/transformers.rs` — `BankRedirect`
+   (gated `payouts` import from `api_models::payouts`).** Flagged usages are
+   `PaymentMethodData::BankRedirect(BankRedirectData::Interac {..})` and
+   `AdditionalPaymentMethodConnectorResponse::BankRedirect {..}` — different
+   types entirely, same variant name, both already ungated and unrelated to
+   the gated import. Not a bug, in either file.
+
+3. **`nomupay.rs:42` — `use hyperswitch_interfaces::types;` (gated
+   `payouts`).** Flagged because "types" appears at line 52. Checked: line 52
+   is `types::Response` **inside a separate, already-ungated**
+   `use hyperswitch_interfaces::{ ..., types::Response, ... };` tree a few
+   lines below — a different qualified path, not a reference to the gated
+   bare alias. The alias's real uses (`types::PayoutSyncType::get_url` etc.,
+   lines 445+) all sit correctly inside their own `#[cfg(feature = "payouts")]`
+   `impl ConnectorIntegration<PoSync/PoFulfill/...>` blocks. Not a bug.
+
+4. **`nuvei.rs:1394` — `PayoutIdType` (gated `payouts` import).** Referenced
+   inside `if has_payout_prefix(...) { #[cfg(feature = "payouts")] { ... }
+   #[cfg(not(feature = "payouts"))] { Err(...WebhookEventTypeNotFound...) } }`
+   (lines 1394–1408) — this file **already uses the exact feature-split-block
+   pattern** item 8 in the entry above prescribes as the fix. Not a bug; if
+   anything, a working example to point at when applying item 8.
+
+5. **`riskified.rs` / `signifyd.rs` — `use transformers as riskified;` /
+   `as signifyd;` (gated `frm`).** Flagged because the bare words "riskified"
+   / "signifyd" recur elsewhere. Checked: those are the unrelated
+   `fn id(&self) -> &'static str { "riskified" }` string literal and
+   `connectors.signifyd.base_url` config-field access — plain identically-
+   spelled words, not the module alias. Not a bug.
+
+6. **`signifyd.rs`'s `get_auth_header` (gated `frm`) and `stripe.rs`'s
+   `build_error_response` (gated `payouts`) — flagged, then ruled out as a
+   *different* issue class, not this one.** Both override
+   `ConnectorCommon` trait methods. Checked `hyperswitch_interfaces/src/api.rs`
+   directly: `get_auth_header` (line 369) defaults to `Ok(Vec::new())`,
+   `build_error_response` (line 390) has a full default body — both are
+   optional trait methods with real defaults, not required methods with none
+   (unlike truelayer's `get_webhook_event_type` in item 8, which is why that
+   one needed the feature-split fix and these don't). With the feature off,
+   the override vanishes and the trait default silently takes over — this
+   compiles fine either way, so it's **not** a CI-log-shaped bug. Worth
+   flagging anyway: it's a silent behavior gap (e.g. Signifyd would send no
+   auth header if `frm` were ever off while the connector is still wired up)
+   rather than a compile error, so it's a different problem for a different
+   session to weigh, not added to the fix list here.
+
+7. **`wise.rs:762` — `is_setup_webhook_event` (gated `payouts`).** Called
+   inside `get_webhook_event_type`'s own `#[cfg(feature = "payouts")] { ... }
+   #[cfg(not(feature = "payouts"))] { Err(report!(...WebhooksNotImplemented))
+   }` split (lines 848–864) — same already-correct pattern as nuvei above.
+   Not a bug.
+
+**Caveat, stated plainly:** this is a static, read-only line-matching audit —
+it looks for the exact shape (gate on one side, not the other) that produced
+all 10 real errors, and every candidate was hand-verified against the source,
+not just pattern-matched. It is **not** a compiler run, and it cannot be one
+yet (`rustc` still unavailable, per the retired toolchain-check step). It
+cannot rule out a bug shaped differently than items 1–10, and — more
+importantly — **`frm,v1`-only and `payouts,v1`-only were never run by CI at
+all**, so this audit's clean result for those two files/patterns is the best
+available signal, not a substitute for the real compile.
+
+### What this means for the next session
+
+Nothing new was added to the fix list — the 10 items in the entry above are
+still the complete, confirmed set. The job is unchanged in substance, just
+sharpened on one point: (a) apply all 10 documented fixes (item 8 needs the
+**corrected** feature-split-impl version); (b) the moment a working `rustc` ≥
+1.85 exists, run **all four** queued `hyperswitch_connectors` feature checks
+— `dummy_connector,v1`, `frm,v1`, `payouts,v1`, `revenue_recovery,v1` — not
+just re-verify the one CI already failed on, since the other three were
+queued but never actually reached. If either of the two never-run
+combinations (`frm,v1`, `payouts,v1`) turns up something new, this audit's
+"nothing else found" verdict was necessarily scoped to what a static read can
+see, not a claim that those two configurations are guaranteed clean.
+
+**Per rule 4: this stayed off `main`** — committed on branch
+`docs/task-73a-ci-audit-other-connectors-2026-09-13`, not `main`. Doc-only
+commit (this file only, no `.rs` changes, no `db/migrations/` changes) — no
+DB-Ops block owed, one patch file per rule 5/6. Per rule 6: the prior
+session's patch was already applied and pushed before this session started —
+confirmed via `git log --oneline -1` on clone (`eb65fb4`, that patch's own
+commit message: "docs(handover): finish CI error audit -- items 8 (corrected),
+9, 10 now root-caused", was already tip of `main`) — so this is a fresh
+commit on top of current `main`, not a stack on an unapplied base.
+
+**Per rule 7: command block for this session's handoff:**
+```
+cd ~/B-PAY-backend
+git am ~/storage/downloads/0001-docs-task-73a-ci-audit-other-connectors.patch
 git push
 ```

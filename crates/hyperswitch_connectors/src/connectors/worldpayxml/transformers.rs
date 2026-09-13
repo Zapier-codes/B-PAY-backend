@@ -748,7 +748,6 @@ struct TokenData {
     payment_token_i_d: Secret<String>,
 }
 
-#[cfg(feature = "payouts")]
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct FastAccessData {
@@ -757,7 +756,6 @@ struct FastAccessData {
     purpose_of_payment: Option<String>,
 }
 
-#[cfg(feature = "payouts")]
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Recipient {
@@ -765,14 +763,12 @@ struct Recipient {
     address: Option<WorldpayxmlAddressData>,
 }
 
-#[cfg(feature = "payouts")]
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct PaymentInstrument {
     card_details: CardDetails,
 }
 
-#[cfg(feature = "payouts")]
 #[derive(Debug, Serialize, Deserialize)]
 struct CardDetails {
     #[serde(flatten)]

@@ -110,14 +110,15 @@
 > directly below for "what to work on" purposes; nothing in that box is
 > lost):** search this file for "Task 73/a — implementing the 10 documented
 > CI fixes, split a–e per the standing mandatory task-splitting rule" and
-> read that entry. **Part a (`envoy/transformers.rs`, items 1–2) is now
-> built** — reviewed-by-reading only, no working `rustc` yet, same caveat
-> as everything else in this file. **Parts b, c, d, e are each independent
-> and not started** — pick the next one (b/c/d/e, any order, no dependency
-> between them):
+> read that entry. **Parts a, b, and c are now built** — reviewed-by-reading
+> only, no working `rustc` yet, same caveat as everything else in this file.
+> - **a** — `envoy/transformers.rs` (items 1–2) — built.
 > - **b** — `adyenplatform.rs` (item 3) + `trustly/transformers.rs`
->   missing-gate half (item 4)
-> - **c** — `worldpayxml/transformers.rs` inverted-gate structs (item 5)
+>   missing-gate half (item 4) — built.
+> - **c** — `worldpayxml/transformers.rs` inverted-gate structs (item 5) —
+>   built.
+> **Parts d, e are each independent and not started** — pick either (d or
+> e, any order, no dependency between them):
 > - **d** — `cybersourcedecisionmanager.rs`+`transformers.rs` (item 6) +
 >   `gotyme_sanlam.rs` (item 7)
 > - **e** — `truelayer.rs`+`transformers.rs` (items 8, 9, 10) +
@@ -22461,7 +22462,7 @@ grouping, since each part's fixes are independent of the others:
 - **Part b — `adyenplatform.rs` (item 3) + `trustly/transformers.rs`
   missing-gate half (item 4) [x] built this session.**
 - **Part c — `worldpayxml/transformers.rs` inverted-gate structs (item 5)
-  [ ] not started.**
+  [x] built this session.**
 - **Part d — `cybersourcedecisionmanager.rs` + `transformers.rs` (item 6) +
   `gotyme_sanlam.rs` (item 7) [ ] not started.**
 - **Part e — `truelayer.rs` + `truelayer/transformers.rs` (items 8, 9, 10)
@@ -22574,14 +22575,60 @@ git am ~/storage/downloads/0001-fix-task-73a-adyenplatform-trustly-gate-part-b.p
 git push
 ```
 
+### Part c — built, `worldpayxml/transformers.rs`, item 5 (inverted-gate structs)
+
+**Item 5:** re-verified the doc's claim before editing. `enum PaymentMethod`
+(ungated) is used unconditionally at lines 927/1068/1106/1125/1147/1258/1294
+for the connector's normal payment-method variants (`CardSSL`, `TokenSSL`,
+`PayWithGoogleSSL`, `PayWithAppleSSL`, `EmvcoTokenSSL`) — confirmed each
+site still matches. Its `FastAccessSSL(Box<FastAccessData>)` variant is only
+*constructed* at line 3691, inside a payouts-gated `TryFrom` impl — but the
+four struct **definitions** it depends on (`FastAccessData` → `Recipient` →
+`PaymentInstrument` → `CardDetails`) were themselves gated
+`#[cfg(feature = "payouts")]`, which is backwards: because the *enum*
+housing the variant is ungated, the compiler needs those struct definitions
+visible in every build, payouts feature on or off, even though they're only
+constructed in gated code.
+**Fix applied:** removed `#[cfg(feature = "payouts")]` from all four struct
+definitions (`FastAccessData`, `Recipient`, `PaymentInstrument`,
+`CardDetails`). Left every `impl`/`TryFrom` that constructs them
+(`ApplePayDecrypt`→`PaymentInstrument`, `GooglePayDecrypt`→`PaymentInstrument`,
+`CardPayout`→`PaymentInstrument`, `WorldpayxmlPayoutConnectorMetadataObject`,
+and the `PayoutsRouterData<PoFulfill>`→`PaymentService` impl housing the
+line-3691 construction site) gated exactly as before — re-checked each of
+the five `#[cfg(feature = "payouts")]` markers at lines 3542/3566/3592/3616/3642
+immediately before and after the edit to confirm none were accidentally
+touched. This is a definition-visibility fix only, not a "make payouts
+unconditional" fix, per the doc's own framing.
+
+**Verification:** still no working `rustc` (retired-step convention still
+holds, not re-probed this session). **Reviewed-by-reading only**, same
+caveat as every uncompiled `.rs` change in this file so far.
+
+**Per rule 4: stayed off `main`** — committed on branch
+`fix/task-73a-worldpayxml-gate-part-c-2026-09-13`. **This commit touches
+one `.rs` file** (`worldpayxml/transformers.rs`) plus this handover entry —
+no `db/migrations/` changes, so no DB-Ops block owed. Per rule 6: confirmed
+via `git log --oneline -1` on this checkout (`4de65a33e`, part b's own
+commit message) that part b's patch was already applied and tip of `main`
+before this session started, so this is a fresh commit on top of current
+`main`, not a stack on an unapplied base.
+
+**Per rule 7: command block for this session's handoff:**
+```
+cd ~/B-PAY-backend
+git am ~/storage/downloads/0001-fix-task-73a-worldpayxml-gate-part-c.patch
+git push
+```
+
 ### What this means for the next session
 
-Parts a and b are done. Parts c, d, and e are each independent,
-self-contained, and explicitly not started — pick the next one (suggest c,
-in documented order, but any is genuinely unblocked). None of them touch
-`envoy/`, `adyenplatform.rs`, or `trustly/`, so there's no ordering
-dependency forcing a particular next pick. Once all five parts land, the
-moment a working `rustc` ≥ 1.85 exists, run all four queued
-`hyperswitch_connectors` feature checks (`dummy_connector,v1`, `frm,v1`,
-`payouts,v1`, `revenue_recovery,v1`) — the real compiler pass every part of
-this task has been deferred on so far.
+Parts a, b, and c are done. Parts d and e are each independent,
+self-contained, and explicitly not started — pick either (suggest d, in
+documented order, but both are genuinely unblocked, no dependency between
+them). Neither touches `envoy/`, `adyenplatform.rs`, `trustly/`, or
+`worldpayxml/`, so there's no ordering dependency forcing a particular next
+pick. Once all five parts land, the moment a working `rustc` ≥ 1.85 exists,
+run all four queued `hyperswitch_connectors` feature checks
+(`dummy_connector,v1`, `frm,v1`, `payouts,v1`, `revenue_recovery,v1`) — the
+real compiler pass every part of this task has been deferred on so far.

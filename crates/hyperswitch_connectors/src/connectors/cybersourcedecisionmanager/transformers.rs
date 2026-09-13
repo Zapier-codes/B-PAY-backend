@@ -493,12 +493,14 @@ impl RemoveNewLine for Option<String> {
     }
 }
 
+#[allow(dead_code)]
 fn truncate_string(state: &Secret<String>, max_len: usize) -> Secret<String> {
     let exposed = state.clone().expose();
     let truncated = exposed.get(..max_len).unwrap_or(&exposed);
     Secret::new(truncated.to_string())
 }
 
+#[allow(dead_code)]
 fn get_cybersource_card_type(card_network: common_enums::CardNetwork) -> Option<&'static str> {
     match card_network {
         common_enums::CardNetwork::Visa => Some("001"),

@@ -270,6 +270,7 @@ pub struct TrustlyErrorResponseErrorDetails {
     pub uuid: String,
 }
 
+#[allow(dead_code)]
 fn process_error_response(error_response: TrustlyErrorResponse, http_code: u16) -> ErrorResponse {
     ErrorResponse {
         code: error_response.error.code.to_string(),
@@ -294,6 +295,7 @@ enum TrustlyMethod {
 }
 
 impl TrustlyMethod {
+    #[allow(dead_code)]
     fn as_str(&self) -> &'static str {
         match self {
             Self::RegisterAccount => "RegisterAccount",

@@ -23692,3 +23692,107 @@ this sandbox to independently confirm either fix locally (checked:
 `rustfmt: not found`) — this fix, like part d's, is reviewed by
 reading the real CI diff only, not tool-verified, and the next CI run
 is the only real confirmation.
+
+## Task 76 — `Check compilation on MSRV toolchain` failed with 7 real `-D dead-code` errors across 4 files, fully root-caused against the real log; fixed with the same `#[allow(dead_code)]` precedent already used elsewhere in this crate (2026-09-13, new session)
+
+**Trigger:** product owner supplied a fresh CI log,
+`ci-errors-check-msrv-2.txt` (3,264 lines), for the
+`Check compilation on MSRV toolchain (ubuntu-latest)` job. Job summary
+lines, transcribed verbatim:
+```
+error: could not compile `hyperswitch_connectors` (lib test) due to 7 previous errors
+warning: build failed, waiting for other jobs to finish...
+error: could not compile `hyperswitch_connectors` (lib) due to 7 previous errors
+error: recipe `ci_hack` failed on line 273 with exit code 101
+##[error]Process completed with exit code 101.
+```
+Confirmed via grep of the full log for every `^error` line that these
+7 are the complete set — no additional, not-yet-transcribed errors.
+
+**Root cause — all 7 are `-D dead-code` (implied by `-D warnings`),
+none are real type/borrow errors, all in `hyperswitch_connectors`:**
+
+| # | File | Item | Line |
+|---|------|------|------|
+| 1 | `connectors/cybersourcedecisionmanager.rs` | field `amount_converter` never read | 72 |
+| 2 | `connectors/cybersourcedecisionmanager/transformers.rs` | fn `truncate_string` never used | 496 |
+| 3 | `connectors/cybersourcedecisionmanager/transformers.rs` | fn `get_cybersource_card_type` never used | 502 |
+| 4 | `connectors/gotyme_sanlam.rs` | field `amount_converter` never read | 68 |
+| 5 | `connectors/payload/requests.rs` | variants `Credit`, `Deposit` never constructed | 237, 242 |
+| 6 | `connectors/trustly/transformers.rs` | fn `process_error_response` never used | 273 |
+| 7 | `connectors/trustly/transformers.rs` | method `as_str` never used | 297 |
+
+Confirmed by reading each site directly: all 7 are stub/scaffold code
+for connectors not yet fully wired into the live payment/payout flows
+(same "reviewed by reading only" situation as every other connector in
+this file's history) — none is dead by mistake, all are genuinely
+not-yet-called from anywhere in the crate. Not a case for deleting the
+code (it's the documented shape for these connectors going forward,
+matching the pattern already established for `Cybersourcedecisionmanager`'s
+sibling `cybersource.rs` and for `braintree.rs`/`fiserv.rs`, which
+already carry `#[allow(dead_code)]` on structurally identical
+not-yet-wired items — confirmed via `grep -rn "allow(dead_code)"
+crates/hyperswitch_connectors/src/connectors/*.rs` before choosing this
+fix, so this isn't a new pattern for the crate, it's the existing one).
+
+**Exact fix applied — one `#[allow(dead_code)]` per flagged item, no
+logic change, nothing deleted:**
+- `cybersourcedecisionmanager.rs`: attribute on the `amount_converter`
+  field.
+- `cybersourcedecisionmanager/transformers.rs`: attribute on both
+  `truncate_string` and `get_cybersource_card_type`.
+- `gotyme_sanlam.rs`: attribute on the `amount_converter` field.
+- `payload/requests.rs`: attribute on the `Credit` and `Deposit`
+  variants individually (not the whole enum, to keep the allow scoped
+  to exactly the two flagged variants).
+- `trustly/transformers.rs`: attribute on `process_error_response` and
+  on `TrustlyMethod::as_str`.
+
+**Formatting:** none of these edits touch `use` lines or import
+grouping — the specific hazard this file's Task 74 parts c/d/e already
+documented (stable-rustfmt vs. real nightly `imports_granularity =
+Crate` diffs) doesn't apply here; a bare `#[allow(dead_code)]` line
+directly above an existing item is not something nightly rustfmt
+reflows. **Still not independently verified** — same standing wall as
+every other entry in this file: `apt-cache policy rustc cargo rustfmt`
+this session again shows only `1.75.0+dfsg0ubuntu1-0ubuntu7.4`
+candidates (below this workspace's pinned `1.85.0`), `rustfmt` not
+installed at all. Per this file's standing decision, GitHub Actions'
+next real run against this commit is the actual confirmation for both
+the MSRV job and `Check formatting`.
+
+**Per rule 4: stayed off `main`.** Branch
+`fix/task-76-dead-code-msrv-2026-09-13`, based on `origin/main` at
+`bd9cc58` (part e's own pushed hash — confirmed via `git fetch origin`
+immediately before branching, per rule 8: `origin/main` had not moved,
+so this is a fresh commit on the real current tip). One commit,
+touching the 5 `.rs` files above plus this handover entry. No
+`db/migrations/` changes — Patch Handoff only, no DB-Ops block owed.
+
+**Patch generated and test-applied against a clean fresh clone of the
+real current `origin/main` before handoff (rule 8.3) — confirmed `git
+am` exit 0.** Patch file:
+`0001-fix-task-76-dead-code-msrv-allow-attrs.patch`.
+
+**Per rule 7 — exact command block for this handoff:**
+```
+cd ~/B-PAY-backend
+git am ~/storage/downloads/0001-fix-task-76-dead-code-msrv-allow-attrs.patch
+git push
+```
+
+**Verification, once pushed** — re-pull the MSRV job (and `Check
+formatting`, since both run off the same commit) for the newly
+triggered run:
+```
+RUN_ID=$(gh run list --repo Zapier-codes/B-Pay-backend --branch main --limit 1 --json databaseId --jq '.[0].databaseId')
+gh run view "$RUN_ID" --repo Zapier-codes/B-Pay-backend --json status,conclusion,jobs \
+  --jq '.jobs[] | select(.name=="Check formatting" or (.name | startswith("Check compilation on MSRV"))) | {name, status, conclusion}'
+```
+Both should read `conclusion: "success"` once complete. **Not done
+this session, still open:** no working `rustc`/`cargo`/`rustfmt` exists
+in this sandbox to compile-check or format-check either fix locally
+(re-confirmed this session, not re-litigated from scratch, per the
+retired New-Clone-Checklist step 2) — this fix, like every `.rs` change
+in this file's history, is reviewed by reading the real CI log only,
+not tool-verified; the next CI run is the only real confirmation.

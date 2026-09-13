@@ -234,11 +234,13 @@ pub enum PayloadEventType {
     Payment,
     Processed,
     Authorized,
+    #[allow(dead_code)]
     Credit,
     Refund,
     Reversal,
     Void,
     Decline,
+    #[allow(dead_code)]
     Deposit,
     Reject,
 }

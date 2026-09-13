@@ -65,6 +65,7 @@ use crate::{types::ResponseRouterData, utils};
 
 #[derive(Clone)]
 pub struct GotymeSanlam {
+    #[allow(dead_code)]
     amount_converter: &'static (dyn AmountConvertor<Output = StringMajorUnit> + Sync),
 }
 

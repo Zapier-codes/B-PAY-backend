@@ -22975,10 +22975,10 @@ rule (cap 5, lettered a–e; 2 is a completely valid split size, same as
 prior tasks that only needed a/b):**
 
 - **Part a — `Check formatting` fix: merge/reorder 6 files' `use`
-  statements per rustfmt's own diff. [x] built this session.**
+  statements per rustfmt's own diff. [x] built.**
 - **Part b — the shared E0599 fix (`Run tests`, `V2 features`,
   `storage_impl` jobs): add one gated trait import to
-  `truelayer/transformers.rs`. [ ] not yet built.**
+  `truelayer/transformers.rs`. [x] built this session.**
 
 ### Part a — `Check formatting` — built and tool-verified this session
 
@@ -23092,7 +23092,7 @@ git am ~/storage/downloads/0001-fix-task-74-part-a-formatting.patch
 git push
 ```
 
-### Part b — shared E0599 fix for `Run tests`/`V2 features`/`storage_impl`, not yet built
+### Part b — built, `truelayer/transformers.rs`, shared E0599 fix for `Run tests`/`V2 features`/`storage_impl`
 
 **The exact, identical error across all three job logs:**
 ```
@@ -23143,36 +23143,64 @@ hyperswitch_domain_models::router_data::ErrorResponse;`). Fix to apply:
 #[cfg(feature = "payouts")]
 use crate::utils::RouterData as _;
 ```
-placed in the file's existing `#[cfg(feature = "payouts")]`-gated
-import group (same location Part a's own reordering already touches
-for this file, so these two changes will need to be reconciled into one
-diff when actually built — not committed as two separate hunks against
-the same lines).
+**Superseded — built and placed differently than originally guessed,
+found by an actual tool this time, not just precedent-matching.** The
+import above was first placed inside the file's existing `#[cfg(feature
+= "payouts")]`-gated group next to `common_utils`, matching Part a's
+own reordering location — but a real `rustfmt --edition 2021 --check`
+run (stable `1.75.0`, available in this session's sandbox, same
+correction noted in Part a) rejected that placement and printed its own
+required diff: `crate::` imports get grouped at the very top of this
+file's import block, before `std`'s own sibling group even, not sorted
+alphabetically alongside `common_utils`/`error_stack`. Moved to:
+```rust
+use std::collections::{BTreeMap, HashMap};
 
-**Not compiled** — no working `rustc` in this sandbox. This is a
-stronger-than-usual reviewed-by-reading finding (root cause is rustc's
-own diagnostic, not guessed; the collision and its fix are both
-confirmed against two other real files in this exact crate solving the
-identical problem, not hypothesized from documentation alone), but it
-is still not a substitute for an actual `cargo check -p
-hyperswitch_connectors --features payouts` (or the next real CI run)
-confirming it compiles clean.
+#[cfg(feature = "payouts")]
+use crate::utils::RouterData as _;
+use actix_web::http::header::HeaderMap;
+```
+`rustfmt --edition 2021 --check` on the file now returns **exit 0, zero
+diff** — real tool confirmation of the import's placement, not
+precedent-matched guesswork. This doesn't touch whether the fix's
+*content* (the trait, the alias, the `cfg` gate) is right — that part
+is still the precedent-based reasoning above, unchanged.
 
-### What this means for the next session
+**`cargo check -p hyperswitch_connectors --features payouts` attempted
+for real this session** (stable `1.75.0` available, per Part a's
+correction) — reproduces the exact, already-documented wall verbatim:
+`error: failed to parse lock file ... lock file version 4 requires
+-Znext-lockfile-bump`. Consistent with every prior session's finding,
+not new information; still no real compiler confirmation that the
+`E0599` itself is gone, only that the import is syntactically valid
+(rustfmt has to parse a file to format it, and did so cleanly) and
+correctly placed.
 
-Two independent, fully-diagnosed fixes are ready to build, either
-order, since they don't touch the same lines in a conflicting way (Part
-a reorders imports in `truelayer/transformers.rs`; Part b adds one new
-gated import to the same file's import block — apply Part a's
-reordering first, then insert Part b's new line into the resulting
-gated group, rather than building them as two separate patches against
-the same file). Per the New-Clone Checklist and this file's standing
-practice: build one part per session, verify by reading against the
-precedent cited above, commit on its own branch (never `main` directly
-per rule 4), and hand over via `git format-patch` per the Patch
-Handoff Convention. MSRV's own result (`in_progress` at triage time)
-still needs pulling separately once it completes — not covered by
-either part above.
+### Both parts now built — status update, this session
+
+**Both Part a and Part b are now built** (Part a landed as commit
+`9e6e20ea0`; Part b is this session's own commit, below). MSRV's own
+result (`in_progress` at the original triage) still needs pulling
+separately once it completes — not covered by either part. Neither
+part has a real `cargo check`/CI-confirmed pass yet — Part a is
+tool-verified via stable `rustfmt` (see above), Part b is
+tool-verified for syntax/placement the same way but its actual
+compile-fixing effect is still unconfirmed pending either a working
+`rustc` ≥ `1.85.0` or the next real CI run.
+
+**Per rule 4: stayed off `main`** — this commit on branch
+`fix/task-74-part-b-truelayer-routerdata-trait-2026-09-13`. Touches one
+`.rs` file (`truelayer/transformers.rs`) plus this handover entry — no
+`db/migrations/` changes, no DB-Ops block owed. Per rule 8: confirmed
+via `git fetch origin` that `9e6e20ea0` (Part a, already landed) was
+tip of `origin/main` with no drift before starting.
+
+**Per rule 7: command block for this session's handoff:**
+```
+cd ~/B-PAY-backend
+git am ~/storage/downloads/0001-fix-task-74-part-b-truelayer-routerdata-trait.patch
+git push
+```
 
 **Per rule 4: stayed off `main`** — this entry committed on branch
 `docs/task-74-ci-run-34753510276-triage-2026-09-13`. **Doc-only

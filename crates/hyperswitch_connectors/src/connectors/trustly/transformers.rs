@@ -9,7 +9,9 @@ use common_enums::{CountryAlpha2, PayoutStatus};
 #[cfg(feature = "payouts")]
 use common_utils::{errors::CustomResult, pii};
 use common_utils::{id_type::CustomerId, types::StringMajorUnit};
-use error_stack::{report, ResultExt};
+use error_stack::ResultExt;
+#[cfg(feature = "payouts")]
+use error_stack::report;
 #[cfg(feature = "payouts")]
 use hyperswitch_domain_models::types::{PayoutsResponseData, PayoutsRouterData};
 use hyperswitch_domain_models::{
@@ -21,7 +23,9 @@ use hyperswitch_domain_models::{
     types::{PaymentsAuthorizeRouterData, RefundsRouterData},
 };
 use hyperswitch_interfaces::errors::ConnectorError;
-use hyperswitch_masking::{ExposeInterface, Secret};
+use hyperswitch_masking::Secret;
+#[cfg(feature = "payouts")]
+use hyperswitch_masking::ExposeInterface;
 use openssl::{
     hash::MessageDigest,
     pkey::PKey,

@@ -110,7 +110,7 @@
 > directly below for "what to work on" purposes; nothing in that box is
 > lost):** search this file for "Task 73/a — implementing the 10 documented
 > CI fixes, split a–e per the standing mandatory task-splitting rule" and
-> read that entry. **Parts a, b, c, and d are now built** —
+> read that entry. **All five parts (a–e) are now built** —
 > reviewed-by-reading only, no working `rustc` yet, same caveat as
 > everything else in this file.
 > - **a** — `envoy/transformers.rs` (items 1–2) — built.
@@ -120,13 +120,15 @@
 >   built.
 > - **d** — `cybersourcedecisionmanager.rs`+`transformers.rs` (item 6) +
 >   `gotyme_sanlam.rs` (item 7) — built.
-> **Part e is the last one and not started:**
 > - **e** — `truelayer.rs`+`transformers.rs` (items 8, 9, 10) +
->   `trustly/transformers.rs` unused-import half of item 10
-> Build only **one** part this session, per the standing splitting rule —
-> do not chain into a second part because it "was right there." Once all
-> five parts land, run all four queued `hyperswitch_connectors` feature
-> checks the moment a working `rustc` ≥ 1.85 exists.
+>   `trustly/transformers.rs` unused-import half of item 10 — built.
+> **Next real task, now that all five parts are built:** the moment a
+> working `rustc` ≥ 1.85 exists, run all four queued
+> `hyperswitch_connectors` feature checks — `dummy_connector,v1`,
+> `frm,v1`, `payouts,v1`, `revenue_recovery,v1` — not just the one CI
+> originally failed on. This is the real compile every part of this task
+> has been deferred on; until it runs, "all five parts built" means
+> reviewed-by-reading only, not confirmed-compiling.
 >
 > **🔴 NEXT TASK (2026-09-13, superseded by the ⚫ box above — kept for
 > history, not for "what to work on" purposes):** search this file for "Task
@@ -22466,7 +22468,8 @@ grouping, since each part's fixes are independent of the others:
 - **Part d — `cybersourcedecisionmanager.rs` + `transformers.rs` (item 6) +
   `gotyme_sanlam.rs` (item 7) [x] built this session.**
 - **Part e — `truelayer.rs` + `truelayer/transformers.rs` (items 8, 9, 10)
-  + `trustly/transformers.rs` unused-import half of item 10 [ ] not started.**
+  + `trustly/transformers.rs` unused-import half of item 10 [x] built this
+  session.**
 
 ### Part a — built, `envoy/transformers.rs`, items 1–2
 
@@ -22703,3 +22706,103 @@ items 8, 9, 10, plus `trustly/transformers.rs`'s unused-import half of item
 four queued `hyperswitch_connectors` feature checks (`dummy_connector,v1`,
 `frm,v1`, `payouts,v1`, `revenue_recovery,v1`) — the real compiler pass
 every part of this task has been deferred on so far.
+
+### Part e — built, `truelayer.rs`+`transformers.rs` (items 8, 9, 10) + `trustly/transformers.rs` unused-import half of item 10
+
+**Item 8 (`truelayer.rs`'s `get_webhook_event_type` + `truelayer/transformers.rs`'s
+`get_payout_webhook_event`):** re-verified the doc's shape before editing —
+`get_webhook_event_type` (starts what's now line 1022) is a **required**
+`IncomingWebhook` trait method with no default body, and Truelayer's only
+implementation is entirely payout-specific (parses
+`TruelayerPayoutsWebhookBody`, calls the gated
+`get_payout_webhook_event`). Confirmed gating just the callee would leave
+the required trait method unimplemented for non-payouts builds and just
+move the compile error to the impl block — matches the doc's own
+reasoning for why this needed a feature-split impl, not a plain gate.
+**Fix applied:** split `get_webhook_event_type` into a `#[cfg(feature =
+"payouts")]` real version and a `#[cfg(not(feature = "payouts"))]`
+`Err(report!(WebhooksNotImplemented))` fallback — mirroring this same impl
+block's existing style (`get_webhook_object_reference_id`'s own final
+`Err(report!(...))` fallback, confirmed still present a few lines above).
+Also added `#[cfg(feature = "payouts")]` above `get_payout_webhook_event`
+itself in `transformers.rs` (line 779 in the doc's numbering, unchanged
+here) — the actual reference to the two gated `IncomingWebhookEvent`
+variants.
+
+**Item 9 (`truelayer/transformers.rs`'s `TruelayerMetadata` impl):**
+re-verified: the impl and its `pii` import were gated `payouts`, but the
+only caller is `Truelayer`'s blanket `impl<Flow, Request, Response>
+ConnectorCommonExt<...>` (generic over every flow, no `#[cfg]` of its own)
+— confirmed no other, ungated path exists for this connector's metadata
+parsing. **Fix applied:** removed `#[cfg(feature = "payouts")]` from both
+`use common_utils::pii;` and the `TryFrom<&Option<pii::SecretSerdeValue>>
+for TruelayerMetadata` impl — made both unconditional. Confirmed no
+unused-import fallout: `pii::SecretSerdeValue` has no other use in the
+file.
+
+**Item 10 (four unused-import fixes across two files):**
+- `truelayer/transformers.rs` `router_data::{...}` import: confirmed
+  `AccessToken`/`ConnectorAuthType`/`RouterData` each have real ungated use
+  sites; `ErrorResponse` used only at two sites inside the already-gated
+  `impl<F> TryFrom<PayoutsResponseRouterData<F, TruelayerPayoutSyncType>>`.
+  Split `ErrorResponse` into its own `#[cfg(feature = "payouts")]` import
+  line, left the rest ungated.
+- `truelayer/transformers.rs` `utils::{self, RouterData as
+  OtherRouterData}`: grepped every `utils::RouterData` trait method
+  (`get_billing_address` etc.) against the file — zero hits.
+  `OtherRouterData` is genuinely dead, confirmed the one true
+  unused-import case in this whole item (not a gate mismatch). Dropped the
+  `RouterData as OtherRouterData` half, kept the bare `utils` module (used
+  unconditionally at two sites).
+- `trustly/transformers.rs` `error_stack::{report, ResultExt}`: `report!`
+  used once, inside this file's own already-`payouts`-gated
+  `get_payout_webhook_event`; `ResultExt`'s `.change_context` used
+  unconditionally throughout `verify_webhook_signature`. Split `report`
+  into its own gated import, left `ResultExt` ungated.
+- `trustly/transformers.rs` `hyperswitch_masking::{ExposeInterface,
+  Secret}`: traced all seven `.expose()` call sites in the file against
+  the nearest enclosing `#[cfg(feature = "payouts")]` marker — every one
+  sits inside a payouts-gated fn or impl (`get_customer_details` and four
+  separate `TryFrom`/impl blocks). `Secret` itself used unconditionally in
+  plain, ungated structs early in the file. Split `ExposeInterface` into
+  its own gated import, left `Secret` ungated.
+
+**Verification:** still no working `rustc` (retired-step convention still
+holds, not re-probed this session). **Reviewed-by-reading only**, same
+caveat as every uncompiled `.rs` change in this file so far — this is the
+last of the 10 documented items, so this caveat now applies to the whole
+set, not just this part.
+
+**Per rule 4: stayed off `main`** — committed on branch
+`fix/task-73a-truelayer-trustly-gate-part-e-2026-09-13`. **This commit
+touches three `.rs` files** (`truelayer.rs`, `truelayer/transformers.rs`,
+`trustly/transformers.rs`) plus this handover entry — no `db/migrations/`
+changes, so no DB-Ops block owed. Per rule 6: confirmed via `git log
+--oneline -1` on this checkout (`2f6f3dc8d`, part d's own commit message)
+that part d's patch was already applied and tip of `main` before this
+session started, so this is a fresh commit on top of current `main`, not a
+stack on an unapplied base.
+
+**Per rule 7: command block for this session's handoff:**
+```
+cd ~/B-PAY-backend
+git am ~/storage/downloads/0001-fix-task-73a-truelayer-trustly-gate-part-e.patch
+git push
+```
+
+### What this means for the next session
+
+**All five parts (a–e) of the 10-item CI fix list are now built.** Every
+fix in this session's list has been applied, reviewed-by-reading only, no
+working `rustc` at any point across the whole task. The single
+highest-value next move, the moment a working `rustc` ≥ 1.85 exists, is
+running all four queued `hyperswitch_connectors` feature checks —
+`dummy_connector,v1`, `frm,v1`, `payouts,v1`, `revenue_recovery,v1` — not
+just re-verifying the one CI originally failed on, since the other three
+were queued but never actually reached. That real compiler pass is the
+thing every part of this task has been deferred on; until it runs, "all
+five parts built" means reviewed-by-reading only, not confirmed-compiling.
+If it turns up anything beyond the 10 documented items (including in the
+two combinations that were never run by CI at all, `frm,v1`/`payouts,v1`
+per the cross-check audit earlier in this file), that's real news for a
+fresh entry, not a reason to assume this task is fully closed yet.

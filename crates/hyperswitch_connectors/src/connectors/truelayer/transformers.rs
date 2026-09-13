@@ -5,13 +5,12 @@ use actix_web::http::header::HeaderMap;
 use api_models::payouts::{BankTransfer, PayoutMethodData};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use common_enums::enums;
-#[cfg(feature = "payouts")]
 use common_utils::pii;
 use common_utils::types::MinorUnit;
 use error_stack::{report, ResultExt};
 use hyperswitch_domain_models::{
     payment_method_data::PaymentMethodData,
-    router_data::{AccessToken, ConnectorAuthType, ErrorResponse, RouterData},
+    router_data::{AccessToken, ConnectorAuthType, RouterData},
     router_flow_types::{
         refunds::{Execute, RSync},
         VerifyWebhookSource,
@@ -26,6 +25,8 @@ use hyperswitch_domain_models::{
         VerifyWebhookSourceRouterData,
     },
 };
+#[cfg(feature = "payouts")]
+use hyperswitch_domain_models::router_data::ErrorResponse;
 #[cfg(feature = "payouts")]
 use hyperswitch_domain_models::{
     router_flow_types::payouts::PoFulfill, router_response_types::PayoutsResponseData,
@@ -48,7 +49,7 @@ use serde::{Deserialize, Serialize};
 use crate::types::PayoutsResponseRouterData;
 use crate::{
     types::{RefundsResponseRouterData, ResponseRouterData},
-    utils::{self, RouterData as OtherRouterData},
+    utils,
 };
 const PREFIX: &str = "/api";
 const GRANT_TYPE: &str = "client_credentials";
@@ -97,7 +98,6 @@ pub struct TruelayerMetadata {
     pub kid: Secret<String>,
 }
 
-#[cfg(feature = "payouts")]
 impl TryFrom<&Option<pii::SecretSerdeValue>> for TruelayerMetadata {
     type Error = error_stack::Report<errors::ConnectorError>;
     fn try_from(meta_data: &Option<pii::SecretSerdeValue>) -> Result<Self, Self::Error> {
@@ -776,6 +776,7 @@ pub struct TruelayerPayoutsWebhookBody {
     pub scheme_id: Option<String>,
 }
 
+#[cfg(feature = "payouts")]
 pub fn get_payout_webhook_event(
     event: TruelayerPayoutsWebhookEvent,
 ) -> api_models::webhooks::IncomingWebhookEvent {

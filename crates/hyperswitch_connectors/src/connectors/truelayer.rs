@@ -1019,6 +1019,7 @@ impl webhooks::IncomingWebhook for Truelayer {
         Err(report!(errors::ConnectorError::WebhooksNotImplemented))
     }
 
+    #[cfg(feature = "payouts")]
     fn get_webhook_event_type(
         &self,
         request: &webhooks::IncomingWebhookRequestDetails<'_>,
@@ -1030,6 +1031,15 @@ impl webhooks::IncomingWebhook for Truelayer {
             .change_context(errors::ConnectorError::WebhookBodyDecodingFailed)?;
 
         Ok(truelayer::get_payout_webhook_event(webhook_body._type))
+    }
+
+    #[cfg(not(feature = "payouts"))]
+    fn get_webhook_event_type(
+        &self,
+        _request: &webhooks::IncomingWebhookRequestDetails<'_>,
+        _context: Option<&webhooks::WebhookContext>,
+    ) -> CustomResult<api_models::webhooks::IncomingWebhookEvent, errors::ConnectorError> {
+        Err(report!(errors::ConnectorError::WebhooksNotImplemented))
     }
 
     fn get_webhook_resource_object(

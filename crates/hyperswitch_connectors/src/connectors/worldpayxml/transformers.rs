@@ -7,12 +7,6 @@ use common_types::payments::GpayTokenizationData;
 use common_utils::{pii, types::StringMinorUnit};
 use error_stack::ResultExt;
 use http::HeaderMap;
-#[cfg(feature = "payouts")]
-use hyperswitch_domain_models::{
-    router_flow_types::payouts::{PoCancel, PoFulfill, PoSync},
-    router_response_types::PayoutsResponseData,
-    types::PayoutsRouterData,
-};
 use hyperswitch_domain_models::{
     address::Address,
     payment_method_data::{
@@ -35,6 +29,12 @@ use hyperswitch_domain_models::{
         PaymentsCompleteAuthorizeRouterData, PaymentsPreAuthenticateRouterData,
         PaymentsSyncRouterData, RefundSyncRouterData, RefundsRouterData,
     },
+};
+#[cfg(feature = "payouts")]
+use hyperswitch_domain_models::{
+    router_flow_types::payouts::{PoCancel, PoFulfill, PoSync},
+    router_response_types::PayoutsResponseData,
+    types::PayoutsRouterData,
 };
 use hyperswitch_interfaces::{consts, errors};
 use hyperswitch_masking::{ExposeInterface, PeekInterface, Secret};

@@ -21792,3 +21792,93 @@ cd ~/B-PAY-backend
 git am ~/storage/downloads/0001-task-73a-item3-full-audit-combined-and-handover.patch
 git push
 ```
+
+## CORRECTION — the two preceding entries were wrong: real cfg-gate bugs found via the actual ci-fail.log (2026-09-12, same session)
+
+**This entry corrects, not supplements, the two entries directly above it**
+("Task 73/a item 3" and "Task 73/a item 3 (downstream fallout files)"), both
+of which concluded no code change was needed across 10 files. That
+conclusion was wrong for at least 6 of them. Flagging this plainly rather
+than quietly appending a fix, because a silent correction next to two
+confident "audit clean" entries is worse than the original mistake.
+
+**What went wrong with the prior audit:** it pattern-matched each file
+against the specific bug *shape* items 1–2 fixed (a definition ungated while
+its one known caller is gated) instead of tracing every `payouts`- or
+`frm`-relevant import in each file against what actually calls it. That
+catches the trustly/worldpayxml shape and nothing else — it missed an
+inverted case (a gate that shouldn't be there at all), a case where the
+mismatch was in a completely different feature (`frm`, not `payouts`), and
+a case where an entire un-gated section (23 items) was never checked
+because nothing about it resembled the one-function shape being searched
+for.
+
+**What changed this entry:** the product owner supplied the actual CI
+failure log (`ci-fail.log`, ~3,600 lines, 98 `error[E...]` entries) as an
+attachment. That's ground truth a reading-based audit isn't. Every fix below
+was checked against a specific `file:line` + error message in that log, not
+against "does this look like the trustly pattern."
+
+**Six files, real bugs, now fixed on this branch (see the commit right
+above this one for the full diff and per-file reasoning):**
+- `worldpayxml/transformers.rs` — `pii` and `address::Address` were wrongly
+  gated behind `payouts`; both are used in the connector's core, non-payout
+  address/shopper parsing. This broke the *whole connector*, not just its
+  payout path, and item 2's earlier fix (which only touched one function)
+  didn't catch it.
+- `truelayer/transformers.rs` (+ `truelayer.rs`) — `TruelayerMetadata` was
+  gated behind `payouts` but is used unconditionally in `build_headers`,
+  which signs every request this connector sends. Wrong-direction bug: an
+  over-eager gate, not a missing one — the fix here is a removal.
+- `gotyme_sanlam/transformers.rs` — two sibling impls (BankNames,
+  PayoutStatus conversions) were missing the gate their neighbors already
+  had.
+- `envoy/transformers.rs` — the entire payout SOAP section, 23 items, had
+  never been gated at all. Same bug class as items 1–2, just far larger in
+  scope than the one-function pattern being searched for.
+- `paypal/transformers.rs` — `constants` was wrongly bundled into the
+  payouts-gated import but is used by a general 3DS/auth function unrelated
+  to payouts.
+- `cybersourcedecisionmanager/transformers.rs` — not a `payouts` bug at
+  all; an `frm`-feature gate mismatch the prior audit didn't check because
+  it was scanning for the string `payout`.
+
+**Per the Patch Handoff Convention, rule 8: drift found and resolved before
+this entry.** `git fetch origin` showed `origin/main` had moved to
+`4cb7474f7` (the product owner applied the prior session's combined patch)
+since this branch's base. Reset this branch onto the new `origin/main` tip
+— its content is byte-identical to what this branch already had for the two
+prior entries — then reapplied this session's uncommitted code fixes on
+top, so this branch is now a clean 1-commit diff from current `origin/main`,
+not a duplicate.
+
+**Not compiled** — no working `rustc`/`cargo` in this sandbox. Every fix is
+verified against a specific line in the supplied `ci-fail.log`, which is a
+stronger check than the unaided reading pass that produced the wrong
+conclusion two entries up, but it is still not a compiler run. Re-running
+`cargo check` with and without each relevant feature once a working
+`rustc` ≥ 1.85 is available remains the outstanding confirmation step.
+
+**Still open / not covered by this pass:** the `ci-fail.log`'s remaining
+error clusters in `trustly.rs`/`trustly/transformers.rs` and the four
+"downstream fallout" files (`hyperswitch_domain_models/src/types.rs`,
+`hyperswitch_connectors/src/types.rs`, `api_models/src/lib.rs`,
+`hyperswitch_connectors/src/utils.rs`) were spot-checked against specific
+log lines this session (e.g. `trustly/transformers.rs:332` for
+`CountryAlpha2`, now confirmed already fixed by item 1) but not
+exhaustively re-walked line-by-line the way the six files above were. Given
+this session already reversed its own prior "all clean" conclusion once,
+the next session should re-check those against `ci-fail.log` directly
+rather than trust either audit pass at face value.
+
+**Per rule 4: this stayed off `main`** — committed on branch
+`audit/task-73a-item3-payouts-cfg-recheck`, not `main`.
+
+**Per rule 7: command block for this session's handoff (one code commit +
+this doc commit, combined into ONE patch file per rule 5/6 — no
+`db/migrations/` changes, no DB-Ops block owed):**
+```
+cd ~/B-PAY-backend
+git am ~/storage/downloads/0001-task-73a-cfg-gate-fixes-and-correction.patch
+git push
+```

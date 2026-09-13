@@ -2,7 +2,6 @@ pub mod transformers;
 use api_models::{self, webhooks::IncomingWebhookEvent};
 #[cfg(feature = "payouts")]
 use base64::Engine;
-#[cfg(feature = "payouts")]
 use common_utils::crypto;
 use common_utils::errors::CustomResult;
 #[cfg(feature = "payouts")]

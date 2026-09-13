@@ -22457,9 +22457,9 @@ once.** The natural split follows the 10 documented items' own file
 grouping, since each part's fixes are independent of the others:
 
 - **Part a — `envoy/transformers.rs` (items 1–2, ~20 of the 29 lib errors)
-  [x] built this session.**
+  [x] built.**
 - **Part b — `adyenplatform.rs` (item 3) + `trustly/transformers.rs`
-  missing-gate half (item 4) [ ] not started.**
+  missing-gate half (item 4) [x] built this session.**
 - **Part c — `worldpayxml/transformers.rs` inverted-gate structs (item 5)
   [ ] not started.**
 - **Part d — `cybersourcedecisionmanager.rs` + `transformers.rs` (item 6) +
@@ -22521,13 +22521,67 @@ git am ~/storage/downloads/0001-fix-task-73a-envoy-payouts-gate-part-a.patch
 git push
 ```
 
+### Part b — built, `adyenplatform.rs` (item 3) + `trustly/transformers.rs` missing-gate half (item 4)
+
+**Item 3 (`adyenplatform.rs:5-6`):** re-verified both use sites of
+`crypto::` before touching anything — line 299/300 (`get_webhook_source_verification_algorithm`,
+already ungated) and the two named in the doc, line 332 (inside
+`verify_webhook_source`, gated `#[cfg(feature = "payouts")]` at its own
+`impl` line) and line 414 (inside `get_webhook_api_response`, a required,
+**ungated** `IncomingWebhook` trait method). Confirmed no drift since the
+doc entry was written — `use common_utils::crypto;` was still gated while
+one of its two call sites isn't.
+**Fix applied:**
+```rust
+#[cfg(feature = "payouts")]
+use common_utils::crypto;   // → gate removed, now unconditional:
+use common_utils::crypto;
+```
+No unused-import fallout: the import is used at line 414 in every build
+regardless of feature state, exactly as the doc predicted.
+
+**Item 4 (`trustly/transformers.rs:955,972-979`):** re-checked the doc's
+claim before editing — `impl From<TrustlyPayoutStatus> for PayoutStatus`
+(line 955) and `fn get_payout_status_from_webhook` (line 972) both
+reference the gated `PayoutStatus` import (line 7-8) but were themselves
+ungated; their only caller (originally line 1030) sits inside the
+already-gated `impl<F> TryFrom<PayoutsResponseRouterData<F,
+TrustlyPayoutSyncResponse>>` block (starts line 984, gated). Matched the
+doc exactly.
+**Fix applied:** added `#[cfg(feature = "payouts")]` immediately above
+both line 955 and line 972.
+
+**Verification:** still no working `rustc` (retired-step convention still
+holds, not re-probed this session — no new information from re-running the
+same probe). **Reviewed-by-reading only**, same caveat as every uncompiled
+`.rs` change in this file so far. Manually re-traced every symbol/call-site
+reference named in the item 3/4 doc entries against the current file
+content before editing (not just pattern-matched) — no discrepancies found.
+
+**Per rule 4: stayed off `main`** — committed on branch
+`fix/task-73a-adyenplatform-trustly-gate-part-b-2026-09-13`. **This commit
+touches two `.rs` files** (`adyenplatform.rs`, `trustly/transformers.rs`)
+plus this handover entry — no `db/migrations/` changes, so no DB-Ops block
+owed. Per rule 6: confirmed via `git log --oneline -1` on clone
+(`fb57dbe68`, part a's own commit message) that part a's patch was already
+applied and tip of `main` before this session started, so this is a fresh
+commit on top of current `main`, not a stack on an unapplied base.
+
+**Per rule 7: command block for this session's handoff:**
+```
+cd ~/B-PAY-backend
+git am ~/storage/downloads/0001-fix-task-73a-adyenplatform-trustly-gate-part-b.patch
+git push
+```
+
 ### What this means for the next session
 
-Part a is done. Parts b, c, d, and e are each independent, self-contained,
-and explicitly not started — pick the next one (suggest b, in documented
-order, but any is genuinely unblocked). None of them touch `envoy/`, so
-there's no ordering dependency forcing a particular next pick. Once all five
-parts land, the moment a working `rustc` ≥ 1.85 exists, run all four queued
+Parts a and b are done. Parts c, d, and e are each independent,
+self-contained, and explicitly not started — pick the next one (suggest c,
+in documented order, but any is genuinely unblocked). None of them touch
+`envoy/`, `adyenplatform.rs`, or `trustly/`, so there's no ordering
+dependency forcing a particular next pick. Once all five parts land, the
+moment a working `rustc` ≥ 1.85 exists, run all four queued
 `hyperswitch_connectors` feature checks (`dummy_connector,v1`, `frm,v1`,
 `payouts,v1`, `revenue_recovery,v1`) — the real compiler pass every part of
 this task has been deferred on so far.

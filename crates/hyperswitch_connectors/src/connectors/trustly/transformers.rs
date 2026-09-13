@@ -952,6 +952,7 @@ enum TrustlyPayoutStatus {
     Returned,
 }
 
+#[cfg(feature = "payouts")]
 impl From<TrustlyPayoutStatus> for PayoutStatus {
     fn from(item: TrustlyPayoutStatus) -> Self {
         match item {
@@ -969,6 +970,7 @@ impl From<TrustlyPayoutStatus> for PayoutStatus {
     }
 }
 
+#[cfg(feature = "payouts")]
 fn get_payout_status_from_webhook(
     item: TrustlyWebhookMethod,
 ) -> Result<PayoutStatus, ConnectorError> {

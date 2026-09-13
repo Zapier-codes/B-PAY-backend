@@ -106,6 +106,19 @@
 > task's own section. Nothing else in this file is required reading to
 > start work.**
 >
+> **🟢 NEWEST NEXT TASK (2026-09-13, latest — does NOT replace the ⚪ box
+> below, runs in parallel with it):** search this file for "Task 77 —
+> \"Hyperpay\" framework ideology finalized" and read that entry in
+> full first — it records the finalized one-engine (not two-layer)
+> Hyperpay blueprint and splits the ten-provider legacy-integration
+> work across sessions. **The single active leaf across that whole task
+> is `a-1-ii-X` (Korapay connector crate's `ConnectorIntegration`
+> implementation)** — start there. This does not block or get blocked
+> by the ⚪ box's own CI-confirmation work below; both can proceed in
+> the same window, in different sessions, since one is Rust-authoring
+> (reviewed by reading, same as every other `.rs` change in this file)
+> and the other is waiting on a real GitHub Actions run.
+>
 > **⚪ NEWEST NEXT TASK (2026-09-13, later same day — supersedes the ⚫ box
 > directly below for "what to work on" purposes; nothing in that box is
 > lost):** search this file for "Task 73/a — per-call-site TTL/atomicity
@@ -23796,3 +23809,221 @@ in this sandbox to compile-check or format-check either fix locally
 retired New-Clone-Checklist step 2) — this fix, like every `.rs` change
 in this file's history, is reviewed by reading the real CI log only,
 not tool-verified; the next CI run is the only real confirmation.
+
+---
+
+## Task 77 — "Hyperpay" framework ideology finalized: one engine, not two layers; all ten providers become native Hyperswitch connector crates via `add_connector.md`; legacy-integration work split across sessions per the six-level splitting formula [ ]
+
+**Scope note, read first:** decision-record + task-split only, same
+discipline as Tasks 0/45/46/47/48. No connector code written this
+session. This task exists to (a) put the finalized framework ideology
+on record in this file (it previously only existed in chat), (b)
+record the resolved "one layer, not two" blueprint that supersedes any
+prior framing of Hyperpay as B-Pay-orchestration-on-top-of-Hyperswitch,
+and (c) split the resulting legacy-integration work — "while CI is
+still being chased down (Task 73/76's own still-open MSRV/dead-code
+loop), start migrating the ten legacy providers into the Rust engine"
+— across sessions using the six-level convention from "Task Numbering
+& Workflow Convention" above (`a/b/c/d/e → 1/2/3/4 → i/ii/iii → zi/zo
+→ X`).
+
+### a. Framework ideology, finalized this session, recorded here so it
+stops living only in chat history
+
+**What Hyperpay is, in one line:** this fork, full stop — not B-Pay
+logic sitting on top of Hyperswitch, not two systems wearing one name.
+The repo already cloned here (`crates/`, `migrations/`,
+`hyperswitch_connectors`, etc.) **is** Hyperpay. The ten legacy
+providers (Korapay, Paystack, JuicyWay, Flutterwave, Remita,
+PaymentPoint, `telcos.opik.net`, DodoPayments, Xixapay, Prestmit) get
+absorbed into it as native connector crates, and `legacy-node/` (this
+very directory — note this file itself lives under `legacy-node/`,
+per the New-Clone Checklist and every prior task above) is retired
+outright once that absorption is done, per the "legacy-deletion gate"
+in (b-8) below.
+
+**Where this came from, briefly, for continuity:** the original B-Pay
+legacy design (documented in full earlier in this file, Task 0
+onward) was a pure pass-through orchestration layer in front of ten
+providers — no settlement balance, no card-network membership, normalize
+whatever comes back. Its own discipline (canonical envelope +
+namespaced `provider_data`, a field-requirements registry instead of
+scattered `if` checks, domain-based default/fallback routing, a
+deliberately narrow Customer Vault, a Stripe-shaped error taxonomy,
+UUID/timestamp/CHECK-constraint schema conventions) was itself modeled
+on reading Stripe's public object model for shape and precedent, not
+on copying Stripe's product — the same posture this repo now carries
+into reading Hyperswitch's own patterns: Hyperswitch is precedent and
+engine, Hyperpay's own conventions are the spec.
+
+**The two-layer version was considered and explicitly rejected.** An
+earlier framing (also discussed in chat, not built) proposed Hyperpay
+as two layers fused under one name — a Hyperswitch "processing core"
+underneath, with B-Pay's own orchestration ideology sitting on top of
+it as a separate product layer, plus actual settlement/balance
+ownership (a real internal ledger, not just a passive record of what
+providers report). **The product owner rejected this two-layer shape
+directly and picked one engine instead** — the blueprint in (b) below
+is what "one layer" actually means in code, not a compromise between
+the two framings.
+
+### b. The one-layer blueprint — supersedes any two-layer framing found
+elsewhere in chat history; this is the version to build against
+
+1. **The ten providers become real connector crates, via
+   `add_connector.md`, nothing bespoke.** Korapay, Paystack, JuicyWay,
+   Flutterwave, Remita, PaymentPoint, `telcos.opik.net`, DodoPayments,
+   Xixapay, and Prestmit get scaffolded through Hyperswitch's own
+   connector-generation script, then hand-implemented against
+   `ConnectorCommon` + `ConnectorIntegration` per flow (`Authorize`,
+   `PSync`, `Capture`, `Void`, `Execute`/`RSync` for refunds,
+   `PoFulfill`/`PoSync` where payouts apply) — the exact same shape as
+   the ~150 stock connectors already in `crates/hyperswitch_connectors`,
+   sitting in the same directory, going through the same
+   `ConnectorError`/`ErrorResponse` handling already touched across
+   Tasks 73–76 (trustly, gotyme_sanlam, cybersourcedecisionmanager). No
+   separate provider abstraction, no separate error taxonomy — a
+   JuicyWay request and an Aci request go through the identical trait
+   dispatch. That is what "one layer" means in code.
+2. **Domain-based default/fallback routing becomes Hyperswitch's own
+   routing engine, configured not coded.** The legacy "Juicyway
+   defaults international, Korapay defaults African, every overlap is
+   a full fallback" table (already fully specified in this file — see
+   Task 51/b-1, b-2, and the capability matrix at Task 51/c) stops
+   being an if-chain in a route handler and becomes routing rules in
+   `crates/euclid` / the routing-algorithm config — the domain split
+   becomes the rule's own currency/country condition, the default/
+   fallback ordering becomes the rule's priority list.
+3. **The field-requirements registry becomes `payment_required_fields_v2.toml`
+   + the `connector_configs` crate.** Already exists in this repo,
+   already does what the legacy JS registry did — one
+   `[required_fields.<PaymentMethod>.<Variant>.fields.<Connector>]`
+   block per connector. Each of the ten native connectors gets its own
+   block as it's built. No parallel registry.
+4. **Customer Vault becomes Hyperswitch's own `customers` +
+   `payment_methods` tables.** Already in the schema. Real card-data
+   vaulting stays a separate PCI-compliant build-or-buy decision,
+   unchanged from every prior mention of this gap in this file —
+   `mock_locker` covers dev only.
+5. **Settlement/ledger becomes an extension of Hyperswitch's own object
+   model, not a bolt-on ledger.** Extend the existing
+   `payment_intent`/`payment_attempt`/payout lifecycle with whatever
+   settlement/balance pieces are missing, as additive migrations inside
+   Hyperswitch's own `migrations/` history — same sequencing convention
+   already used for the Postgres-KV tables (Task 72 onward) — not a
+   separate `balance_transactions` table living in a parallel schema
+   the way the old legacy `SCHEMA.md` had it.
+6. **Datastore stays exactly as already decided: Postgres/Supabase
+   only, no Redis.** `pg_kv_store.rs`/`pg_lock.rs`/`pg_pub_sub.rs` (Task
+   72–75) remain the whole caching/locking/pub-sub replacement — this
+   matters more now than before, since a balance mutation under a real
+   settlement engine needs the locking primitive to actually be
+   correct, not just cache-friendly. Unchanged by this task; recorded
+   here only so a future session doesn't reopen it while doing
+   connector work.
+7. **White-label dashboard stays a separate product, correctly.** The
+   forked `control-center` stays its own top-level project, rebranded
+   for Hyperpay — a client of the one API, same as any other
+   integrator would be, not a second orchestration layer.
+8. **The legacy-deletion gate is concrete and checkable, not a date.**
+   `legacy-node/` comes out once, and only once: all ten connectors are
+   built and passing real CI (the connector sanity tests already
+   archived — `connector-sanity-tests.yml`), the required-fields config
+   is filled in for each, the routing rules from (b-2) are wired, and
+   any schema-only gap (settlement/balance, and anything else the
+   earlier `SCHEMA.md` comparison turns up) has landed as a migration
+   in the one schema.
+
+**Not resolved by this task, flagged plainly rather than assumed
+away:** holding settlement and sitting closer to card-network-member
+territory (per the earlier discussion, still true under the one-layer
+version since settlement ownership per (b-5) is still in scope) is a
+materially different regulatory/compliance posture than pure
+orchestration. Real card vaulting was explicitly out of scope for the
+original Hyperswitch-fork proposal — that has not changed. This needs
+an explicit product-owner decision (build/buy a PCI-compliant vault,
+or partner for card-network access) before "holds settlement" goes
+from framework ideology to production code, same open item already on
+record at Task 0's own pricing/regulatory flag and Task 46/d's card
+data-ownership question.
+
+### c. Legacy-integration task split — start now, in parallel with the
+still-open CI loop (Task 73/76)
+
+**Why now:** Task 76's own dead-code/MSRV fixes are complete and
+awaiting a real CI run to confirm (no working local `rustc` per the
+New-Clone Checklist). That confirmation loop doesn't block connector
+*authoring* — writing a connector crate against `ConnectorCommon`/
+`ConnectorIntegration` is the same "reviewed by reading, not compiled"
+situation every `.rs` change in this file's history has already been
+in (Tasks 73–76). Sessions should not sit idle waiting on CI; they
+should start on (c) below, same "reviewed by reading" caveat applying
+to every leaf here as to everything already built under Tasks 73–76.
+
+**Split, six-level convention, ten providers under two top-level
+branches (5 + 5, per the a–e max-5 rule):**
+
+- **a. First five providers (already-integrated-in-legacy, so most
+  reference material already exists in this file)**
+  - **a-1. Korapay** — reference: Task 4 (webhook), Task 7 (amount
+    units), Task 42 Parts A/B (payout auth + payload shape).
+    - a-1-i. Scaffold via `add_connector.md`.
+    - a-1-ii. Implement `ConnectorIntegration` for `Authorize`/`PSync`/
+      `Capture`/`Void`/`Execute`/`RSync`, mapping legacy
+      `providers/korapay.js` request/response shapes onto Hyperswitch's
+      trait methods.
+      - **a-1-ii-X** *(active — start here; this is the single
+        current atomic unit of work across the whole Task 77 tree)*
+    - a-1-iii. Payout flows (`PoFulfill`/`PoSync`), per Task 42's
+      already-confirmed `destination`-nested payload shape.
+  - **a-2. Paystack** — reference: Task 3 (webhook), Task 8/8c/8d
+    (endpoint/response-shape audit, XOF currency).
+  - **a-3. JuicyWay** — reference: Task 5 (webhook), Task 8b/45a–45e
+    (endpoint path, auth header, payload shape, error extraction,
+    reference-vs-ID verify flow, stablecoin currency list).
+  - **a-4. Flutterwave** — reference: Task 0/a-5, Task 52/d (v3/v4
+    dual method set already built once at the legacy-JS-adjacent
+    layer — re-check whether that work is directly portable to a
+    connector crate or needs redoing against `ConnectorIntegration`
+    from scratch; not yet determined, flag in a-4's own entry once
+    picked up).
+  - **a-5. Remita** — reference: Task 49/b, Task 50 (Accept Online
+    Payments / Checkout Solutions surface is the recommended target,
+    per Task 50/c — not the classic RRR flow, whose base URL/auth
+    scheme is still unresolved).
+- **b. Second five providers (net-new, audited but never touched by
+  any legacy JS code)**
+  - **b-1. PaymentPoint** — reference: Task 0/a-8 full audit.
+  - **b-2. `telcos.opik.net`** — reference: Task 45/a (OpenAPI spec
+    already in `docs/openapi`, `docs/guides/` in this repo).
+  - **b-3. DodoPayments** — reference: Task 0/a-4 full audit
+    (Merchant-of-Record model, product-catalog-driven, Standard
+    Webhooks scheme — structurally different enough from every other
+    provider that its connector crate should not reuse another
+    provider's webhook-verification code as a starting point).
+  - **b-4. Xixapay** — reference: Task 0/a-7 full audit (three-
+    credential auth shape, no-replay-protection webhook gap).
+  - **b-5. Prestmit** — reference: Task 0/a-9 full audit. **Still
+    blocked on the same open scope question already on record there**
+    (gift-card/crypto off-ramp, not a bank/card processor — Task 48/a
+    already confirmed this is intentional, so the scope question
+    itself is resolved; what's still open is that Prestmit's API has
+    no "charge a customer" endpoint at all, so its connector crate's
+    `Authorize` flow will need to map onto a gift-card-sell/wallet-
+    withdrawal shape, not a payment-intent shape — a real design
+    question for whichever session reaches b-5, not solved here).
+
+**Reading order, per this file's own convention:** the next unsolved
+leaf, once a-1-ii-X lands, is a-1-iii, then a-2 (starting again at its
+own -i), and so on down through b-5 — sessions should not jump ahead to
+a provider further down the list "because it looks easier" without a
+reason recorded in that leaf's own entry, same discipline the six-level
+convention already states above.
+
+**Not done this session, deliberately:** no `add_connector.md` script
+run, no new connector crate directory created, no `payment_required_fields_v2.toml`
+edits. This task exists so every session picking up Hyperpay's
+legacy-integration work reads the same finalized ideology, the same
+one-layer blueprint, and starts at the same, single, currently-marked
+`X` leaf (a-1-ii-X) instead of re-deriving scope or working on
+different providers in parallel and colliding.

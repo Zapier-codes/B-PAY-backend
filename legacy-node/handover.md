@@ -106,13 +106,39 @@
 > task's own section. Nothing else in this file is required reading to
 > start work.**
 >
-> **⚫ NEWEST NEXT TASK (2026-09-13, later same day — supersedes the 🔴 box
+> **⚪ NEWEST NEXT TASK (2026-09-13, later same day — supersedes the ⚫ box
 > directly below for "what to work on" purposes; nothing in that box is
-> lost):** search this file for "Task 73/a — implementing the 10 documented
-> CI fixes, split a–e per the standing mandatory task-splitting rule" and
-> read that entry. **All five parts (a–e) are now built** —
-> reviewed-by-reading only, no working `rustc` yet, same caveat as
-> everything else in this file.
+> lost):** search this file for "Task 73/a — per-call-site TTL/atomicity
+> audit, \"batch 3\": full reconciliation of both keyword methodologies"
+> and read that entry. **The per-call-site audit is now confirmed complete
+> under both methodologies used across this file's history** — every file
+> matching either the original 63-file pattern or batch 2's broader
+> supplemental pattern has at least one prior audit mention (audited/no
+> gap, audited/gap found and already fixed as a standalone method, or
+> explicitly ruled out as a false positive). No further file-discovery
+> batch is owed.
+>
+> **Next real task:** wiring the already-fixed `pg_kv_store.rs`/
+> `pg_lock.rs`/`pg_pub_sub.rs` methods (Findings #6-#10, #16, #17) into
+> `RedisStore` and the real call sites this audit has now fully mapped.
+> The New-Clone Checklist's step 4 gates this on *either* a working
+> `rustc` ≥ 1.85 *or* the audit being complete — the audit half is now
+> satisfied, the `rustc` half is not (re-confirm via `which rustc cargo`
+> before assuming otherwise, don't re-run the full `apt-get`/`curl` probe
+> per the retired step 2). Absent a working toolchain or explicit
+> product-owner sign-off to wire this in uncompiled, the other standing
+> next step is: the moment a working `rustc` ≥ 1.85 exists, run all four
+> queued `hyperswitch_connectors` feature checks — `dummy_connector,v1`,
+> `frm,v1`, `payouts,v1`, `revenue_recovery,v1` — the real compile the
+> completed CI-fix task (search "Task 73/a — implementing the 10
+> documented CI fixes") has been deferred on throughout.
+>
+> **⚫ OLDER NEXT TASK (2026-09-13, now history — all five parts below are
+> built, superseded by the ⚪ box above):** search this file for "Task
+> 73/a — implementing the 10 documented CI fixes, split a–e per the
+> standing mandatory task-splitting rule" and read that entry. **All five
+> parts (a–e) are built** — reviewed-by-reading only, no working `rustc`
+> yet, same caveat as everything else in this file.
 > - **a** — `envoy/transformers.rs` (items 1–2) — built.
 > - **b** — `adyenplatform.rs` (item 3) + `trustly/transformers.rs`
 >   missing-gate half (item 4) — built.
@@ -122,13 +148,6 @@
 >   `gotyme_sanlam.rs` (item 7) — built.
 > - **e** — `truelayer.rs`+`transformers.rs` (items 8, 9, 10) +
 >   `trustly/transformers.rs` unused-import half of item 10 — built.
-> **Next real task, now that all five parts are built:** the moment a
-> working `rustc` ≥ 1.85 exists, run all four queued
-> `hyperswitch_connectors` feature checks — `dummy_connector,v1`,
-> `frm,v1`, `payouts,v1`, `revenue_recovery,v1` — not just the one CI
-> originally failed on. This is the real compile every part of this task
-> has been deferred on; until it runs, "all five parts built" means
-> reviewed-by-reading only, not confirmed-compiling.
 >
 > **🔴 NEXT TASK (2026-09-13, superseded by the ⚫ box above — kept for
 > history, not for "what to work on" purposes):** search this file for "Task
@@ -22806,3 +22825,127 @@ If it turns up anything beyond the 10 documented items (including in the
 two combinations that were never run by CI at all, `frm,v1`/`payouts,v1`
 per the cross-check audit earlier in this file), that's real news for a
 fresh entry, not a reason to assume this task is fully closed yet.
+
+## Task 73/a — per-call-site TTL/atomicity audit, "batch 3": full reconciliation of both keyword methodologies (2026-09-13, new session)
+
+**Trigger:** with all five lettered parts of the CI-fix task now landed on
+`main` (confirmed via `git fetch origin` — `origin/main` at `53b11d2f2`,
+this session's clone base, matching part e's own commit exactly, no
+drift), and no working `rustc` in this sandbox (re-confirmed via `which
+rustc cargo` → nothing, not re-litigated further per the checklist's step
+2/3 guidance), the next real, unblocked, no-toolchain-needed work is the
+per-call-site audit's outstanding "batch 3" — the reconciliation batch
+2's own entry flagged as not yet done: "a full re-run of this batch's
+keyword methodology across the whole ~102/63 candidate set."
+
+**What this pass actually did, stated precisely:** re-ran **both**
+methodologies used by prior passes against the current `crates/router/src`
+tree in one combined pass, rather than picking up where either counting
+scheme left off:
+- The original 10-pass audit's narrower pattern (`redis::|
+  RedisConnectionPool|get_redis_conn|redis_conn`).
+- Batch 2's broader supplemental pattern (`get_redis_conn\(\)`,
+  `redis_conn\.`, `redis_interface::`, `\.publish\(`, `CacheKind::`,
+  `storage_impl::redis::cache`, `serialize_and_set_key_with_expiry`,
+  `set_key_with_expiry`, `get_key::`) — the one that surfaced the 6
+  previously-missed files in batch 2 (`routes/cache.rs`,
+  `core/unified_authentication_service.rs`, `core/surcharge_decision_config.rs`,
+  `core/payouts/helpers.rs`, `utils/db_utils.rs`,
+  `core/payment_methods/client.rs`).
+
+Combined, this yields **66 files** under `crates/router/src` matching
+either pattern set — confirmed by direct `grep -rlE` against the live tree,
+not assumed from memory or from either prior pass's own count.
+
+**Cross-referenced every one of the 66 against this file's full audit
+history**, basename-matched (not full-path-matched, to survive markdown
+line-wrapping across this file's own paragraph breaks — an early pass at
+this cross-check under-counted for exactly that reason before the check
+was corrected to basename matching mid-session). **Result: all 66 files
+have at least one prior mention in this file** — each one falls into
+exactly one of three already-recorded categories:
+- **Audited, no gap** (the large majority — e.g. `core/payments/
+  client_session.rs`, `core/poll.rs`, `services/openidconnect.rs`,
+  `utils/user.rs`, `core/payments/conditional_configs.rs`,
+  `core/unified_authentication_service.rs`, and every other file the
+  original 10-pass audit or batch 2 walked and found no gap in).
+- **Audited, gap found** (`routes/cache.rs` → Finding #17, `db/
+  ephemeral_key.rs`/`services/authentication/blacklist.rs` → Findings #16/
+  #10, etc.) — all already fixed as standalone `pg_kv_store.rs`/
+  `pg_pub_sub.rs` methods per this file's own running Findings list,
+  **still not wired into any real call site**, same "fixed but not
+  integrated" status this file has recorded since the sixth pass.
+- **Explicitly ruled out as a false positive** by batch 2's own entry
+  (`core/errors.rs`, `db/events.rs`, `db/locker_mock_up.rs`,
+  `db/merchant_key_store.rs`, `types/storage/payment_method.rs`,
+  `core/payment_methods/transformers.rs`,
+  `core/payments/operations/payment_confirm_external_vault_proxy.rs`,
+  `core/payment_methods/access_token.rs`, `utils/db_utils.rs` — the last
+  one a generic wrapper with no TTL/atomicity shape of its own, not a
+  call site).
+
+**No new findings, no new gaps, no new unwalked files.** This closes the
+specific open question batch 2 left on record — the answer is "no, the
+original narrower 63-file methodology wasn't hiding a larger unaudited
+remainder once the broader pattern set is applied; the union of both
+methodologies has already been walked, file by file, across the ten
+original passes plus batch 2." This is a reading-only, doc-only
+reconciliation — no `.rs` file touched this pass.
+
+**What this does *not* resolve, stated plainly so it isn't mistaken for
+closing the whole audit thread:**
+- **Findings #6 through #10 and #16/#17 are fixed as `pg_kv_store.rs`/
+  `pg_lock.rs`/`pg_pub_sub.rs` methods but still not wired into any real
+  call site** — integration is still open, same status as every prior
+  entry going back to the sixth pass. Per the New-Clone Checklist's own
+  step 4, wiring these in is explicitly gated on either a working `rustc`
+  or the audit being complete — the audit (per this entry) now genuinely
+  is complete under both methodologies, so **the audit-completion half of
+  that gate is now satisfied**; the `rustc` half is not. Whoever picks
+  this up next should re-read step 4's exact wording before starting,
+  since one of its two either/or prerequisites has changed state as of
+  this entry.
+- `pg_lock.rs`'s Finding #1 (multi-key/multiple-key locking,
+  `try_acquire_multiple`) remains the one genuinely still-unfixed API gap
+  on record — not touched this pass, unrelated to the reconciliation
+  question this entry answers.
+- This reconciliation is scoped to `crates/router/src`, matching every
+  prior pass's own scope (the New-Clone Checklist's "63 real Redis call
+  sites under `crates/router/src`" framing) — it says nothing about Redis
+  usage elsewhere in the workspace, which no prior pass has claimed to
+  cover either.
+
+**Not compiled** — no working `rustc`/`cargo` in this sandbox, same wall
+as every prior session on this thread; nothing to compile-check either,
+since this pass made no code change.
+
+**Per rule 4: stayed off `main`** — committed on branch
+`docs/task-73a-redis-audit-batch3-reconciliation-2026-09-13`. **Doc-only
+commit** (this file only, no `.rs` changes, no `db/migrations/` changes)
+— no DB-Ops block owed, one patch file per rule 5/6. Per rule 6: confirmed
+via `git fetch origin` immediately before starting that all four of this
+session's own predecessor patches (parts b–e) were already applied and
+`53b11d2f2` was tip of `main` — this is a fresh commit on top of current
+`main`, not a stack on an unapplied base.
+
+**Per rule 7: command block for this session's handoff:**
+```
+cd ~/B-PAY-backend
+git am ~/storage/downloads/0001-docs-task-73a-redis-audit-batch3-reconciliation.patch
+git push
+```
+
+### What this means for the next session
+
+The per-call-site TTL/atomicity audit is now genuinely complete under
+both methodologies used across this file's history — no further "batch 4"
+is owed on the file-discovery side. The concrete next unblocked step,
+per the New-Clone Checklist's own step 4, is wiring Findings #6-#10/#16/
+#17 into `RedisStore` and the real call sites this audit has now fully
+mapped — that step's audit-completion prerequisite is satisfied as of
+this entry; its working-`rustc`-≥-1.85 prerequisite is not, so the actual
+code-writing half of that work should still wait for a working toolchain
+(or explicit product-owner sign-off to proceed uncompiled, which no
+session has been given so far). In parallel, the moment a working `rustc`
+≥ 1.85 exists, the four queued `hyperswitch_connectors` feature checks
+from the CI-fix task above are still the other standing next step.

@@ -10,6 +10,7 @@ use hyperswitch_interfaces::errors;
 use hyperswitch_masking::{ExposeInterface, Secret};
 use serde::{Deserialize, Serialize};
 
+#[cfg(feature = "frm")]
 use crate::{
     types::{FrmCheckoutRouterData, FrmTransactionRouterData, ResponseRouterData},
     utils::{
@@ -132,6 +133,7 @@ pub struct CybersourcedecisionmanagerErrorInformation {
     reason: Option<String>,
 }
 
+#[cfg(feature = "frm")]
 impl<F, T>
     TryFrom<ResponseRouterData<F, CybersourcedecisionmanagerResponse, T, FraudCheckResponseData>>
     for RouterData<F, T, FraudCheckResponseData>
@@ -156,6 +158,7 @@ impl<F, T>
     }
 }
 
+#[cfg(feature = "frm")]
 impl TryFrom<&FrmTransactionRouterData> for CybersourcedecisionmanagerTransactionRequest {
     type Error = error_stack::Report<errors::ConnectorError>;
     fn try_from(item: &FrmTransactionRouterData) -> Result<Self, Self::Error> {
@@ -188,6 +191,7 @@ pub enum CybersourcedecisionmanagerTransactionStatus {
     Rejected,
 }
 
+#[cfg(feature = "frm")]
 impl<F, T>
     TryFrom<
         ResponseRouterData<
@@ -375,6 +379,7 @@ pub struct BillTo {
     email: Option<pii::Email>,
 }
 
+#[cfg(feature = "frm")]
 impl TryFrom<&CybersourcedecisionmanagerRouterData<&FrmCheckoutRouterData>>
     for CybersourcedecisionmanagerCheckoutRequest
 {
@@ -427,6 +432,7 @@ impl TryFrom<&CybersourcedecisionmanagerRouterData<&FrmCheckoutRouterData>>
         })
     }
 }
+#[cfg(feature = "frm")]
 impl From<&CybersourcedecisionmanagerRouterData<&FrmCheckoutRouterData>>
     for ClientReferenceInformation
 {
@@ -437,6 +443,7 @@ impl From<&CybersourcedecisionmanagerRouterData<&FrmCheckoutRouterData>>
     }
 }
 
+#[cfg(feature = "frm")]
 impl
     TryFrom<(
         &CybersourcedecisionmanagerRouterData<&FrmCheckoutRouterData>,

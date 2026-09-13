@@ -193,6 +193,7 @@ pub enum GotymeSanlamBankNames {
     Absa,
 }
 
+#[cfg(feature = "payouts")]
 impl TryFrom<&common_enums::BankNames> for GotymeSanlamBankNames {
     type Error = error_stack::Report<errors::ConnectorError>;
     fn try_from(bank_name: &common_enums::BankNames) -> Result<Self, Self::Error> {
@@ -214,6 +215,7 @@ pub enum GotymeSanlamPayoutStatus {
     Reversed,
 }
 
+#[cfg(feature = "payouts")]
 impl From<GotymeSanlamPayoutStatus> for PayoutStatus {
     fn from(status: GotymeSanlamPayoutStatus) -> Self {
         match status {

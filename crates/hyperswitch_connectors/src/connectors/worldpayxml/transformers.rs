@@ -4,19 +4,17 @@ use api_models::payouts::{ApplePayDecrypt, CardPayout, GooglePayDecrypt};
 use base64::Engine;
 use common_enums::enums;
 use common_types::payments::GpayTokenizationData;
-#[cfg(feature = "payouts")]
-use common_utils::pii;
-use common_utils::types::StringMinorUnit;
+use common_utils::{pii, types::StringMinorUnit};
 use error_stack::ResultExt;
 use http::HeaderMap;
 #[cfg(feature = "payouts")]
 use hyperswitch_domain_models::{
-    address::Address,
     router_flow_types::payouts::{PoCancel, PoFulfill, PoSync},
     router_response_types::PayoutsResponseData,
     types::PayoutsRouterData,
 };
 use hyperswitch_domain_models::{
+    address::Address,
     payment_method_data::{
         ApplePayWalletData, Card, GooglePayWalletData, PaymentMethodData, WalletData,
     },

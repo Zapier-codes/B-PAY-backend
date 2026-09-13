@@ -1,3 +1,4 @@
+#[cfg(feature = "payouts")]
 use api_models::payouts::{
     self, AchBankTransfer, BacsBankTransfer, PayoutMethodData, SepaBankTransfer,
 };
@@ -11,15 +12,15 @@ use common_utils::{
 use error_stack::ResultExt;
 #[cfg(feature = "payouts")]
 use hyperswitch_domain_models::router_flow_types::PoFulfill;
+#[cfg(feature = "payouts")]
+use hyperswitch_domain_models::types::{PayoutsResponseData, PayoutsRouterData};
 use hyperswitch_domain_models::{
     payment_method_data::PaymentMethodData,
     router_data::{ConnectorAuthType, RouterData},
     router_flow_types::refunds::{Execute, RSync},
     router_request_types::ResponseId,
     router_response_types::{PaymentsResponseData, RefundsResponseData},
-    types::{
-        PaymentsAuthorizeRouterData, PayoutsResponseData, PayoutsRouterData, RefundsRouterData,
-    },
+    types::{PaymentsAuthorizeRouterData, RefundsRouterData},
 };
 use hyperswitch_interfaces::errors;
 use hyperswitch_masking::Secret;
@@ -244,6 +245,7 @@ pub struct EnvoyErrorResponse {
 // https://docs.worldpay.com/apis/pushtoaccountglobal/reference/paytobankaccountv3#request-schema
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename = "soap:Envelope")]
+#[cfg(feature = "payouts")]
 pub struct SoapEnvelope {
     #[serde(rename = "@xmlns:xsi")]
     pub xsi: String,
@@ -256,6 +258,7 @@ pub struct SoapEnvelope {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[cfg(feature = "payouts")]
 pub struct SoapBody {
     #[serde(rename = "payToBankAccountV3")]
     pub request: PayToBankAccountV3,
@@ -263,6 +266,7 @@ pub struct SoapBody {
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[cfg(feature = "payouts")]
 pub struct PayToBankAccountV3 {
     #[serde(rename = "@xmlns")]
     pub xmlns: String,
@@ -272,6 +276,7 @@ pub struct PayToBankAccountV3 {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[cfg(feature = "payouts")]
 pub struct PaymentInstructions {
     #[serde(rename = "paymentInstructionV3")]
     pub instructions: Vec<PaymentInstructionV3>,
@@ -281,6 +286,7 @@ pub struct PaymentInstructions {
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[cfg(feature = "payouts")]
 pub struct PaymentInstructionV3 {
     pub payment_details: PaymentDetails,
     pub payment_template: PaymentTemplate, // Required per your request to skip ItemID
@@ -288,6 +294,7 @@ pub struct PaymentInstructionV3 {
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[cfg(feature = "payouts")]
 pub struct PaymentDetails {
     pub country_code: CountryAlpha2,
     pub source_currency: Currency,
@@ -309,6 +316,7 @@ pub struct PaymentDetails {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[cfg(feature = "payouts")]
 pub enum SourceOrTarget {
     #[serde(rename = "S")]
     Source,
@@ -317,6 +325,7 @@ pub enum SourceOrTarget {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[cfg(feature = "payouts")]
 pub enum YesNo {
     #[serde(rename = "Y")]
     Yes,
@@ -328,12 +337,14 @@ pub enum YesNo {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "PascalCase")]
+#[cfg(feature = "payouts")]
 pub struct PaymentTemplate {
     #[serde(rename = "Row")]
     pub rows: Vec<TemplateRow>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[cfg(feature = "payouts")]
 pub struct TemplateRow {
     #[serde(rename = "@Id")]
     pub id: BankField,
@@ -343,6 +354,7 @@ pub struct TemplateRow {
 
 /// Ref: https://docs.worldpay.com/apis/pushtoaccountglobal/reference/paymenttemplatefields
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[cfg(feature = "payouts")]
 pub enum BankField {
     #[serde(rename = "IBAN")]
     Iban,
@@ -364,6 +376,7 @@ pub enum BankField {
     CustomerName,
 }
 
+#[cfg(feature = "payouts")]
 fn get_template_for_ach(
     bank: AchBankTransfer,
 ) -> Result<Vec<TemplateRow>, error_stack::Report<errors::ConnectorError>> {
@@ -397,6 +410,7 @@ fn get_template_for_ach(
     ])
 }
 
+#[cfg(feature = "payouts")]
 fn get_template_for_bacs(
     bank: BacsBankTransfer,
 ) -> Result<Vec<TemplateRow>, error_stack::Report<errors::ConnectorError>> {
@@ -429,6 +443,7 @@ fn get_template_for_bacs(
         },
     ])
 }
+#[cfg(feature = "payouts")]
 fn get_template_for_sepa(
     bank: SepaBankTransfer,
 ) -> Result<Vec<TemplateRow>, error_stack::Report<errors::ConnectorError>> {
@@ -464,6 +479,7 @@ fn get_template_for_sepa(
 
 // --- Helper implementation for initialization ---
 
+#[cfg(feature = "payouts")]
 impl SoapEnvelope {
     pub fn new(request: PayToBankAccountV3) -> Self {
         Self {
@@ -534,18 +550,21 @@ impl<F> TryFrom<&EnvoyRouterData<&PayoutsRouterData<F>>> for PayToBankAccountV3 
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename = "Envelope")]
+#[cfg(feature = "payouts")]
 pub struct EnvoyPayoutSoapResponse {
     #[serde(rename = "Body")]
     pub body: PayoutSoapBody,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg(feature = "payouts")]
 pub struct PayoutSoapBody {
     #[serde(rename = "payToBankAccountV3Response")]
     pub response: PayToBankAccountV3Response,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg(feature = "payouts")]
 pub struct PayToBankAccountV3Response {
     #[serde(rename = "payToBankAccountV3Result")]
     pub result: PayToBankAccountV3Result,
@@ -553,6 +572,7 @@ pub struct PayToBankAccountV3Response {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[cfg(feature = "payouts")]
 pub struct PayToBankAccountV3Result {
     pub request_reference: String,
     pub received_date: Option<String>,
@@ -564,6 +584,7 @@ pub struct PayToBankAccountV3Result {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg(feature = "payouts")]
 pub struct PaymentInstructionsResults {
     #[serde(rename = "paymentResultV3")]
     pub payment_result: PaymentInstructionResponseV3,
@@ -571,6 +592,7 @@ pub struct PaymentInstructionsResults {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[cfg(feature = "payouts")]
 pub struct PaymentInstructionResponseV3 {
     pub epacs_reference: Option<String>,
     pub payment_reference: Option<String>,
@@ -584,6 +606,7 @@ pub struct PaymentInstructionResponseV3 {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
+#[cfg(feature = "payouts")]
 pub struct BankDetails {
     pub payee: Option<Secret<String>>,
     pub account_number: Option<Secret<String>>,
@@ -594,6 +617,7 @@ pub struct BankDetails {
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
+#[cfg(feature = "payouts")]
 pub enum ResponseStatus {
     Success,
     SuccessNoResults,
@@ -601,6 +625,7 @@ pub enum ResponseStatus {
     Failed(i32),
 }
 
+#[cfg(feature = "payouts")]
 impl From<i32> for ResponseStatus {
     fn from(value: i32) -> Self {
         match value {
@@ -612,6 +637,7 @@ impl From<i32> for ResponseStatus {
     }
 }
 
+#[cfg(feature = "payouts")]
 impl From<ResponseStatus> for enums::PayoutStatus {
     fn from(status: ResponseStatus) -> Self {
         match status {

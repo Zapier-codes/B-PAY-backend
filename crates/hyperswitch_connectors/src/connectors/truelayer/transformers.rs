@@ -89,7 +89,6 @@ impl TryFrom<&ConnectorAuthType> for TruelayerAuthType {
     }
 }
 
-#[cfg(feature = "payouts")]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TruelayerMetadata {
     merchant_account_id: Secret<String>,

@@ -61,8 +61,9 @@ use time::PrimitiveDateTime;
 use url::Url;
 use utils::ForeignTryFrom;
 
+use crate::constants;
 #[cfg(feature = "payouts")]
-use crate::{constants, types::PayoutsResponseRouterData};
+use crate::types::PayoutsResponseRouterData;
 use crate::{
     types::{
         PaymentsCaptureResponseRouterData, PaymentsExtendAuthorizationResponseRouterData,

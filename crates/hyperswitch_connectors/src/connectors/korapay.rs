@@ -31,6 +31,11 @@ use hyperswitch_domain_models::{
         RefundsRouterData,
     },
 };
+#[cfg(feature = "payouts")]
+use hyperswitch_domain_models::{
+    router_flow_types::{PoFulfill, PoSync},
+    types::{PayoutsData, PayoutsResponseData, PayoutsRouterData},
+};
 use hyperswitch_interfaces::{
     api::{
         self, ConnectorCommon, ConnectorCommonExt, ConnectorIntegration, ConnectorSpecifications,
@@ -42,12 +47,12 @@ use hyperswitch_interfaces::{
     types::{PaymentsAuthorizeType, PaymentsSyncType, Response},
     webhooks,
 };
+#[cfg(feature = "payouts")]
+use hyperswitch_interfaces::types::{PayoutFulfillType, PayoutSyncType};
 use hyperswitch_masking::{ExposeInterface, Mask, Maskable};
 use transformers as korapay;
 
-use crate::{
-    constants::headers, types::ResponseRouterData, utils::convert_amount,
-};
+use crate::{constants::headers, types::ResponseRouterData, utils::convert_amount};
 
 #[derive(Clone)]
 pub struct Korapay {
@@ -74,6 +79,25 @@ impl api::Refund for Korapay {}
 impl api::RefundExecute for Korapay {}
 impl api::RefundSync for Korapay {}
 impl api::PaymentToken for Korapay {}
+
+// Task 77/a-1-iii — Korapay payout flows. `api::Payouts` itself (the
+// supertrait requiring every payout flow at once) is only real when the
+// `payouts` cargo feature is on -- see hyperswitch_interfaces::api::payouts,
+// same split Wise's connector already follows. Only `PayoutFulfill`/
+// `PayoutSync` are implemented for real below, per Task 42's
+// already-confirmed request/response shapes. Create/Cancel/Eligibility/
+// Quote/Recipient/RecipientAccount are deliberately left on this crate's own
+// `default_imp_for_payouts_*!` macros (Korapay was removed ONLY from the
+// fulfill/retrieve macro lists in default_implementations.rs, so those
+// still supply Korapay's no-op default for every other payout flow) --
+// each would need its own, separately-confirmed Korapay API shape before
+// being built for real, same "confirm before wiring" posture as the rest
+// of this connector.
+impl api::Payouts for Korapay {}
+#[cfg(feature = "payouts")]
+impl api::PayoutFulfill for Korapay {}
+#[cfg(feature = "payouts")]
+impl api::PayoutSync for Korapay {}
 
 impl ConnectorIntegration<PaymentMethodToken, PaymentMethodTokenizationData, PaymentsResponseData>
     for Korapay
@@ -434,6 +458,189 @@ impl ConnectorIntegration<RSync, RefundsData, RefundsResponseData> for Korapay {
             "Refund flow for Korapay".to_string(),
         )
         .into())
+    }
+}
+
+// Task 77/a-1-iii — Korapay payout fulfillment. Endpoint, request shape,
+// and the two-level response shape are all ported from
+// legacy-node/providers/korapay.js#processPayout(), a real, already-
+// battle-tested Task 42 Part B-a/b fix -- not re-derived from scratch here.
+// See korapay/transformers.rs's own `get_korapay_payout_bank_account` note
+// for a real, flagged gap this leaf could NOT close: Hyperswitch's
+// `PayoutMethodData` has no NUBAN/Korapay-bank-code-shaped variant, so the
+// bank-account mapping below is a stopgap, not a confirmed-correct one.
+#[cfg(feature = "payouts")]
+impl ConnectorIntegration<PoFulfill, PayoutsData, PayoutsResponseData> for Korapay {
+    fn get_headers(
+        &self,
+        req: &PayoutsRouterData<PoFulfill>,
+        connectors: &Connectors,
+    ) -> CustomResult<Vec<(String, Maskable<String>)>, errors::ConnectorError> {
+        self.build_headers(req, connectors)
+    }
+
+    fn get_content_type(&self) -> &'static str {
+        self.common_get_content_type()
+    }
+
+    // Real endpoint per Korapay's own docs (developers.korapay.com/docs/
+    // payout-via-api), confirmed directly against
+    // legacy-node/providers/korapay.js#processPayout()'s own fetch call.
+    fn get_url(
+        &self,
+        _req: &PayoutsRouterData<PoFulfill>,
+        connectors: &Connectors,
+    ) -> CustomResult<String, errors::ConnectorError> {
+        Ok(format!(
+            "{}api/v1/transactions/disburse",
+            self.base_url(connectors)
+        ))
+    }
+
+    fn get_request_body(
+        &self,
+        req: &PayoutsRouterData<PoFulfill>,
+        _connectors: &Connectors,
+    ) -> CustomResult<RequestContent, errors::ConnectorError> {
+        let amount = convert_amount(
+            self.amount_converter,
+            req.request.minor_amount,
+            req.request.destination_currency,
+        )?;
+
+        let connector_router_data = korapay::KorapayRouterData::from((amount, req));
+        let connector_req =
+            korapay::KorapayPayoutFulfillRequest::try_from(&connector_router_data)?;
+        Ok(RequestContent::Json(Box::new(connector_req)))
+    }
+
+    fn build_request(
+        &self,
+        req: &PayoutsRouterData<PoFulfill>,
+        connectors: &Connectors,
+    ) -> CustomResult<Option<Request>, errors::ConnectorError> {
+        Ok(Some(
+            RequestBuilder::new()
+                .method(Method::Post)
+                .url(&PayoutFulfillType::get_url(self, req, connectors)?)
+                .attach_default_headers()
+                .headers(PayoutFulfillType::get_headers(self, req, connectors)?)
+                .set_body(PayoutFulfillType::get_request_body(
+                    self, req, connectors,
+                )?)
+                .build(),
+        ))
+    }
+
+    fn handle_response(
+        &self,
+        data: &PayoutsRouterData<PoFulfill>,
+        event_builder: Option<&mut ConnectorEvent>,
+        res: Response,
+    ) -> CustomResult<PayoutsRouterData<PoFulfill>, errors::ConnectorError> {
+        let response: korapay::KorapayPayoutResponse = res
+            .response
+            .parse_struct("Korapay PayoutFulfillResponse")
+            .change_context(errors::ConnectorError::ResponseDeserializationFailed)?;
+        event_builder.map(|i| i.set_response_body(&response));
+        router_env::logger::info!(connector_response=?response);
+        RouterData::try_from(ResponseRouterData {
+            response,
+            data: data.clone(),
+            http_code: res.status_code,
+        })
+    }
+
+    fn get_error_response(
+        &self,
+        res: Response,
+        event_builder: Option<&mut ConnectorEvent>,
+    ) -> CustomResult<ErrorResponse, errors::ConnectorError> {
+        self.build_error_response(res, event_builder)
+    }
+}
+
+// Task 77/a-1-iii — Korapay payout verification. Endpoint confidence is
+// explicitly weaker than Fulfill's -- see
+// legacy-node/providers/korapay.js#verifyPayout()'s own comment (Task 42
+// "the missing verification call — part i"): this path is a strong
+// pattern-match off Korapay's own Bulk Payouts docs
+// (`.../transactions/bulk/:batch_reference` verifies a bulk batch; dropping
+// "bulk/" gives the single-payout path), not a directly-quoted single-payout
+// endpoint from Korapay's own docs. Flagged there for a live sandbox call
+// before production trust; still true here, ported as-is rather than
+// re-guessed differently.
+#[cfg(feature = "payouts")]
+impl ConnectorIntegration<PoSync, PayoutsData, PayoutsResponseData> for Korapay {
+    fn get_headers(
+        &self,
+        req: &PayoutsRouterData<PoSync>,
+        connectors: &Connectors,
+    ) -> CustomResult<Vec<(String, Maskable<String>)>, errors::ConnectorError> {
+        self.build_headers(req, connectors)
+    }
+
+    fn get_content_type(&self) -> &'static str {
+        self.common_get_content_type()
+    }
+
+    fn get_url(
+        &self,
+        req: &PayoutsRouterData<PoSync>,
+        connectors: &Connectors,
+    ) -> CustomResult<String, errors::ConnectorError> {
+        let connector_payout_id = req.request.connector_payout_id.clone().ok_or(
+            errors::ConnectorError::MissingRequiredField {
+                field_name: "connector_payout_id".into(),
+            },
+        )?;
+        Ok(format!(
+            "{}api/v1/transactions/{}",
+            self.base_url(connectors),
+            connector_payout_id
+        ))
+    }
+
+    fn build_request(
+        &self,
+        req: &PayoutsRouterData<PoSync>,
+        connectors: &Connectors,
+    ) -> CustomResult<Option<Request>, errors::ConnectorError> {
+        Ok(Some(
+            RequestBuilder::new()
+                .method(Method::Get)
+                .url(&PayoutSyncType::get_url(self, req, connectors)?)
+                .attach_default_headers()
+                .headers(PayoutSyncType::get_headers(self, req, connectors)?)
+                .build(),
+        ))
+    }
+
+    fn handle_response(
+        &self,
+        data: &PayoutsRouterData<PoSync>,
+        event_builder: Option<&mut ConnectorEvent>,
+        res: Response,
+    ) -> CustomResult<PayoutsRouterData<PoSync>, errors::ConnectorError> {
+        let response: korapay::KorapayPayoutResponse = res
+            .response
+            .parse_struct("Korapay PayoutSyncResponse")
+            .change_context(errors::ConnectorError::ResponseDeserializationFailed)?;
+        event_builder.map(|i| i.set_response_body(&response));
+        router_env::logger::info!(connector_response=?response);
+        RouterData::try_from(ResponseRouterData {
+            response,
+            data: data.clone(),
+            http_code: res.status_code,
+        })
+    }
+
+    fn get_error_response(
+        &self,
+        res: Response,
+        event_builder: Option<&mut ConnectorEvent>,
+    ) -> CustomResult<ErrorResponse, errors::ConnectorError> {
+        self.build_error_response(res, event_builder)
     }
 }
 

@@ -106,21 +106,36 @@
 > task's own section. Nothing else in this file is required reading to
 > start work.**
 >
-> **🟣 NEWEST NEXT TASK (2026-09-13, latest — supersedes the 🟢 box
+> **🟤 NEWEST NEXT TASK (2026-09-13, latest — supersedes the 🟣 box
 > directly below for "what to work on" purposes; nothing in that box is
-> lost):** search this file for "Task 77/a-1-ii-X — Korapay connector
-> crate: scaffold + `ConnectorIntegration`, done this session" and read
-> that entry in full first. **a-1-i (scaffold) and a-1-ii
-> (`ConnectorIntegration` for Authorize/PSync, with Capture/Void/
-> Execute/RSync correctly left unimplemented rather than guessed) are
-> now both done, uncommitted-to-main, sitting on branch
-> `task77/a1ii-x-korapay-connector-integration` pending patch review.**
-> **The next active leaf is `a-1-iii` (Korapay payout flows —
-> `PoFulfill`/`PoSync`)** — start there, but read that entry's own
-> "Next real task" paragraph first for two real prerequisites flagged
-> (an unconfirmed response-field shape, and mechanically-copied default-
-> implementation macro entries) that don't block a-1-iii but should
-> land before this connector is trusted with real money.
+> lost):** search this file for "Task 77/a-1-iii — Korapay payout
+> flows: `PoFulfill`/`PoSync`, done this session" and read that entry in
+> full first. **a-1-iii is now built** — `PoFulfill` (`POST
+> api/v1/transactions/disburse`) and `PoSync` (`GET
+> api/v1/transactions/{reference}`), both reviewed-by-reading only (no
+> working `rustc` this session either, same New-Clone Checklist wall),
+> sitting on branch `task77/a1iii-korapay-payout-flows` pending patch
+> review — `origin/main` re-confirmed at `82bd6ffb2` via `git fetch
+> origin` immediately before this box was written, no drift. **One
+> real, flagged-not-solved gap carried forward: Hyperswitch's
+> `PayoutMethodData` enum has no NUBAN/Korapay-bank-code-shaped
+> variant**, so the bank-account mapping reuses `BankTransfer::Ach`'s
+> `bank_routing_number`/`bank_account_number` fields as a stopgap — see
+> that entry's own full write-up, and `korapay/transformers.rs`'s
+> `get_korapay_payout_bank_account` comment, before trusting this with
+> real money. **The next active leaf is `a-2`** (starting again at its
+> own `-i`), per the reading order Task 77's own ideology entry already
+> established.
+>
+> **🟣 NEXT TASK (2026-09-13, superseded by the 🟤 box above — kept for
+> history, not for "what to work on" purposes):** search this file for
+> "Task 77/a-1-ii-X — Korapay connector crate: scaffold +
+> `ConnectorIntegration`, done this session" and read that entry in
+> full first. **a-1-i (scaffold) and a-1-ii (`ConnectorIntegration` for
+> Authorize/PSync, with Capture/Void/Execute/RSync correctly left
+> unimplemented rather than guessed) are now both done** — since
+> merged to `main` at `82bd6ffb2`, confirmed at the start of the
+> a-1-iii session above.
 >
 > **🟢 NEXT TASK (2026-09-13, earlier same day — does NOT replace the ⚪
 > box below, runs in parallel with it):** search this file for "Task 77 —
@@ -24152,3 +24167,137 @@ against what Korapay supports. Neither blocks a-1-iii's own work
 (payout request/response shapes are separately confirmed already, per
 Task 42), but both should land before this connector is trusted with
 real money.
+
+### e. Task 77/a-1-iii — Korapay payout flows: `PoFulfill`/`PoSync`, done this session
+
+**Picked up exactly where a-1-ii-X left off** (search "Task
+77/a-1-ii-X — Korapay connector crate" above for that entry) — this
+session confirmed `main` had already absorbed that work (`git log
+--oneline -1` → `82bd6ffb2`, matching the 🟣 box above, no drift per a
+`git fetch origin` at the start of this session), branched
+`task77/a1iii-korapay-payout-flows` off it, and built the next named
+leaf: Korapay payout fulfillment and verification.
+
+**What's built, `crates/hyperswitch_connectors/src/connectors/korapay.rs`
++ `korapay/transformers.rs`:**
+- `ConnectorIntegration<PoFulfill, PayoutsData, PayoutsResponseData>` —
+  `POST api/v1/transactions/disburse`, request shape ported directly
+  from this repo's own `korapay.js#processPayout()` (itself Task 42
+  Part B-a/b's already-confirmed fix): `destination` nested object,
+  `destination.type` always sent explicitly, `bank_account: { bank,
+  account }`, required `destination.customer.email` (missing email
+  fails loudly before a request is built, same as the legacy code).
+- `ConnectorIntegration<PoSync, PayoutsData, PayoutsResponseData>` —
+  `GET api/v1/transactions/{reference}`, same endpoint-confidence
+  caveat `korapay.js#verifyPayout()` already carried (a pattern-match
+  off Korapay's own Bulk Payouts docs, not a directly-quoted
+  single-payout path — flagged there, still flagged here, not
+  re-resolved this session).
+- Shared response type (`KorapayPayoutResponse`) for both flows, since
+  Korapay's own two-level `{ status, data: { status, ... } }` shape is
+  identical for the disburse and verify responses per Task 42's own
+  confirmation history. Outer `status: false` is treated as a thrown
+  connector error (API-level rejection); `data.status` (`success` /
+  `failed` / `processing` / `pending`) is mapped to a real
+  `PayoutStatus` — `processing`/`pending` → `Pending`, matching Kora's
+  own documented "this is asynchronous, don't treat ambiguous as
+  failure" guidance. **Deliberately not mirrored from the legacy JS:**
+  `processPayout()`'s own synchronous `data.status === 'failed'` throw
+  is not reproduced here — Hyperswitch's typed `PayoutStatus::Failed`
+  is the more correct representation for that same outcome, so it's
+  mapped, not thrown, for both Fulfill and Sync alike (the legacy JS
+  only had that throw because JS's control flow has no separate
+  non-terminal-status type to put it in).
+- `impl api::Payouts for Korapay {}` + gated `impl api::PayoutFulfill`/
+  `impl api::PayoutSync` markers. `Korapay` removed from this crate's
+  `default_imp_for_payouts_fulfill!`/`default_imp_for_payouts_retrieve!`
+  macro lists in `default_implementations.rs` (real implementations
+  replace those defaults) — **left untouched** in every other
+  `default_imp_for_payouts_*!` list (create/cancel/eligibility/quote/
+  recipient/recipient_account), since those flows are genuinely out of
+  this leaf's scope and still correctly default to Korapay's no-op/
+  `NotImplemented` behavior.
+
+**⚠️ One real, unresolved gap — flagged, not guessed around, per this
+file's own standing discipline:** Korapay's real payout
+`destination.bank_account` is `{ bank, account }` — `bank` is a
+Korapay-specific bank *code* from Korapay's own `/api/v1/banks` list,
+`account` is a Nigerian NUBAN account number. **Hyperswitch's own
+`PayoutMethodData` enum (`api_models::payouts`) has no variant shaped
+like that** — every `BankTransfer` variant (Ach/Bacs/Sepa/Pix+Key+Emv/
+Trustly/OpenBanking) is built around IBAN/BIC/US-routing-number/
+UK-sort-code conventions, none of which is "a provider-specific bank
+code." This session's stopgap: `BankTransfer::Ach` is reused purely
+because it's the one variant with two plain, non-IBAN/non-BIC-formatted
+string fields (`bank_account_number`, `bank_routing_number`) —
+`bank_account_number` carries Korapay's `account`, `bank_routing_number`
+carries Korapay's `bank` code. **This is a real, flagged stopgap, not a
+confirmed-correct mapping** — `bank_routing_number` is documented
+elsewhere in this same enum as a US ABA routing number, a different
+real-world value with a different format, and nothing this session did
+confirmed Korapay's API tolerates whatever a caller puts in that field.
+Also flagged, same root cause: Korapay's real API supports a
+`mobile_money` destination type alongside `bank_account` (per
+`korapay.js`'s own `payment_method === 'mobile_money'` branch), but
+Hyperswitch's `PayoutMethodData::Wallet` variant is
+ApplePay/GooglePay/Paypal/Venmo only — there is currently no input
+shape this connector could build a `mobile_money` destination from at
+all, so only `BankAccount` is implemented; every other input variant
+(and every non-`BankTransfer` variant) is rejected with
+`NotSupported` rather than guessed at.
+
+**Not compiled this session either** — same toolchain wall as every
+session since the New-Clone Checklist's step 2 was retired (`which
+rustc cargo` → nothing available, sandbox network allowlist still
+blocks `sh.rustup.rs`/`static.rust-lang.org`). Reviewed by reading
+against Wise's connector (the closest existing precedent that
+implements both `PoFulfill` and `PoSync` for a single connector — Stripe
+implements `PoFulfill` but not `PoSync`) and Gigadat's payout
+response-mapping style, not compile-checked.
+
+**Deliberately NOT touched this session:** `PoCreate`/`PoCancel`/
+`PoEligibility`/`PoQuote`/`PoRecipient`/`PoRecipientAccount` for
+Korapay (each would need its own, separately-confirmed Korapay API
+shape — genuinely out of this leaf's named scope, not an oversight);
+`connectors.rs`/`euclid::enums`/base-URL/TOML registration (already
+done in the a-1-ii-X session, nothing new needed for payout flows
+specifically); the `PayoutMethodData` NUBAN-shape gap itself (flagged
+above, needs either a live Korapay sandbox call or a new upstream
+`PayoutMethodData` variant — a real design question for a future
+session, not solved here); the mechanically-copied
+`default_implementations.rs`/`default_implementations_v2.rs` macro
+entries and the unconfirmed `checkout_url` response-field shape,
+**both already flagged in the a-1-ii-X entry above and still open** —
+this session did not have a live sandbox call available either.
+
+**Next real task, per the reading order already on record:** **a-2**
+(starting again at its own `-i`), per Task 77's finalized one-engine
+ideology's reading order. Before any Korapay payout code is trusted
+with real money: a live Korapay sandbox call to confirm (1) the
+`checkout_url`/response-field shape flagged in a-1-ii-X, and (2)
+whether `bank_routing_number`-as-bank-code actually round-trips
+through Korapay's real disburse endpoint, or whether a proper
+NUBAN-shaped `PayoutMethodData` variant needs to be added upstream
+first.
+
+## Patch Handoff — Task 77/a-1-iii (Korapay payout flows)
+
+Per the Patch Handoff Convention above: this session's work is
+committed locally on branch `task77/a1iii-korapay-payout-flows`
+(based on `origin/main` at `82bd6ffb2`, re-confirmed via `git fetch
+origin` immediately before generating the patch — no drift, so this
+is a fresh combined patch, not amending anything unapplied). A patch
+file has been generated and handed over alongside this entry, per
+rule 5 (mandatory, every time) — not just described in prose.
+
+**Exact commands, copy-paste as-is, filling in only the patch
+filename actually handed over:**
+```
+cd ~/B-PAY-backend
+git am ~/storage/downloads/<patch-file-name>
+git push
+```
+
+No `db/migrations/` changes in this session's diff, so no DB-Ops
+Handoff block is owed this time — Patch Handoff only, per rule 7's own
+"how to decide" checklist above.

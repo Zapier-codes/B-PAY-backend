@@ -106,19 +106,38 @@
 > task's own section. Nothing else in this file is required reading to
 > start work.**
 >
-> **🔵 NEWEST NEXT TASK (2026-09-13, supersedes the 🟢🟢 box directly below
-> for "what to work on" purposes — that box's own items are now folded into
-> this one, nothing there is lost):** search this file for "Task 73/a item 3
-> continued — full reading-audit against `ci-errors-check-msrv.txt`" (dated
-> 2026-09-13) and start there. It documents exact, file-and-line root causes
-> and fixes for 8 of the 10 error clusters in the latest CI log — **read-only,
-> nothing applied yet.** Two items are explicitly still open within that same
-> entry (the `truelayer.rs:115` `TruelayerMetadata` trait-bound errors, and
-> two small unused-import clusters) — finish those first, then apply all the
-> documented fixes, checking `get_payout_webhook_event`'s caller before
-> touching item 8 as that entry itself flags. Get a real `cargo check` run
-> (both `--features payouts` and `--features frm`) the moment a working
-> `rustc` ≥ 1.85 exists, since none of this is compiler-verified yet.
+> **🟣 NEWEST NEXT TASK (2026-09-13, later same day — supersedes the 🔵 box
+> directly below for "what to work on" purposes; that box's items are now
+> folded into this one, nothing there is lost):** search this file for "Task
+> 73/a item 3 continued — full reading-audit against `ci-errors-check-msrv.txt`"
+> and read straight through to the end of that entry. **All 10 of the 10 error
+> clusters in the CI log are now root-caused and have exact fix instructions
+> — still read-only, nothing applied yet.** This session closed out the two
+> items the 🔵 box below left open (`truelayer.rs:115`'s `TruelayerMetadata`
+> trait-bound errors, and the two unused-import clusters), and also corrected
+> item 8: the assumed fix (just gate the callee) turned out to be wrong once
+> the caller was actually checked — `truelayer.rs::get_webhook_event_type` has
+> no fallback and is a required trait method with no default, so the fix is a
+> feature-split `impl` body, not a bare `#[cfg]` on the callee. **Next
+> session's job:** apply all 10 documented fixes (item 8 needs the corrected
+> version, not the original guess), then get a real `cargo check -p
+> hyperswitch_connectors --features payouts` and `--features frm` (and
+> without either) run the moment a working `rustc` ≥ 1.85 exists, since none
+> of this is compiler-verified yet.
+>
+> **🔵 NEXT TASK (2026-09-13, superseded by the 🟣 box above — kept for
+> history, not for "what to work on" purposes):** search this file for "Task
+> 73/a item 3 continued — full reading-audit against `ci-errors-check-msrv.txt`"
+> (dated 2026-09-13) and start there. It documents exact, file-and-line root
+> causes and fixes for 8 of the 10 error clusters in the latest CI log —
+> **read-only, nothing applied yet.** Two items are explicitly still open
+> within that same entry (the `truelayer.rs:115` `TruelayerMetadata`
+> trait-bound errors, and two small unused-import clusters) — finish those
+> first, then apply all the documented fixes, checking
+> `get_payout_webhook_event`'s caller before touching item 8 as that entry
+> itself flags. Get a real `cargo check` run (both `--features payouts` and
+> `--features frm`) the moment a working `rustc` ≥ 1.85 exists, since none of
+> this is compiler-verified yet.
 >
 > **🟢🟢 NEWEST NEXT TASK (2026-09-12, supersedes the 🟢 box directly
 > below — that box's item 2 is now done, item 3 is what's left):**
@@ -22078,63 +22097,177 @@ use crate::{types::ResponseRouterData, utils};
 ```
 
 **8. `truelayer/transformers.rs:784,787` — `IncomingWebhookEvent::PayoutSuccess`/
-`PayoutFailure` "not found" — root-caused, same gate-mismatch family, NOT a
-renamed/missing variant.**
+`PayoutFailure` "not found" — root-caused AND caller now confirmed
+(2026-09-13, later session — the earlier guess in this item was wrong; see
+below).**
 Checked `api_models/src/webhooks.rs` directly: `PayoutSuccess` (line 51) and
 `PayoutFailure` (line 53) **do** exist on `IncomingWebhookEvent`, but each
 variant carries its own `#[cfg(feature = "payouts")]` (lines 50, 52 in that
 file). `truelayer/transformers.rs::get_payout_webhook_event` (starts line
-779) references both variants but is **not itself gated** — same shape as
-worldpayxml item 2 (a definition used unconditionally while what it touches
-is gated), just on the "reads a gated enum variant" side rather than
-constructing a gated struct.
-**Still needs, before this can be fixed:** confirming this function's only
-caller the same way item 2 confirmed worldpayxml's — I had not yet located
-`get_payout_webhook_event`'s call site (expected in `truelayer.rs`, likely
-`get_webhook_event_type`, mirroring the exact worldpayxml item-2 pattern)
-when this session was cut short. **Do not gate the function without
-checking the caller first** — if the caller isn't already gated with a
-fallback (unlike worldpayxml's case, which had one), gating the callee
-alone will just move the compile error to the call site.
+779, ends 789) references both variants but is **not itself gated**.
+**Caller now checked** (this is what the earlier pass in this item left
+open): the only call site is `truelayer.rs::get_webhook_event_type` (starts
+line 1022, inside `impl webhooks::IncomingWebhook for Truelayer` at line
+978), which calls `truelayer::get_payout_webhook_event(...)` at line 1032 —
+unconditionally, with **no existing `#[cfg]` and no fallback branch**. This
+is *not* the worldpayxml item-2 shape after all: `get_webhook_event_type` is
+a required method on the `IncomingWebhook` trait with **no default body**
+(`hyperswitch_interfaces/src/webhooks.rs:322-326`), and Truelayer's only
+implementation of it is entirely payout-specific — it parses
+`TruelayerPayoutsWebhookBody` and does nothing else. Gating just the callee
+(the original plan) would leave this required trait method unimplemented
+for non-payouts builds and simply move the compile error to the impl block.
+**Fix — split the impl body by feature, not just the callee:**
+```rust
+#[cfg(feature = "payouts")]
+fn get_webhook_event_type(
+    &self,
+    request: &webhooks::IncomingWebhookRequestDetails<'_>,
+    _context: Option<&webhooks::WebhookContext>,
+) -> CustomResult<api_models::webhooks::IncomingWebhookEvent, errors::ConnectorError> {
+    let webhook_body: truelayer::TruelayerPayoutsWebhookBody = request
+        .body
+        .parse_struct("TruelayerPayoutsWebhookBody")
+        .change_context(errors::ConnectorError::WebhookBodyDecodingFailed)?;
+    Ok(truelayer::get_payout_webhook_event(webhook_body._type))
+}
 
-### Not yet root-caused — explicitly still open
+#[cfg(not(feature = "payouts"))]
+fn get_webhook_event_type(
+    &self,
+    _request: &webhooks::IncomingWebhookRequestDetails<'_>,
+    _context: Option<&webhooks::WebhookContext>,
+) -> CustomResult<api_models::webhooks::IncomingWebhookEvent, errors::ConnectorError> {
+    Err(report!(errors::ConnectorError::WebhooksNotImplemented))
+}
+```
+Also add `#[cfg(feature = "payouts")]` above `get_payout_webhook_event` itself
+(`truelayer/transformers.rs:779`) — that's what actually references the two
+gated enum variants, and is what this item originally flagged. The
+non-payouts fallback above isn't a new convention: it mirrors this same impl
+block's own existing style (`get_webhook_object_reference_id`'s final
+`Err(report!(errors::ConnectorError::WebhooksNotImplemented))`, a few lines
+above `get_webhook_event_type`).
 
-- **`truelayer.rs:115` — the `TruelayerMetadata::try_from(&req.connector_meta_data)`
-  trait-bound errors** (3 stacked `E0277`s: missing `TryFrom`/`From` impl for
-  `&Option<Secret<Value>>`, plus the `?`-operator `Infallible` conversion
-  failure). Not investigated this session — need to read `TruelayerMetadata`'s
-  actual `TryFrom`/parsing setup in `truelayer/transformers.rs` and compare
-  against how sibling connectors parse `connector_meta_data` (likely a
-  `.parse_value()` helper is the intended path, not a raw `try_from`, but
-  this is a guess, not yet confirmed by reading).
-- **Unused-import errors in `truelayer/transformers.rs:14,51`**
-  (`ErrorResponse`; `RouterData as OtherRouterData`) and
-  `trustly/transformers.rs:12,24` (`report`; `ExposeInterface`) — not
-  checked this session. Given every other unused-import error in this log
-  turned out to be the same "ungated import, gated-only usage" pattern,
-  that's the first thing to check here too, but it must be verified per
-  usage site the same way items 1-7 were, not assumed.
+**9. `truelayer.rs:115` — `TruelayerMetadata::try_from(&req.connector_meta_data)`
+trait-bound errors — root-caused (previously listed as "not yet
+root-caused").**
+Same gate-mismatch family as every item above. The impl that would satisfy
+this call — `impl TryFrom<&Option<pii::SecretSerdeValue>> for TruelayerMetadata`
+(`truelayer/transformers.rs:100-108`) — **is** gated
+`#[cfg(feature = "payouts")]`, and so is its supporting import
+(`use common_utils::pii;`, line 8). The caller, though, is `Truelayer`'s
+blanket `impl<Flow, Request, Response> ConnectorCommonExt<Flow, Request,
+Response> for Truelayer` (`truelayer.rs:90`) — generic over every flow
+(payments, refunds, payouts alike), with no `#[cfg]` of its own, so
+`build_headers` (and the `try_from` call inside it, line 115) runs in every
+build regardless of feature state. With `payouts` off, the gated impl
+vanishes and `TryFrom::try_from` falls back to std's blanket
+`impl<T, U: Into<T>> TryFrom<U> for T` (`Error = Infallible`) — which
+doesn't actually apply either, since no `From<&Option<...>>` exists for
+`TruelayerMetadata`, hence the first "trait bound not satisfied" `E0277`;
+and even if it did apply, its `Error = Infallible` couldn't convert via `?`
+into this function's `Report<ConnectorError>` return type, which is the
+second stacked `E0277`. Confirmed no `.parse_value()`-style alternative path
+exists for this connector — the existing `try_from` impl is the intended
+one, just mis-gated, same as items 1-8.
+**Fix:** remove `#[cfg(feature = "payouts")]` from both the
+`use common_utils::pii;` import (`transformers.rs:8`) and the
+`TryFrom<&Option<pii::SecretSerdeValue>> for TruelayerMetadata` impl
+(`transformers.rs:100`) — make both unconditional. No unused-import
+fallout: `pii::SecretSerdeValue` has no other use in the file, and is used
+unconditionally once at the impl's own signature.
+
+**10. Unused-import errors, `truelayer/transformers.rs:14,51` and
+`trustly/transformers.rs:12,24` — root-caused, checked per usage site
+(previously "not checked").**
+- `truelayer/transformers.rs:14` —
+  `router_data::{AccessToken, ConnectorAuthType, ErrorResponse, RouterData}`.
+  `AccessToken`, `ConnectorAuthType`, and `RouterData` are each used in
+  ungated impls (lines 138-150, 79-89, 227+) and must stay ungated.
+  `ErrorResponse` is used only at lines 556 and 601, both inside the
+  `#[cfg(feature = "payouts")]`-gated
+  `impl<F> TryFrom<PayoutsResponseRouterData<...>> for PayoutsRouterData<F>`
+  (starts line 537) — same gate-mismatch shape as everything above.
+  **Fix:**
+  ```rust
+  router_data::{AccessToken, ConnectorAuthType, RouterData},
+  ```
+  plus, alongside this file's other `#[cfg(feature = "payouts")]` imports:
+  ```rust
+  #[cfg(feature = "payouts")]
+  use hyperswitch_domain_models::router_data::ErrorResponse;
+  ```
+- `truelayer/transformers.rs:51` —
+  `utils::{self, RouterData as OtherRouterData}`. Checked every line in the
+  file for the `utils::RouterData` trait's methods (`get_billing_address`,
+  `get_customer_id`, etc., per the trait def in `crates/hyperswitch_connectors/src/utils.rs:567`)
+  — none appear anywhere in `truelayer/transformers.rs`. This is **not** the
+  gate-mismatch pattern; `OtherRouterData` is genuinely dead, the one
+  exception in this whole entry. The bare `self` half of the same import
+  (the `utils` module) **is** used unconditionally (lines 104, 668 —
+  `utils::to_connector_meta_from_secret`, `utils::base64_decode`) and must
+  stay.
+  **Fix:**
+  ```rust
+  utils::{self, RouterData as OtherRouterData}, // → utils,
+  ```
+- `trustly/transformers.rs:12` — `error_stack::{report, ResultExt}`.
+  `report` is only used (as the `report!` macro) at line 1164, inside
+  `get_payout_webhook_event`, which is already gated
+  `#[cfg(feature = "payouts")]` (line 1147) — this file already has its own
+  separate, correctly-gated `get_payout_webhook_event`, distinct from
+  truelayer's; it just imports `report` ungated. `ResultExt` is used
+  unconditionally via `.change_context` in `verify_webhook_signature`
+  (ungated, lines 1187+) and must stay.
+  **Fix:**
+  ```rust
+  use error_stack::ResultExt;
+  #[cfg(feature = "payouts")]
+  use error_stack::report;
+  ```
+- `trustly/transformers.rs:24` — `hyperswitch_masking::{ExposeInterface, Secret}`.
+  Every `.expose()` call in the file (lines 457, 473, 480, 561, 714, 748,
+  896) sits inside `#[cfg(feature = "payouts")]`-gated fns/impls (mapped
+  each one against the file's top-level `#[cfg]`/`fn`/`impl` markers to
+  confirm). `Secret` itself is used unconditionally in plain ungated structs
+  (lines 71-97) and must stay.
+  **Fix:**
+  ```rust
+  use hyperswitch_masking::Secret;
+  #[cfg(feature = "payouts")]
+  use hyperswitch_masking::ExposeInterface;
+  ```
 
 ### What this means for the next session
 
-Nothing in this entry has been applied to any `.rs` file — this was a
-read-and-document pass only, per this session's explicit instruction. The
-next session's job is: (a) finish the two open items above, (b) apply all
-ten fixes in items 1-7, (c) find and check `get_payout_webhook_event`'s
-caller before applying item 8, (d) get a real `cargo check -p
-hyperswitch_connectors --features payouts` and `--features frm` (and
-without either) run the moment a working `rustc` ≥ 1.85 is available, since
-none of this has been compiler-verified — it's a reading audit against a
-real CI log, same caveat as every entry in this file so far.
+All 10 of the 10 error clusters in `ci-errors-check-msrv.txt` are now
+root-caused with exact, file-and-line fixes — nothing in this entry has been
+applied to any `.rs` file, this remains a read-and-document pass only, per
+the original instruction for this line of work. The next session's job is:
+(a) apply all 10 fixes above — item 8 needs the **corrected** version (the
+feature-split impl body), not the original single-`#[cfg]` guess that this
+same item started with; (b) get a real
+`cargo check -p hyperswitch_connectors --features payouts` and
+`--features frm` (and without either) run the moment a working `rustc` ≥
+1.85 is available, since none of this has been compiler-verified — it's a
+reading audit against a real CI log, same caveat as every entry in this
+file so far.
 
 **Per rule 4: this stayed off `main`** — committed on branch
-`docs/task-73a-payouts-frm-cfg-gate-audit-2026-09-13`, not `main`. This is a
-doc-only commit (this file only, no `.rs` changes, no `db/migrations/`
-changes) — no DB-Ops block owed, one patch file per rule 5/6.
+`docs/task-73a-payouts-frm-cfg-gate-audit-part2-2026-09-13`, not `main`.
+This is a doc-only commit (this file only, no `.rs` changes, no
+`db/migrations/` changes) — no DB-Ops block owed, one patch file per rule
+5/6. Per rule 6: the prior session's patch
+(`0001-docs-task-73a-payouts-frm-cfg-gate-audit.patch`) was already applied
+and pushed before this session started — confirmed via `git log --oneline -1`
+on clone (`f5e6f79`, that patch's own commit, was already tip of `main`) — so
+this is a fresh commit on top of current `main`, not a stack on an unapplied
+base.
 
 **Per rule 7: command block for this session's handoff:**
 ```
 cd ~/B-PAY-backend
-git am ~/storage/downloads/0001-docs-task-73a-payouts-frm-cfg-gate-audit.patch
+git am ~/storage/downloads/0001-docs-task-73a-payouts-frm-cfg-gate-audit-part2.patch
 git push
 ```

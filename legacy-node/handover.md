@@ -110,17 +110,17 @@
 > directly below for "what to work on" purposes; nothing in that box is
 > lost):** search this file for "Task 73/a — implementing the 10 documented
 > CI fixes, split a–e per the standing mandatory task-splitting rule" and
-> read that entry. **Parts a, b, and c are now built** — reviewed-by-reading
-> only, no working `rustc` yet, same caveat as everything else in this file.
+> read that entry. **Parts a, b, c, and d are now built** —
+> reviewed-by-reading only, no working `rustc` yet, same caveat as
+> everything else in this file.
 > - **a** — `envoy/transformers.rs` (items 1–2) — built.
 > - **b** — `adyenplatform.rs` (item 3) + `trustly/transformers.rs`
 >   missing-gate half (item 4) — built.
 > - **c** — `worldpayxml/transformers.rs` inverted-gate structs (item 5) —
 >   built.
-> **Parts d, e are each independent and not started** — pick either (d or
-> e, any order, no dependency between them):
 > - **d** — `cybersourcedecisionmanager.rs`+`transformers.rs` (item 6) +
->   `gotyme_sanlam.rs` (item 7)
+>   `gotyme_sanlam.rs` (item 7) — built.
+> **Part e is the last one and not started:**
 > - **e** — `truelayer.rs`+`transformers.rs` (items 8, 9, 10) +
 >   `trustly/transformers.rs` unused-import half of item 10
 > Build only **one** part this session, per the standing splitting rule —
@@ -22464,7 +22464,7 @@ grouping, since each part's fixes are independent of the others:
 - **Part c — `worldpayxml/transformers.rs` inverted-gate structs (item 5)
   [x] built this session.**
 - **Part d — `cybersourcedecisionmanager.rs` + `transformers.rs` (item 6) +
-  `gotyme_sanlam.rs` (item 7) [ ] not started.**
+  `gotyme_sanlam.rs` (item 7) [x] built this session.**
 - **Part e — `truelayer.rs` + `truelayer/transformers.rs` (items 8, 9, 10)
   + `trustly/transformers.rs` unused-import half of item 10 [ ] not started.**
 
@@ -22621,14 +22621,85 @@ git am ~/storage/downloads/0001-fix-task-73a-worldpayxml-gate-part-c.patch
 git push
 ```
 
+### Part d — built, `cybersourcedecisionmanager.rs` + `transformers.rs` (item 6) + `gotyme_sanlam.rs` (item 7)
+
+**Item 6 — `cybersourcedecisionmanager/transformers.rs`:** re-verified
+every usage site before editing. `AdditionalPaymentData` only used at line
+412, inside the `frm`-gated `TryFrom<&CybersourcedecisionmanagerRouterData<&FrmCheckoutRouterData>>`
+impl (gate at line 383, confirmed). `RouterData`/`ResponseId`/
+`FraudCheckResponseData` only used inside the two `frm`-gated
+`TryFrom<ResponseRouterData<...>>` impls (gates at lines 137/196,
+confirmed). `ConnectorAuthType` used unconditionally at line 75/78
+(`TryFrom<&ConnectorAuthType> for CybersourcedecisionmanagerAuthType`, not
+frm-specific) — confirmed still ungated correctly.
+**Fix applied:** split the imports so only the frm-only symbols are gated,
+`ConnectorAuthType` split out and left ungated, exactly as documented.
+
+**Item 6 — `cybersourcedecisionmanager.rs`:** re-verified `Method` has a
+real ungated use site here (unlike gotyme_sanlam below) — `generate_signature`
+(line ~91-100, a plain helper fn, not frm-gated) matches on `Method::Post`/
+`Patch`/`Delete` unconditionally. `Request`/`RequestBuilder`/`RequestContent`
+confirmed used only inside the two frm-gated `ConnectorIntegration` impls
+(gates at lines 440/534). `utils` (the module) used unconditionally at line
+381 inside the shared, ungated `build_error_response` helper
+(`utils::handle_json_response_deserialization_failure`); only the specific
+`convert_amount` import is frm-only (used once, inside the frm-gated
+`get_request_body` at line 477).
+**Fix applied:** split `Method` out ungated, gated `Request`/`RequestBuilder`/
+`RequestContent` together; kept `use crate::utils;` ungated and split out
+`use crate::utils::convert_amount;` gated on `frm` — matches the doc's fix
+block exactly.
+
+**Item 7 — `gotyme_sanlam.rs`:** re-verified the doc's specific callout that,
+unlike the cybersource case, `Method` has **no** ungated use site in this
+file — both its uses (lines 231, 299 in the current file) sit inside the
+two `payouts`-gated `ConnectorIntegration<PoFulfill,...>`/
+`ConnectorIntegration<PoSync,...>` impls (gates at lines 185/270). Caught
+this on first pass by initially mirroring the cybersource split (pulling
+`Method` out ungated) before re-checking against the doc's explicit note
+and correcting it back into the gated group with `Request`/`RequestBuilder`/
+`RequestContent`. `headers` used unconditionally in the shared, ungated
+`build_headers` (lines 99/134/138); `ResponseRouterData` (254/331,
+`RouterData::try_from(ResponseRouterData {...})`) and `utils::convert_amount`
+(line 215) confirmed payout-only, both inside the same two gated impls.
+**Fix applied:** gated `Method`/`Request`/`RequestBuilder`/`RequestContent`
+together on `payouts`; split `headers` out ungated, gated
+`{types::ResponseRouterData, utils}` together on `payouts` — matches the
+doc's fix block exactly.
+
+**Verification:** still no working `rustc` (retired-step convention still
+holds, not re-probed this session). **Reviewed-by-reading only**, same
+caveat as every uncompiled `.rs` change in this file so far. Worth flagging
+plainly: the gotyme_sanlam `Method` near-miss above is exactly the kind of
+mistake a real `cargo check` would have caught in seconds (unused-import
+warning promoted to error under this workspace's lint settings, most
+likely) — recorded here per this file's own standing practice of writing up
+corrections rather than silently fixing them, not because the final diff
+is wrong.
+
+**Per rule 4: stayed off `main`** — committed on branch
+`fix/task-73a-cybersource-gotyme-gate-part-d-2026-09-13`. **This commit
+touches three `.rs` files** (`cybersourcedecisionmanager.rs`,
+`cybersourcedecisionmanager/transformers.rs`, `gotyme_sanlam.rs`) plus this
+handover entry — no `db/migrations/` changes, so no DB-Ops block owed. Per
+rule 6: confirmed via `git log --oneline -1` on this checkout (`0399c55d8`,
+part c's own commit message) that part c's patch was already applied and
+tip of `main` before this session started, so this is a fresh commit on
+top of current `main`, not a stack on an unapplied base.
+
+**Per rule 7: command block for this session's handoff:**
+```
+cd ~/B-PAY-backend
+git am ~/storage/downloads/0001-fix-task-73a-cybersource-gotyme-gate-part-d.patch
+git push
+```
+
 ### What this means for the next session
 
-Parts a, b, and c are done. Parts d and e are each independent,
-self-contained, and explicitly not started — pick either (suggest d, in
-documented order, but both are genuinely unblocked, no dependency between
-them). Neither touches `envoy/`, `adyenplatform.rs`, `trustly/`, or
-`worldpayxml/`, so there's no ordering dependency forcing a particular next
-pick. Once all five parts land, the moment a working `rustc` ≥ 1.85 exists,
-run all four queued `hyperswitch_connectors` feature checks
-(`dummy_connector,v1`, `frm,v1`, `payouts,v1`, `revenue_recovery,v1`) — the
-real compiler pass every part of this task has been deferred on so far.
+Parts a, b, c, and d are done. Part e is the last one — independent,
+self-contained, and explicitly not started (`truelayer.rs`+`transformers.rs`
+items 8, 9, 10, plus `trustly/transformers.rs`'s unused-import half of item
+10). Once it lands, the moment a working `rustc` ≥ 1.85 exists, run all
+four queued `hyperswitch_connectors` feature checks (`dummy_connector,v1`,
+`frm,v1`, `payouts,v1`, `revenue_recovery,v1`) — the real compiler pass
+every part of this task has been deferred on so far.

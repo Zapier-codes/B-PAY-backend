@@ -6,9 +6,10 @@ use common_enums::enums;
 use common_utils::{
     errors::CustomResult,
     ext_traits::ByteSliceExt,
-    request::{Method, Request, RequestBuilder, RequestContent},
     types::{AmountConvertor, StringMajorUnit, StringMajorUnitForConnector},
 };
+#[cfg(feature = "payouts")]
+use common_utils::request::{Method, Request, RequestBuilder, RequestContent};
 use error_stack::ResultExt;
 use hyperswitch_domain_models::{
     router_data::{AccessToken, ConnectorAuthType, ErrorResponse, RouterData},
@@ -57,7 +58,9 @@ use hyperswitch_interfaces::{
 use hyperswitch_masking::{Mask, PeekInterface};
 use transformers as gotyme_sanlam;
 
-use crate::{constants::headers, types::ResponseRouterData, utils};
+use crate::constants::headers;
+#[cfg(feature = "payouts")]
+use crate::{types::ResponseRouterData, utils};
 
 #[derive(Clone)]
 pub struct GotymeSanlam {

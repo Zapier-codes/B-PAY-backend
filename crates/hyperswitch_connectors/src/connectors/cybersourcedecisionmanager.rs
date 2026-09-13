@@ -8,9 +8,11 @@ use common_utils::{
     consts,
     errors::CustomResult,
     ext_traits::BytesExt,
-    request::{Method, Request, RequestBuilder, RequestContent},
+    request::Method,
     types::{AmountConvertor, StringMajorUnit, StringMajorUnitForConnector},
 };
+#[cfg(feature = "frm")]
+use common_utils::request::{Request, RequestBuilder, RequestContent};
 use error_stack::{report, Report, ResultExt};
 use hyperswitch_domain_models::{
     router_data::{AccessToken, ConnectorAuthType, ErrorResponse, RouterData},
@@ -61,8 +63,9 @@ use crate::types::{
 use crate::{
     constants::{self, headers},
     utils,
-    utils::convert_amount,
 };
+#[cfg(feature = "frm")]
+use crate::utils::convert_amount;
 
 #[derive(Clone)]
 pub struct Cybersourcedecisionmanager {

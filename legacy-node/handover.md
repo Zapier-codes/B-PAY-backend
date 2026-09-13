@@ -106,6 +106,20 @@
 > task's own section. Nothing else in this file is required reading to
 > start work.**
 >
+> **🔵 NEWEST NEXT TASK (2026-09-13, supersedes the 🟢🟢 box directly below
+> for "what to work on" purposes — that box's own items are now folded into
+> this one, nothing there is lost):** search this file for "Task 73/a item 3
+> continued — full reading-audit against `ci-errors-check-msrv.txt`" (dated
+> 2026-09-13) and start there. It documents exact, file-and-line root causes
+> and fixes for 8 of the 10 error clusters in the latest CI log — **read-only,
+> nothing applied yet.** Two items are explicitly still open within that same
+> entry (the `truelayer.rs:115` `TruelayerMetadata` trait-bound errors, and
+> two small unused-import clusters) — finish those first, then apply all the
+> documented fixes, checking `get_payout_webhook_event`'s caller before
+> touching item 8 as that entry itself flags. Get a real `cargo check` run
+> (both `--features payouts` and `--features frm`) the moment a working
+> `rustc` ≥ 1.85 exists, since none of this is compiler-verified yet.
+>
 > **🟢🟢 NEWEST NEXT TASK (2026-09-12, supersedes the 🟢 box directly
 > below — that box's item 2 is now done, item 3 is what's left):**
 > `worldpayxml/transformers.rs`'s `get_payout_webhook_event` (item 2)
@@ -21880,5 +21894,247 @@ this doc commit, combined into ONE patch file per rule 5/6 — no
 ```
 cd ~/B-PAY-backend
 git am ~/storage/downloads/0001-task-73a-cfg-gate-fixes-and-correction.patch
+git push
+```
+
+## Task 73/a item 3 continued — full reading-audit against `ci-errors-check-msrv.txt` (2026-09-13, doc-only session)
+
+**Scope of this entry:** the product owner supplied a fresh CI failure log
+(`ci-errors-check-msrv.txt`, MSRV toolchain check job, ~3,500 lines, 50
+distinct `error[...]`/`error:` blocks across two compile passes — 29 errors
+compiling `hyperswitch_connectors` (lib), then 47 compiling it a second time
+as `(lib test)` with a different feature combination). Explicit instruction
+this session: **read and root-cause only, no `.rs` edits.** Every root cause
+below is verified by reading the actual source and matching it line-for-line
+against the log; nothing here is a from-memory guess. Toolchain check
+skipped per the retired-step convention above, but independently
+re-confirmed anyway this session: `apt-cache policy rustc cargo` →
+candidate `1.75.0+dfsg0ubuntu1-0ubuntu7.4` against this workspace's pinned
+`1.85.0`, matching what's already on record. Still **not compiled.**
+
+**How the log was read:** the raw log has a `UNKNOWN STEP` column prefix and
+literal caret-bracket color codes (`^[[0m` etc. — literal two-byte `^[`
+text, not real ESC bytes) wrapped around every line. Stripped both with a
+small script before grepping; only mentioning this so the next session
+doesn't have to rediscover it if handed the same log format again.
+
+### Confirmed root causes, with exact fix instructions
+
+All ten items below are the same underlying bug family as items 1–2
+(trustly, worldpayxml) earlier in this file: a `#[cfg(feature = "payouts")]`
+or `#[cfg(feature = "frm")]` gate on one side of a definition/reference pair
+that doesn't match the other side. Each was traced to a specific caller or
+definition, not pattern-matched by name.
+
+**1. `envoy/transformers.rs:496` — missing gate (root cause of ~20 of the 29
+lib errors).**
+`impl<F> TryFrom<&EnvoyRouterData<&PayoutsRouterData<F>>> for PayToBankAccountV3`
+(starts line 496, ends line 546) has **no** `#[cfg(feature = "payouts")]`,
+while every type/fn it references — `PayoutsRouterData`, `PayToBankAccountV3`,
+`PaymentTemplate`, `PaymentInstructions`, `PaymentInstructionV3`,
+`PaymentDetails`, `SourceOrTarget`, `YesNo`, `get_template_for_ach/sepa/bacs`,
+`PayoutMethodData`, the `payouts` module import itself — **is** gated. With
+`payouts` off, the impl body still compiles (nothing gates it) and every name
+inside it resolves against nothing.
+**Fix:** add `#[cfg(feature = "payouts")]` immediately above line 496.
+
+**2. `envoy/transformers.rs:5,6-11,12` — top-of-file imports ungated but
+only used inside gated code.**
+Verified each symbol's only use site:
+- `CountryAlpha2`, `Currency` (line 5) — only used at lines 299/300/303,
+  inside `PaymentDetails` (already gated).
+- `ext_traits::OptionExt`, `id_type::PayoutId`, `pii::Email` (lines 7-9) —
+  `OptionExt` used at 392/426/463 (`.get_required_value`, inside the gated
+  `get_template_for_*` fns); `PayoutId` used at 274/308 (inside gated
+  `PayToBankAccountV3`/`PaymentDetails`); `Email` used at 310 (same).
+- `error_stack::ResultExt` (line 12) — `.change_context` at 393/427/464,
+  same gated fns.
+- By contrast `enums` (also on line 5) and `types::{FloatMajorUnit,
+  StringMinorUnit}` (lines 6/10) are used unconditionally (e.g. line 37,
+  184, 210) and must **stay ungated**.
+**Fix:** split each `use` so only the payout-only symbols get
+`#[cfg(feature = "payouts")]`:
+```rust
+use common_enums::enums;
+#[cfg(feature = "payouts")]
+use common_enums::{CountryAlpha2, Currency};
+use common_utils::types::{FloatMajorUnit, StringMinorUnit};
+#[cfg(feature = "payouts")]
+use common_utils::{ext_traits::OptionExt, id_type::PayoutId, pii::Email};
+use error_stack::ResultExt; // wait — see note below
+```
+Note: `ResultExt` has **no** ungated use in this file (only 393/427/464,
+all gated) — gate the whole `use error_stack::ResultExt;` line, don't leave
+it bare.
+
+**3. `adyenplatform.rs:414` — `crypto::Encryptable` "not found in crate
+`crypto`".**
+`use common_utils::crypto;` (line 6) is gated `#[cfg(feature = "payouts")]`.
+It's used at line 332 inside `verify_webhook_source`, which **is** gated
+(line 326) — fine. But it's also used at line 414 inside
+`get_webhook_api_response`, which is **not** gated (it's a required method
+of the `IncomingWebhook` trait, called regardless of the payouts feature).
+**Fix:** remove `#[cfg(feature = "payouts")]` from the `use common_utils::crypto;`
+line (line 5) — make it unconditional. Confirmed no unused-import fallout:
+the import is used at line 414 in every build regardless of feature state.
+
+**4. `trustly/transformers.rs:955,972-979` — missing gate.**
+`impl From<TrustlyPayoutStatus> for PayoutStatus` (line 955) and
+`fn get_payout_status_from_webhook` (line 972, returns
+`Result<PayoutStatus, ConnectorError>`) both reference `PayoutStatus`, which
+is imported gated (`#[cfg(feature = "payouts")] use common_enums::{CountryAlpha2, PayoutStatus};`,
+line 7-8) — but neither the impl nor the fn itself is gated. Their only
+caller (line 1030, `get_payout_status_from_webhook(...)`) sits inside a
+block that **is** gated (the enclosing impl starts at line 984 with
+`#[cfg(feature = "payouts")]`) — same "caller already branches, callee
+doesn't" shape as the worldpayxml item 2 fix earlier in this file.
+**Fix:** add `#[cfg(feature = "payouts")]` above both line 955 and line 972.
+
+**5. `worldpayxml/transformers.rs:728,751,760,768,775` — inverted bug
+(over-eager gate, not a missing one).**
+`enum PaymentMethod` (line 723) is a **general**, ungated enum used for
+every real payment method this connector supports (`CardSSL`, `TokenSSL`,
+etc. — confirmed unconditional use at lines 927, 1068, 1106, 1125, 1147,
+1258, 1294). One of its variants, `FastAccessSSL(Box<FastAccessData>)`
+(line 728), points at `FastAccessData`, which is gated
+`#[cfg(feature = "payouts")]` (line 751) — so is its child `Recipient`
+(763→760), and *its* child `PaymentInstrument` (771→768) and `CardDetails`
+(777→775). Because the enum housing the variant is ungated, all four
+struct definitions must be visible regardless of feature, even though
+they're only ever *constructed* inside genuinely payout-gated code (the
+`TryFrom` impls at lines 3567, 3593, 3643 all correctly stay gated — this
+is not about those).
+**Fix:** remove `#[cfg(feature = "payouts")]` from the four struct
+definitions at lines 751, 760, 768, 775 (`FastAccessData`, `Recipient`,
+`PaymentInstrument`, `CardDetails`). Leave every `impl`/`TryFrom` that
+constructs them gated as-is — this is a definition-visibility fix only, not
+a "make payouts unconditional" fix.
+
+**6. `cybersourcedecisionmanager/transformers.rs` + `cybersourcedecisionmanager.rs`
+— `frm`-feature mismatch, not `payouts` (confirmed by grep: zero `payouts`
+gates in either file, only `frm`).**
+In `transformers.rs`: `AdditionalPaymentData` (line 1, used only at line
+412, inside the `#[cfg(feature = "frm")]`-gated impl at line 382-385);
+`RouterData` (line 5, used only inside frm-gated impls at 138-139/203);
+`ResponseId` (line 6, used only at 147/216, same gated impls);
+`FraudCheckResponseData` (line 7, same). By contrast `ConnectorAuthType`
+(also on line 5) is used unconditionally at line 75 (`impl TryFrom<&ConnectorAuthType>`,
+not frm-specific) and must stay ungated.
+In `cybersourcedecisionmanager.rs`: `Request`, `RequestBuilder`,
+`RequestContent` (line 11) used only inside frm-gated `build_request`/
+`get_request_body` at lines 492-500/587-591 (impls gated at 438);
+`utils::convert_amount` (line 64) used only at line 477, same gated impl.
+`Method` (also line 11) and `ConnectorAuthType`-equivalent shared helper
+`generate_signature` (lines 84-100) use `Method` unconditionally — stays
+ungated.
+**Fix — `transformers.rs`:**
+```rust
+use api_models::payments::AdditionalPaymentData; // DELETE this line, replace with:
+#[cfg(feature = "frm")]
+use api_models::payments::AdditionalPaymentData;
+use common_enums::enums;
+use common_utils::{pii, types::StringMajorUnit};
+use hyperswitch_domain_models::router_data::ConnectorAuthType; // split out, ungated
+#[cfg(feature = "frm")]
+use hyperswitch_domain_models::{
+    router_data::RouterData,
+    router_request_types::ResponseId,
+    router_response_types::fraud_check::FraudCheckResponseData,
+};
+```
+**Fix — `cybersourcedecisionmanager.rs`:**
+```rust
+use common_utils::request::Method; // stays ungated
+#[cfg(feature = "frm")]
+use common_utils::request::{Request, RequestBuilder, RequestContent};
+...
+use crate::constants::{self, headers};
+use crate::utils;
+#[cfg(feature = "frm")]
+use crate::utils::convert_amount;
+```
+
+**7. `gotyme_sanlam.rs` — same pattern, gated on `payouts` this time (file
+has zero `frm` gates, confirmed by grep).**
+Line 9 `request::{Method, Request, RequestBuilder, RequestContent}` — all
+four confirmed used *only* inside the two `#[cfg(feature = "payouts")]`
+`ConnectorIntegration<PoFulfill,...>` / `ConnectorIntegration<PoSync,...>`
+impls (gated at lines 185/270; usages at 228-235, 292-306). Unlike the
+cybersource case, `Method` has no ungated use site here — both its uses
+(lines 230, 298) are inside the gated impls. Line 60
+`use crate::{constants::headers, types::ResponseRouterData, utils};` —
+`headers` is used unconditionally in the shared, ungated `build_headers`
+(line 92-99+, part of `ConnectorCommonExt`) and must stay; `ResponseRouterData`
+(used only at 254/331) and `utils` (`convert_amount` at line 212) are
+payout-only.
+**Fix:**
+```rust
+#[cfg(feature = "payouts")]
+use common_utils::request::{Method, Request, RequestBuilder, RequestContent};
+...
+use crate::constants::headers;
+#[cfg(feature = "payouts")]
+use crate::{types::ResponseRouterData, utils};
+```
+
+**8. `truelayer/transformers.rs:784,787` — `IncomingWebhookEvent::PayoutSuccess`/
+`PayoutFailure` "not found" — root-caused, same gate-mismatch family, NOT a
+renamed/missing variant.**
+Checked `api_models/src/webhooks.rs` directly: `PayoutSuccess` (line 51) and
+`PayoutFailure` (line 53) **do** exist on `IncomingWebhookEvent`, but each
+variant carries its own `#[cfg(feature = "payouts")]` (lines 50, 52 in that
+file). `truelayer/transformers.rs::get_payout_webhook_event` (starts line
+779) references both variants but is **not itself gated** — same shape as
+worldpayxml item 2 (a definition used unconditionally while what it touches
+is gated), just on the "reads a gated enum variant" side rather than
+constructing a gated struct.
+**Still needs, before this can be fixed:** confirming this function's only
+caller the same way item 2 confirmed worldpayxml's — I had not yet located
+`get_payout_webhook_event`'s call site (expected in `truelayer.rs`, likely
+`get_webhook_event_type`, mirroring the exact worldpayxml item-2 pattern)
+when this session was cut short. **Do not gate the function without
+checking the caller first** — if the caller isn't already gated with a
+fallback (unlike worldpayxml's case, which had one), gating the callee
+alone will just move the compile error to the call site.
+
+### Not yet root-caused — explicitly still open
+
+- **`truelayer.rs:115` — the `TruelayerMetadata::try_from(&req.connector_meta_data)`
+  trait-bound errors** (3 stacked `E0277`s: missing `TryFrom`/`From` impl for
+  `&Option<Secret<Value>>`, plus the `?`-operator `Infallible` conversion
+  failure). Not investigated this session — need to read `TruelayerMetadata`'s
+  actual `TryFrom`/parsing setup in `truelayer/transformers.rs` and compare
+  against how sibling connectors parse `connector_meta_data` (likely a
+  `.parse_value()` helper is the intended path, not a raw `try_from`, but
+  this is a guess, not yet confirmed by reading).
+- **Unused-import errors in `truelayer/transformers.rs:14,51`**
+  (`ErrorResponse`; `RouterData as OtherRouterData`) and
+  `trustly/transformers.rs:12,24` (`report`; `ExposeInterface`) — not
+  checked this session. Given every other unused-import error in this log
+  turned out to be the same "ungated import, gated-only usage" pattern,
+  that's the first thing to check here too, but it must be verified per
+  usage site the same way items 1-7 were, not assumed.
+
+### What this means for the next session
+
+Nothing in this entry has been applied to any `.rs` file — this was a
+read-and-document pass only, per this session's explicit instruction. The
+next session's job is: (a) finish the two open items above, (b) apply all
+ten fixes in items 1-7, (c) find and check `get_payout_webhook_event`'s
+caller before applying item 8, (d) get a real `cargo check -p
+hyperswitch_connectors --features payouts` and `--features frm` (and
+without either) run the moment a working `rustc` ≥ 1.85 is available, since
+none of this has been compiler-verified — it's a reading audit against a
+real CI log, same caveat as every entry in this file so far.
+
+**Per rule 4: this stayed off `main`** — committed on branch
+`docs/task-73a-payouts-frm-cfg-gate-audit-2026-09-13`, not `main`. This is a
+doc-only commit (this file only, no `.rs` changes, no `db/migrations/`
+changes) — no DB-Ops block owed, one patch file per rule 5/6.
+
+**Per rule 7: command block for this session's handoff:**
+```
+cd ~/B-PAY-backend
+git am ~/storage/downloads/0001-docs-task-73a-payouts-frm-cfg-gate-audit.patch
 git push
 ```

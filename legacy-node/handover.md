@@ -22949,3 +22949,195 @@ code-writing half of that work should still wait for a working toolchain
 session has been given so far). In parallel, the moment a working `rustc`
 ≥ 1.85 exists, the four queued `hyperswitch_connectors` feature checks
 from the CI-fix task above are still the other standing next step.
+
+## Task 74 — CI run `34753510276` full triage: 4 real job failures resolve to 2 independent root causes, split a/b per the standing task-splitting rule (2026-09-13, new session, documentation only)
+
+**Trigger:** product owner pulled per-job logs for the four jobs that
+completed with `conclusion: failure` on run `34753510276` (`Run tests on
+stable toolchain`, `Check formatting`, `Check compilation for V2
+features`, `cargo check -p storage_impl (pinned 1.85.0)`) via the
+per-job `gh api .../actions/jobs/<id>/logs` command (MSRV was still
+`in_progress` at pull time, not included). **This entry is doc-only —
+no `.rs` file touched this session** — per explicit instruction, this
+is triage + write-up for the next session(s) to build, not the fix
+itself.
+
+**Headline finding: 4 failing jobs, only 2 independent root causes.**
+`Run tests on stable toolchain`, `Check compilation for V2 features`,
+and `cargo check -p storage_impl (pinned 1.85.0)` all fail on the exact
+same single compiler error, byte-for-byte identical across all three
+logs — one root cause, not three. `Check formatting` fails on a
+separate, unrelated `cargo +nightly fmt --all --check` diff. So the
+real fix surface is 2 parts, not 4.
+
+**Split into 2 parts, per the "Build-focus + mandatory task-splitting"
+rule (cap 5, lettered a–e; 2 is a completely valid split size, same as
+prior tasks that only needed a/b):**
+
+- **Part a — `Check formatting` fix: merge/reorder 6 files' `use`
+  statements per rustfmt's own diff. [ ] not yet built.**
+- **Part b — the shared E0599 fix (`Run tests`, `V2 features`,
+  `storage_impl` jobs): add one gated trait import to
+  `truelayer/transformers.rs`. [ ] not yet built.**
+
+### Part a — `Check formatting`, not yet built
+
+**Real, full diff, captured directly from the job's own log (`cargo
++nightly fmt --all --check`), nothing paraphrased or inferred — every
+hunk below is copied from the tool's own output:**
+
+1. `crates/hyperswitch_connectors/src/connectors/adyenplatform.rs:2` —
+   merge two separate `use common_utils::...` lines into one:
+   ```rust
+   // remove:
+   use common_utils::crypto;
+   use common_utils::errors::CustomResult;
+   // add (further down, at the file's existing common_utils group, line 14):
+   use common_utils::{crypto, errors::CustomResult};
+   ```
+2. `crates/hyperswitch_connectors/src/connectors/cybersourcedecisionmanager/transformers.rs:5`
+   — collapse a 2-line `hyperswitch_domain_models::{...}` block onto one line:
+   ```rust
+   use hyperswitch_domain_models::{
+       router_data::RouterData, router_request_types::ResponseId,
+       router_response_types::fraud_check::FraudCheckResponseData,
+   };
+   ```
+3. `crates/hyperswitch_connectors/src/connectors/cybersourcedecisionmanager.rs`
+   (two hunks, lines 4 and 60) — move the `#[cfg(feature = "frm")] use
+   common_utils::request::{Request, RequestBuilder, RequestContent};`
+   pair up to directly after `use common_enums::enums;`, and move the
+   `#[cfg(feature = "frm")] use crate::utils::convert_amount;` pair up to
+   directly after the `crate::{...}` block — pure reordering, same two
+   lines, no content change.
+4. `crates/hyperswitch_connectors/src/connectors/gotyme_sanlam.rs:3/9` —
+   same reordering shape as #3: move `#[cfg(feature = "payouts")] use
+   common_utils::request::{Method, Request, RequestBuilder,
+   RequestContent};` up to directly after `use common_enums::enums;`.
+5. `crates/hyperswitch_connectors/src/connectors/truelayer/transformers.rs:5/25`
+   — merge `use common_utils::pii;` + `use common_utils::types::MinorUnit;`
+   into `use common_utils::{pii, types::MinorUnit};`, and move the
+   `#[cfg(feature = "payouts")] use hyperswitch_domain_models::router_data::ErrorResponse;`
+   pair up to directly after `use error_stack::{report, ResultExt};`.
+6. `crates/hyperswitch_connectors/src/connectors/trustly/transformers.rs:9/23`
+   — reorder `use error_stack::ResultExt;` to after the `#[cfg(feature =
+   "payouts")] use error_stack::report;` line instead of before it, and
+   reorder `use hyperswitch_masking::Secret;` to after `#[cfg(feature =
+   "payouts")] use hyperswitch_masking::ExposeInterface;` instead of
+   before it.
+
+**All 6 files are pure `use`-statement merge/reorder — no logic, no
+`cfg`-gate content change, confirmed straight from rustfmt's own diff,
+nothing to interpret.** Notably, all 6 are files Task 73/a's parts
+b–e (`fix(hyperswitch_connectors)` commits `44f0adc65` through
+`53b11d2f2`) touched — consistent with those parts having been written
+and committed without a working `rustfmt` available (same standing
+toolchain gap this whole file has documented since the New-Clone
+Checklist), so this is very likely the first real formatting check
+those edits have ever been run through, not a regression from anything
+else.
+
+**Not compiled/formatted** — no working `rustc`/`rustfmt` in this
+sandbox, same wall as everything else in this file. The diff above is
+rustfmt's own deterministic output pasted directly from the log, so
+applying it verbatim carries much less risk than the usual
+reviewed-by-reading caveat, but it's still unverified against a real
+`cargo +nightly fmt --all --check` re-run until someone with a
+toolchain (or the next CI run) confirms zero further hunks remain.
+
+### Part b — shared E0599 fix for `Run tests`/`V2 features`/`storage_impl`, not yet built
+
+**The exact, identical error across all three job logs:**
+```
+error[E0599]: no method named `get_payout_method_data` found for reference
+`&RouterData<PoFulfill, PayoutsData, PayoutsResponseData>` in the current scope
+ --> crates/hyperswitch_connectors/src/connectors/truelayer/transformers.rs:401:32
+    |
+401 |         match item.router_data.get_payout_method_data()? {
+    |                                ^^^^^^^^^^^^^^^^^^^^^^
+    = help: items from traits can only be used if the trait is in scope
+help: trait `RouterData` which provides `get_payout_method_data` is
+      implemented but not in scope; perhaps you want to import it
+    |
+1   + use crate::utils::RouterData;
+```
+rustc's own suggestion is correct in substance (the trait really is
+`crate::utils::RouterData`, confirmed at `crates/hyperswitch_connectors/src/utils.rs:567`,
+with `get_payout_method_data` declared at line 605) but **cannot be
+applied literally as printed** — see the collision below.
+
+**Correction to rustc's own suggested fix, found by reading, not by
+compiling:** `truelayer/transformers.rs` already imports
+`hyperswitch_domain_models::router_data::RouterData` (the struct) name
+unaliased, in its top-of-file `use hyperswitch_domain_models::{...
+router_data::{AccessToken, ConnectorAuthType, RouterData}, ...}` block
+(present before this session, confirmed via `git blame` — line 401
+itself dates to a March 2026 commit, and this import block predates
+Task 73/a entirely, so this is a **pre-existing latent bug**, not a
+regression from parts b–e, unlike Part a above). Adding `use
+crate::utils::RouterData;` verbatim as rustc suggests would collide
+with that existing struct import — trading one compile error for a
+different one (`the name RouterData is defined multiple times`).
+
+**Real fix, cross-checked against this crate's own existing precedent
+for this exact same collision** (not invented from scratch): two other
+files in this same crate already import this same trait under the same
+collision and resolve it with an anonymous import —
+`crates/hyperswitch_connectors/src/connectors/envoy/transformers.rs:33`
+and `crates/hyperswitch_connectors/src/connectors/dummyconnector/transformers.rs:20`
+both use `utils::RouterData as _,` inside a `crate::{...}` block. The
+call site here (`item.router_data.get_payout_method_data()?`, line 401)
+sits inside a function whose enclosing `impl` block is already
+`#[cfg(feature = "payouts")]`-gated (confirmed by reading the
+surrounding lines), matching this file's own existing gated-import
+pattern right next to it (`#[cfg(feature = "payouts")] use
+hyperswitch_domain_models::router_data::ErrorResponse;`). Fix to apply:
+```rust
+#[cfg(feature = "payouts")]
+use crate::utils::RouterData as _;
+```
+placed in the file's existing `#[cfg(feature = "payouts")]`-gated
+import group (same location Part a's own reordering already touches
+for this file, so these two changes will need to be reconciled into one
+diff when actually built — not committed as two separate hunks against
+the same lines).
+
+**Not compiled** — no working `rustc` in this sandbox. This is a
+stronger-than-usual reviewed-by-reading finding (root cause is rustc's
+own diagnostic, not guessed; the collision and its fix are both
+confirmed against two other real files in this exact crate solving the
+identical problem, not hypothesized from documentation alone), but it
+is still not a substitute for an actual `cargo check -p
+hyperswitch_connectors --features payouts` (or the next real CI run)
+confirming it compiles clean.
+
+### What this means for the next session
+
+Two independent, fully-diagnosed fixes are ready to build, either
+order, since they don't touch the same lines in a conflicting way (Part
+a reorders imports in `truelayer/transformers.rs`; Part b adds one new
+gated import to the same file's import block — apply Part a's
+reordering first, then insert Part b's new line into the resulting
+gated group, rather than building them as two separate patches against
+the same file). Per the New-Clone Checklist and this file's standing
+practice: build one part per session, verify by reading against the
+precedent cited above, commit on its own branch (never `main` directly
+per rule 4), and hand over via `git format-patch` per the Patch
+Handoff Convention. MSRV's own result (`in_progress` at triage time)
+still needs pulling separately once it completes — not covered by
+either part above.
+
+**Per rule 4: stayed off `main`** — this entry committed on branch
+`docs/task-74-ci-run-34753510276-triage-2026-09-13`. **Doc-only
+commit** (this file only, no `.rs`/`db/migrations/` changes) — no
+DB-Ops block owed, one patch file per rule 5/6. Per rule 8: confirmed
+via `git fetch origin` immediately before starting that `dc508a111` was
+tip of `origin/main` with no drift — this is a fresh commit on top of
+current `main`, not a stack on an unapplied base.
+
+**Per rule 7: command block for this session's handoff:**
+```
+cd ~/B-PAY-backend
+git am ~/storage/downloads/0001-docs-task-74-ci-run-34753510276-triage.patch
+git push
+```

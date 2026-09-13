@@ -5,9 +5,10 @@ use actix_web::http::header::HeaderMap;
 use api_models::payouts::{BankTransfer, PayoutMethodData};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use common_enums::enums;
-use common_utils::pii;
-use common_utils::types::MinorUnit;
+use common_utils::{pii, types::MinorUnit};
 use error_stack::{report, ResultExt};
+#[cfg(feature = "payouts")]
+use hyperswitch_domain_models::router_data::ErrorResponse;
 use hyperswitch_domain_models::{
     payment_method_data::PaymentMethodData,
     router_data::{AccessToken, ConnectorAuthType, RouterData},
@@ -25,8 +26,6 @@ use hyperswitch_domain_models::{
         VerifyWebhookSourceRouterData,
     },
 };
-#[cfg(feature = "payouts")]
-use hyperswitch_domain_models::router_data::ErrorResponse;
 #[cfg(feature = "payouts")]
 use hyperswitch_domain_models::{
     router_flow_types::payouts::PoFulfill, router_response_types::PayoutsResponseData,

@@ -22975,12 +22975,43 @@ rule (cap 5, lettered a–e; 2 is a completely valid split size, same as
 prior tasks that only needed a/b):**
 
 - **Part a — `Check formatting` fix: merge/reorder 6 files' `use`
-  statements per rustfmt's own diff. [ ] not yet built.**
+  statements per rustfmt's own diff. [x] built this session.**
 - **Part b — the shared E0599 fix (`Run tests`, `V2 features`,
   `storage_impl` jobs): add one gated trait import to
   `truelayer/transformers.rs`. [ ] not yet built.**
 
-### Part a — `Check formatting`, not yet built
+### Part a — `Check formatting` — built and tool-verified this session
+
+**Correction to this file's own standing toolchain assumption, stated
+plainly per this file's practice, not silently fixed:** this session's
+sandbox has a working `rustc`/`cargo`/`rustfmt` (`1.75.0`, matching the
+exact apt candidate the New-Clone Checklist has documented since
+2026-09-11 — so the checklist's own reasoning wasn't wrong, this
+sandbox instance just happens to have that candidate actually
+installed, unlike prior sessions'). **This does not change the
+checklist's real-code-compiling conclusion** — `1.75.0` is still below
+the workspace's pinned `1.85.0`, `cargo check` against the workspace
+still hits the documented lockfile/edition2024 walls untouched this
+session — but it does mean *formatting* specifically could be checked
+for real, since `rustfmt` doesn't need the full workspace to resolve.
+All 6 files' post-edit state now returns **exit 0, zero diff** from
+`rustfmt --edition 2021 --check` run directly against each file. One
+caveat kept honest: this repo's CI runs `cargo +nightly fmt`, and this
+sandbox has no `rustup`/nightly (network still blocks
+`sh.rustup.rs`) — two of the 6 hunks (`adyenplatform.rs`'s
+`crypto`/`CustomResult` merge, and half of `truelayer/transformers.rs`'s
+`pii`/`MinorUnit` merge) are nightly-only `imports_granularity =
+Crate`-style merges that stable `rustfmt` won't flag either way (it
+warned `can't set imports_granularity = Crate, unstable features are
+only available in nightly channel` and simply skipped judging those
+lines). Those two were applied exactly as the real nightly CI log
+specified, verbatim, not guessed — stable rustfmt's "no diff" on the
+result is consistent with a correct fix but doesn't independently
+prove it the way it does for the other 4 files' plain reordering. The
+real confirmation for those two is the next actual CI run.
+
+**What was applied — same content as the previous entry's documented
+diff, now landed as real edits:**
 
 **Real, full diff, captured directly from the job's own log (`cargo
 +nightly fmt --all --check`), nothing paraphrased or inferred — every
@@ -23037,13 +23068,29 @@ Checklist), so this is very likely the first real formatting check
 those edits have ever been run through, not a regression from anything
 else.
 
-**Not compiled/formatted** — no working `rustc`/`rustfmt` in this
-sandbox, same wall as everything else in this file. The diff above is
-rustfmt's own deterministic output pasted directly from the log, so
-applying it verbatim carries much less risk than the usual
-reviewed-by-reading caveat, but it's still unverified against a real
-`cargo +nightly fmt --all --check` re-run until someone with a
-toolchain (or the next CI run) confirms zero further hunks remain.
+**Superseded by the entry above — a working stable `rustfmt` turned out
+to be available this session after all.** All 6 hunks above are now
+applied as real edits and confirmed `rustfmt --edition 2021 --check`
+exit-0/no-diff per file (4 of the 6 files' worth of hunks fully
+tool-verified; the 2 nightly-only import-merge hunks applied verbatim
+from the real log, consistent with but not independently provable by
+stable rustfmt). Final confirmation is still the next real
+`cargo +nightly fmt --all --check` CI run.
+
+**Per rule 4: stayed off `main`** — committed on branch
+`fix/task-74-part-a-formatting-2026-09-13` (code + this handover
+update in one commit, per this file's own practice of keeping a
+part's write-up with its diff). No `db/migrations/` changes, no DB-Ops
+block owed. Per rule 8: confirmed via `git fetch origin` that
+`ffd553530` (the previous session's doc-only entry) was tip of
+`origin/main` with no drift before starting.
+
+**Per rule 7: command block for this session's handoff:**
+```
+cd ~/B-PAY-backend
+git am ~/storage/downloads/0001-fix-task-74-part-a-formatting.patch
+git push
+```
 
 ### Part b — shared E0599 fix for `Run tests`/`V2 features`/`storage_impl`, not yet built
 

@@ -4,6 +4,8 @@ use std::sync::LazyLock;
 
 use base64::Engine;
 use common_enums::enums;
+#[cfg(feature = "frm")]
+use common_utils::request::{Request, RequestBuilder, RequestContent};
 use common_utils::{
     consts,
     errors::CustomResult,
@@ -11,8 +13,6 @@ use common_utils::{
     request::Method,
     types::{AmountConvertor, StringMajorUnit, StringMajorUnitForConnector},
 };
-#[cfg(feature = "frm")]
-use common_utils::request::{Request, RequestBuilder, RequestContent};
 use error_stack::{report, Report, ResultExt};
 use hyperswitch_domain_models::{
     router_data::{AccessToken, ConnectorAuthType, ErrorResponse, RouterData},
@@ -60,12 +60,12 @@ use crate::types::{
     FrmCheckoutRouterData, FrmCheckoutType, FrmTransactionRouterData, FrmTransactionType,
     ResponseRouterData,
 };
+#[cfg(feature = "frm")]
+use crate::utils::convert_amount;
 use crate::{
     constants::{self, headers},
     utils,
 };
-#[cfg(feature = "frm")]
-use crate::utils::convert_amount;
 
 #[derive(Clone)]
 pub struct Cybersourcedecisionmanager {

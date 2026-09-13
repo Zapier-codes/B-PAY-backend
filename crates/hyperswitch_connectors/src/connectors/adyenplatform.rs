@@ -2,8 +2,6 @@ pub mod transformers;
 use api_models::{self, webhooks::IncomingWebhookEvent};
 #[cfg(feature = "payouts")]
 use base64::Engine;
-use common_utils::crypto;
-use common_utils::errors::CustomResult;
 #[cfg(feature = "payouts")]
 use common_utils::ext_traits::{ByteSliceExt as _, BytesExt};
 #[cfg(feature = "payouts")]
@@ -14,6 +12,7 @@ use common_utils::request::{Method, Request, RequestBuilder};
 use common_utils::types::MinorUnitForConnector;
 #[cfg(feature = "payouts")]
 use common_utils::types::{AmountConvertor, MinorUnit};
+use common_utils::{crypto, errors::CustomResult};
 #[cfg(not(feature = "payouts"))]
 use error_stack::report;
 use error_stack::ResultExt;

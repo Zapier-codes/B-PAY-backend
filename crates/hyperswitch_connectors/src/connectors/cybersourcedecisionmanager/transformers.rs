@@ -5,8 +5,7 @@ use common_utils::{pii, types::StringMajorUnit};
 use hyperswitch_domain_models::router_data::ConnectorAuthType;
 #[cfg(feature = "frm")]
 use hyperswitch_domain_models::{
-    router_data::RouterData,
-    router_request_types::ResponseId,
+    router_data::RouterData, router_request_types::ResponseId,
     router_response_types::fraud_check::FraudCheckResponseData,
 };
 use hyperswitch_interfaces::errors;

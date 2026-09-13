@@ -3,13 +3,13 @@ pub mod transformers;
 use std::sync::LazyLock;
 
 use common_enums::enums;
+#[cfg(feature = "payouts")]
+use common_utils::request::{Method, Request, RequestBuilder, RequestContent};
 use common_utils::{
     errors::CustomResult,
     ext_traits::ByteSliceExt,
     types::{AmountConvertor, StringMajorUnit, StringMajorUnitForConnector},
 };
-#[cfg(feature = "payouts")]
-use common_utils::request::{Method, Request, RequestBuilder, RequestContent};
 use error_stack::ResultExt;
 use hyperswitch_domain_models::{
     router_data::{AccessToken, ConnectorAuthType, ErrorResponse, RouterData},

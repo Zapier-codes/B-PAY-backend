@@ -23583,3 +23583,112 @@ designed specifically to leave payouts-feature behavior unchanged
 (same symbols, same gate, just narrowed to the correct scope), but
 that claim is unverified against a real `--features payouts` build for
 the same reason everything else here is unverified.
+
+## Task 74 part e — part d's own `gotyme_sanlam.rs` edit failed real CI's `Check formatting`; fixed against the real nightly diff, same lesson as part c (2026-09-13, later same day)
+
+**Trigger:** the CI run triggered by part d's commit (`f8d4897e9`)
+landing on `main` came back with `Check formatting` failing. Confirmed
+the job had completed before pulling its log, then pulled it directly
+by ID (same per-job pattern as every prior triage in this file):
+```
+gh run view "$RUN_ID" --repo Zapier-codes/B-Pay-backend --json status,conclusion,jobs \
+  --jq '.jobs[] | select(.name=="Check formatting") | {status, conclusion, databaseId}'
+# {"conclusion": "failure", "databaseId": 103730330871, "status": "completed"}
+
+gh api --allow-escape-sequences repos/Zapier-codes/B-Pay-backend/actions/jobs/103730330871/logs \
+  > ~/storage/downloads/ci-errors-check-formatting.txt
+```
+
+**Root cause — the exact same lesson part c already documented for
+`truelayer/transformers.rs`, hit again in a different file because
+part d's own edit was never run through nightly `rustfmt` (no working
+`rustc`/`rustfmt` in this sandbox at all, not even the stable fallback
+part a/b/c had access to in their sessions).** Part d's fix added a
+new standalone line, `use common_utils::request::Request;`, placed
+directly above the file's existing `#[cfg(feature = "payouts")]`-gated
+`common_utils::request::{...}` line. Real nightly `cargo +nightly fmt
+--all --check` (`imports_granularity = Crate`) doesn't allow a
+same-crate import to stand alone next to another group from the same
+crate — it folds `Request` into the file's other, already-present
+ungated `common_utils::{...}` group instead, in alphabetical position.
+Transcribed directly from the job's own diff, nothing paraphrased:
+```diff
+ use common_enums::enums;
+-use common_utils::request::Request;
+ #[cfg(feature = "payouts")]
+ use common_utils::request::{Method, RequestBuilder, RequestContent};
+ use common_utils::{
+     errors::CustomResult,
+     ext_traits::ByteSliceExt,
++    request::Request,
+     types::{AmountConvertor, StringMajorUnit, StringMajorUnitForConnector},
+ };
+```
+**Only `gotyme_sanlam.rs` was flagged in this log** — confirmed by
+grepping the full log for `envoy`: zero hits. Part d's
+`envoy/transformers.rs` edit (gating `utils::RouterData as _`) needed
+no formatting fix; only the `gotyme_sanlam.rs` half of part d did.
+
+**Fix applied — exactly the diff above, nothing else touched:**
+```rust
+use common_enums::enums;
+#[cfg(feature = "payouts")]
+use common_utils::request::{Method, RequestBuilder, RequestContent};
+use common_utils::{
+    errors::CustomResult,
+    ext_traits::ByteSliceExt,
+    request::Request,
+    types::{AmountConvertor, StringMajorUnit, StringMajorUnitForConnector},
+};
+```
+This does not change which symbols are gated — `Request` is still
+unconditional, `Method`/`RequestBuilder`/`RequestContent` are still
+`#[cfg(feature = "payouts")]`-gated — only the placement changed, per
+this file's own restated lesson from part c: "when this sandbox only
+has stable rustfmt (or, this session, none at all) and the project
+pins nightly-only import-grouping settings, local formatting checks
+are necessary but not sufficient for any hunk touching a same-crate
+import — fold into the existing group at that group's own position
+rather than adding a new standalone line, and treat the next real CI
+run as the only actual confirmation."
+
+**Per rule 4: stayed off `main`.** Branch
+`fix/task-74-part-e-gotyme-fmt-followup-2026-09-13`, based on
+`origin/main` at `f8d4897e9` (part d's own real, pushed hash — resolved
+via `git fetch origin` immediately before starting, per rule 8: local
+had drifted from a prior local-only hash, `origin/main` had moved to
+`f8d4897e9`, so this branch was built fresh off the real current tip
+rather than stacked on the stale local commit, per rule 8.3). One
+`.rs` file plus this handover entry, no `db/migrations/` changes, no
+DB-Ops block owed.
+
+**Patch generated and test-applied against a clean fresh clone of the
+real current `origin/main` before handoff (rule 8.3) — confirmed
+`git am` exit 0.** Patch file:
+`0001-fix-task-74-part-e-gotyme-fmt-followup.patch`.
+
+**Per rule 7 — exact command block for this handoff:**
+```
+cd ~/B-PAY-backend
+git am ~/storage/downloads/0001-fix-task-74-part-e-gotyme-fmt-followup.patch
+git push
+```
+
+**Verification, once pushed** — same pattern as every prior part in
+this task: re-pull both `Check formatting` and `Check compilation on
+MSRV toolchain` for the newly-triggered run (MSRV was fixed by part d
+independently of this formatting fix, but both jobs run off the same
+commit, so both are worth re-checking together rather than assuming
+one implies the other):
+```
+RUN_ID=$(gh run list --repo Zapier-codes/B-Pay-backend --branch main --limit 1 --json databaseId --jq '.[0].databaseId')
+gh run view "$RUN_ID" --repo Zapier-codes/B-Pay-backend --json status,conclusion,jobs \
+  --jq '.jobs[] | select(.name=="Check formatting" or (.name | startswith("Check compilation on MSRV"))) | {name, status, conclusion}'
+```
+Both should read `conclusion: "success"` once complete. **Not done
+this session, still open:** no working `rustc`/`rustfmt` exists in
+this sandbox to independently confirm either fix locally (checked:
+`apt-cache policy rustc cargo` still `1.75.0` candidate only,
+`rustfmt: not found`) — this fix, like part d's, is reviewed by
+reading the real CI diff only, not tool-verified, and the next CI run
+is the only real confirmation.

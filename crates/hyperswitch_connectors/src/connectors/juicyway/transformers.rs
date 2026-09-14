@@ -359,6 +359,21 @@ pub struct JuicywayPaymentObject {
     pub reference: String,
 }
 
+// CONFIRMED against docs.juicyway.com/payments/initialize-payment/cards
+// (Task 77/a-3, this session) -- the worked "201 Success - Payment
+// Session Created" response for `POST /payment-sessions` nests the
+// payment object under `data.payment`, alongside a top-level
+// `data.status`, exactly as coded below. Previously this shape was
+// inferred-for-consistency with PSync's response, not verified against
+// its own primary source; PSync has since been confirmed FLAT instead
+// (see `JuicywayFetchPaymentData` below), so this struct staying
+// nested was a real fact to check, not an assumption to carry over.
+// No code change from this confirmation -- only fields this connector
+// actually reads (`id`/`status`/`reference` on the nested `payment`
+// object) are modeled; the real payload also carries `auth_type`,
+// `expires_at`, `links`, `message`, `amount`, `currency`, `customer`,
+// `date`, `description`, `order`, `mode`, `payment_method`, none of
+// which anything here currently consumes.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct JuicywayPaymentSessionData {
     pub status: JuicywayPaymentStatus,

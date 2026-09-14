@@ -106,6 +106,47 @@
 > task's own section. Nothing else in this file is required reading to
 > start work.**
 >
+> **🔴 NEWEST NEXT TASK (2026-09-14, session 5 — closes the gap the 🟡
+> box below flagged as the one remaining unconfirmed envelope):**
+> fetched `docs.juicyway.com/payments/initialize-payment/cards`, which
+> is the guide page for the exact endpoint Authorize's connector code
+> calls (`POST /payment-sessions`), and it carries a full worked "201
+> Success - Payment Session Created" response example (not just an
+> OpenAPI stub — `docs.juicyway.com/reference/payments/
+> initialize-a-payment-session` was also checked this session and its
+> schema is an untyped placeholder `type: object`, no properties, so
+> the guide page is the only real primary source for this shape).
+> **Result: CONFIRMED correct as already coded, no bug.** The worked
+> example nests the payment object under `data.payment`, alongside a
+> top-level `data.status` — exactly matching `JuicywayPaymentObject`/
+> `JuicywayPaymentSessionData` in transformers.rs. This was previously
+> an inferred-for-consistency assumption (shared shape with PSync's
+> struct before that struct was itself corrected to FLAT); it is now a
+> citation to a confirmed page, same treatment as the beneficiary
+> envelope confirmation two boxes below. Added a source-citation
+> comment above `JuicywayPaymentSessionData` noting the confirmation
+> and listing the real payload's other fields
+> (`auth_type`/`expires_at`/`links`/`message`/`amount`/`currency`/
+> `customer`/`date`/`description`/`order`/`mode`/`payment_method`) that
+> this connector doesn't currently read — no functional code change,
+> since nothing was wrong.
+> - Verification: brace/paren balance check on the one changed file —
+>   clean. Not a `cargo check` — still no working `rustc`/`cargo` this
+>   session (`which rustc cargo` -> nothing), same wall as every prior
+>   session.
+>
+> **Next real task:** every unconfirmed/flagged envelope this file's
+> JuicyWay work has tracked is now either confirmed or fixed
+> (beneficiary response + request shape, PSync status vocabulary +
+> structural shape, and now Authorize/session-creation's own shape).
+> What's left is exactly what the New-Clone Checklist at the top of
+> this file already names: **the per-call-site TTL/atomicity audit**
+> for the 63 Redis call sites under `crates/router/src` (a reading
+> task, no compiler needed), or — if a working `rustc` ≥ 1.85 ever
+> turns out to be available — `cargo check -p hyperswitch_connectors`
+> against every JuicyWay file from a-3-i through this leaf, which has
+> never once been run against this workspace.
+>
 > **🟣 NEWEST NEXT TASK (2026-09-14, session 2 — corrects the 🔵 box
 > directly below): Task 77/a-3-iii was already merged to `origin/main`
 > (commit `c056be40c`, authored by a prior sandbox session) before this
@@ -25023,6 +25064,56 @@ rule 5 (mandatory, every time) — not just described in prose.
 actually handed over:**
 ```
 cd ~/B-Pay-backend
+git am ~/storage/downloads/<patch-file-name>
+git push
+```
+
+No `db/migrations/` changes in this session's diff, so no DB-Ops
+Handoff block is owed this time — Patch Handoff only, per rule 7's own
+"how to decide" checklist above.
+
+## Task 77/a-3 — Authorize/session-creation response envelope confirmation (closes last flagged gap)
+
+**What was open:** the 🟡 box's own "next real task" named Authorize's
+`/payment-sessions` response shape as the one remaining unconfirmed
+envelope in the JuicyWay connector's payment flows — carried as an
+assumption (shared shape with PSync) rather than a checked fact.
+
+**What this session did:** fetched
+`docs.juicyway.com/payments/initialize-payment/cards`, the guide page
+for the exact endpoint Authorize calls, which has a full worked
+success-response example. It confirms the existing
+`JuicywayPaymentSessionData`/`JuicywayPaymentObject` nested-under-`data.payment`
+shape exactly as coded — no bug, no request/response change needed.
+Added a source-citation comment in
+`crates/hyperswitch_connectors/src/connectors/juicyway/transformers.rs`
+recording the confirmation and the real payload's unread fields, per
+this file's own standing practice of citing primary sources rather than
+leaving shapes as unverified inferences. See the 🔴 box near the top of
+this file for full detail.
+
+**Verification run, in the absence of a compiler:** brace/paren balance
+check (stack-based, all three bracket types, comment/string-aware) on
+the one changed `.rs` file — clean. Not a `cargo check` — still no
+working `rustc`/`cargo` this session (`which rustc cargo` -> nothing),
+same New-Clone Checklist wall as every prior session.
+
+## Patch Handoff — Task 77/a-3 (Authorize response envelope confirmation)
+
+Per the Patch Handoff Convention above: this session's work is
+committed locally on branch
+`task77/a3-payment-session-envelope-confirm` (based on `origin/main` at
+`5642dda4e`, re-confirmed via `git fetch origin` immediately before
+generating the patch — no drift). A patch file has been generated and
+handed over alongside this entry, per rule 5 (mandatory, every time) —
+not just described in prose.
+
+**Exact commands, copy-paste as-is, filling in only the patch filename
+actually handed over — run these from the product owner's own device,
+per rule 4: no session applies this patch or pushes to `main` itself,
+regardless of how the request handing this work off was phrased:**
+```
+cd ~/B-PAY-backend
 git am ~/storage/downloads/<patch-file-name>
 git push
 ```

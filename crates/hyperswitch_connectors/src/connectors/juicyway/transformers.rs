@@ -478,22 +478,37 @@ impl JuicywayErrorResponse {
 // PoSync, this cannot key off the merchant reference; see
 // verifyPayout()'s own docblock).
 
+// Request shape CONFIRMED this session (Task 77/a-3-iii follow-up,
+// 2026-09-14) against the actual primary source --
+// docs.juicyway.com/transfers/beneficiaries/create-beneficiary -- which
+// neither this file's original a-3-iii pass nor the legacy JS
+// (juicyway.js#createBeneficiary) had fetched; both had only reached
+// the parent /transfers/beneficiaries overview page, which documents
+// field *names* but not the request envelope. The confirmed "Create
+// NGN Bank Account Beneficiary" shape is FLAT -- no `account_details`
+// wrapper -- and requires two fields neither the legacy JS nor the
+// original Rust struct sent at all: `bank_name` and `rail` (must be
+// literal `"nuban"`). The previous nested-`account_details` shape was
+// never a confirmed guess in the first place; it doesn't match any
+// worked example on this page. Scoped to NGN deliberately: the
+// confirmed page also documents a completely different "Create USD
+// Bank Account Beneficiary" shape (routing_number/rail "ach"|"wire"/
+// address/bank_address, no bank_code at all) that this connector does
+// not attempt -- consistent with this file's own already-flagged
+// GET /payment-methods/banks being Nigeria-only, so NGN is the only
+// bank_code-driven path this connector can realistically drive anyway.
 #[cfg(feature = "payouts")]
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "snake_case", tag = "type")]
 pub enum JuicywayBeneficiaryRequest {
     BankAccount {
-        account_details: JuicywayBeneficiaryBankAccountDetails,
+        currency: enums::Currency,
+        account_name: Secret<String>,
+        account_number: Secret<String>,
+        bank_name: Secret<String>,
+        bank_code: Secret<String>,
+        rail: String,
     },
-}
-
-#[cfg(feature = "payouts")]
-#[derive(Debug, Serialize)]
-pub struct JuicywayBeneficiaryBankAccountDetails {
-    pub account_number: Secret<String>,
-    pub account_name: Secret<String>,
-    pub bank_code: Secret<String>,
-    pub currency: enums::Currency,
 }
 
 #[cfg(feature = "payouts")]
@@ -508,8 +523,8 @@ impl Serialize for JuicywayCreateBeneficiaryRequest {
     }
 }
 
-// ⚠️ Real, unresolved shape gap -- flagged, not guessed around, same
-// root cause and same stopgap already flagged in
+// ⚠️ Real, unresolved shape gap that survives this session's fix --
+// same root cause and same stopgap already flagged in
 // korapay/transformers.rs's own `get_korapay_payout_bank_account` and
 // paystack/transformers.rs's own `get_paystack_payout_bank_account`:
 // Hyperswitch's `PayoutMethodData` (api_models::payouts) has no
@@ -519,11 +534,17 @@ impl Serialize for JuicywayCreateBeneficiaryRequest {
 // account number, `bank_routing_number` carries JuicyWay's own bank
 // code (from JuicyWay's own `GET /payment-methods/banks` list, NOT a US
 // ABA routing number, which is what that field is documented elsewhere
-// in this same enum as). Not a confirmed-correct mapping -- do not
-// trust this in production before either a live JuicyWay sandbox call
-// confirms it round-trips, or a proper NUBAN-shaped `PayoutMethodData`
-// variant is added upstream and every connector using this same
-// stopgap (Korapay, Paystack, now JuicyWay) is switched to it together.
+// in this same enum as). `bank_name` is genuinely available on this
+// same `AchBankTransfer` struct (confirmed by reading
+// api_models::payouts -- it is `Option<String>`, not a stopgap), so
+// unlike account_number/bank_code it is not a mapping guess, only an
+// optionality gap: if the caller didn't populate it, this fails loudly
+// rather than sending JuicyWay a beneficiary it will reject anyway. Not
+// a confirmed-correct mapping end-to-end -- do not trust this in
+// production before either a live JuicyWay sandbox call confirms it
+// round-trips, or a proper NUBAN-shaped `PayoutMethodData` variant is
+// added upstream and every connector using this same stopgap (Korapay,
+// Paystack, now JuicyWay) is switched to it together.
 // `crypto_address`/`interac` beneficiaries are real per
 // legacy-node/providers/juicyway.js#createBeneficiary() but rejected
 // with `NotSupported` here, same discipline as every other
@@ -532,10 +553,7 @@ impl Serialize for JuicywayCreateBeneficiaryRequest {
 #[cfg(feature = "payouts")]
 fn get_juicyway_payout_bank_account<F>(
     router_data: &PayoutsRouterData<F>,
-) -> Result<
-    JuicywayBeneficiaryBankAccountDetails,
-    error_stack::Report<errors::ConnectorError>,
-> {
+) -> Result<JuicywayBeneficiaryRequest, error_stack::Report<errors::ConnectorError>> {
     match router_data.get_payout_method_data()? {
         PayoutMethodData::BankTransfer(BankTransfer::Ach(ach)) => {
             let account_name = router_data
@@ -543,12 +561,22 @@ fn get_juicyway_payout_bank_account<F>(
                 .customer_details
                 .as_ref()
                 .and_then(|customer| customer.name.clone())
+                .or_else(|| ach.account_holder_name.clone())
                 .unwrap_or_else(|| ach.bank_account_number.clone());
-            Ok(JuicywayBeneficiaryBankAccountDetails {
+            let bank_name = ach.bank_name.clone().ok_or(
+                errors::ConnectorError::MissingRequiredField {
+                    field_name: "bank_name (required by Juicyway's confirmed \
+                        Create-NGN-Bank-Account-Beneficiary shape; not optional \
+                        despite AchBankTransfer.bank_name being Option<String>)",
+                },
+            )?;
+            Ok(JuicywayBeneficiaryRequest::BankAccount {
+                currency: router_data.request.destination_currency,
                 account_number: ach.bank_account_number,
                 account_name,
+                bank_name: Secret::new(bank_name),
                 bank_code: ach.bank_routing_number,
-                currency: router_data.request.destination_currency,
+                rail: "nuban".to_string(),
             })
         }
         other => Err(errors::ConnectorError::NotSupported {
@@ -566,23 +594,19 @@ fn get_juicyway_payout_bank_account<F>(
 impl<F> TryFrom<&PayoutsRouterData<F>> for JuicywayCreateBeneficiaryRequest {
     type Error = error_stack::Report<errors::ConnectorError>;
     fn try_from(router_data: &PayoutsRouterData<F>) -> Result<Self, Self::Error> {
-        let account_details = get_juicyway_payout_bank_account(router_data)?;
-        Ok(Self(JuicywayBeneficiaryRequest::BankAccount {
-            account_details,
-        }))
+        Ok(Self(get_juicyway_payout_bank_account(router_data)?))
     }
 }
 
-// Response shape is explicitly UNCONFIRMED for this endpoint --
-// legacy-node/providers/juicyway.js#createBeneficiary()'s own docblock
-// confirms the request shapes against docs.juicyway.com but says
-// nothing about the response envelope. The nested `data.id` shape below
-// is inferred ONLY for consistency with JuicyWay's own confirmed
-// processPayout() response (which nests its `id` under `data` too, per
-// verifyPayout()'s own docblock) -- not independently confirmed for
-// this specific endpoint. Flag before trusting this outside a sandbox
-// smoke test, same caveat this endpoint's own request-side docblock
-// already carries for its URL path.
+// Response envelope CONFIRMED this session (2026-09-14) against
+// docs.juicyway.com/transfers/beneficiaries/create-beneficiary's own
+// "Success Response Example" -- the previous `data.id` shape below was
+// an inference-for-consistency with processPayout()'s response, never
+// independently checked for this endpoint specifically. That inference
+// turned out correct: the confirmed worked example nests the
+// beneficiary `id` (and every other returned field) under a top-level
+// `data` object, exactly as already coded. No structural change needed
+// here -- flagging only removed, not the code.
 #[cfg(feature = "payouts")]
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct JuicywayBeneficiaryData {

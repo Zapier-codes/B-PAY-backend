@@ -161,6 +161,66 @@
 > from a-3-i through a-3-iii — still never run, same as `storage_impl`
 > below.
 >
+> **🟠 NEWEST NEXT TASK (2026-09-14, session 3 — closes item (a) above):**
+> fetched the actual Create-Beneficiary reference page
+> (`docs.juicyway.com/transfers/beneficiaries/create-beneficiary`, found
+> via that domain's own `/llms.txt` index — the parent overview page
+> only links to it, it was never fetched directly before this session)
+> and got a full worked request/response example. Two real findings,
+> one confirming existing code and one fixing a real bug:
+> - **Response envelope: CONFIRMED correct as already coded.** The
+>   worked "Success Response Example" nests the beneficiary `id` (and
+>   every other field) under top-level `data`, exactly matching
+>   `JuicywayBeneficiaryData`/`JuicywayBeneficiaryResponse` from a-3-iii.
+>   No code change; the "unconfirmed, inferred-for-consistency" caveat
+>   on that struct is now replaced with a citation to the confirmed page.
+> - **Request shape: WRONG as coded, now fixed.** a-3-iii's
+>   `JuicywayBeneficiaryRequest::BankAccount` wrapped fields in a nested
+>   `account_details` object. The confirmed "Create NGN Bank Account
+>   Beneficiary" example is FLAT (`type`, `currency`, `account_name`,
+>   `account_number`, `bank_name`, `bank_code`, `rail` all top-level) and
+>   requires two fields the old struct never sent at all: `bank_name`
+>   and `rail` (literal `"nuban"`). Fixed in
+>   `crates/hyperswitch_connectors/src/connectors/juicyway/transformers.rs`:
+>   `JuicywayBeneficiaryRequest::BankAccount` is now flat with those two
+>   new fields; `get_juicyway_payout_bank_account` now also reads
+>   `AchBankTransfer.bank_name` (confirmed present on that struct via
+>   `api_models::payouts` — `Option<String>`, not a mapping guess) and
+>   fails loudly via `ConnectorError::MissingRequiredField` if the caller
+>   didn't populate it, same discipline as the existing
+>   beneficiary_id/pin required-field checks elsewhere in this file.
+>   `account_name` fallback chain also now tries
+>   `AchBankTransfer.account_holder_name` before falling back to the
+>   account number, since that field exists and is a better fit than the
+>   customer-details-name fallback alone.
+> - **Deliberately scoped to NGN only, not expanded further:** the same
+>   confirmed page also documents a structurally different "Create USD
+>   Bank Account Beneficiary" shape (`routing_number`, `rail`
+>   `"ach"`/`"wire"`, `address`, `bank_address`, no `bank_code` at all)
+>   and an Interac shape that needs a security `question`/`answer` pair
+>   this connector has no input for — neither is built here. NGN-only
+>   is consistent with this file's own already-flagged fact that
+>   JuicyWay's `GET /payment-methods/banks` (the only source of a valid
+>   `bank_code`) is Nigeria-only, so USD/Interac beneficiaries were never
+>   reachable through this connector's current bank-code-driven path
+>   anyway — not a new gap, just a now-explicit boundary.
+> - **The NUBAN/bank-code stopgap itself is unchanged and still
+>   unconfirmed** — `BankTransfer::Ach` reused for a non-ACH,
+>   non-US-routing-number shape, same flagged gap as Korapay's and
+>   Paystack's own connectors. Nothing this session resolves that; only
+>   the fields sent *alongside* that stopgap were fixed.
+> - Verification: brace/paren balance check on the changed file (clean)
+>   plus a full-file grep confirming no other reference to the removed
+>   `JuicywayBeneficiaryBankAccountDetails` struct remains. Not a `cargo
+>   check` — still no working `rustc`/`cargo` this session (`which
+>   rustc cargo` -> nothing), same wall as every prior session.
+>
+> **Next real task:** the USD/Interac beneficiary shapes above, if this
+> connector's scope ever needs to grow past NGN — otherwise, next up is
+> whatever a working `rustc` finally allows: `cargo check -p
+> hyperswitch_connectors` against every JuicyWay file, a-3-i through this
+> leaf.
+>
 > **🔵 NEWEST NEXT TASK (2026-09-14, latest — supersedes the 🟢 box
 > directly below for "what to work on" purposes; nothing in that box is
 > lost):** search this file for "Task 77/a-3-ii — JuicyWay engine

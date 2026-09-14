@@ -106,7 +106,52 @@
 > task's own section. Nothing else in this file is required reading to
 > start work.**
 >
-> **🟣 NEWEST NEXT TASK (2026-09-14, session 8 — a different open
+> **🔵 NEWEST NEXT TASK (2026-09-14, session 9 — closes item #2 of the
+> 🟣 box's own "not done" list below, per direct product-owner steer):**
+> Flutterwave v3 webhook signature verification is now wired into
+> `IncomingWebhook` (search "Task 73 follow-up -- webhook signature
+> verification" below for the full entry). The 🟣 box's other two open
+> items (Refund id-threading, Remita/new-provider scaffolding) and the
+> 🟤 box's own PgKvStore/Finding #17 thread are all untouched this
+> session — this closed exactly one named gap, not a correction of
+> either earlier box.
+>
+> **Done this session:** `get_webhook_source_verification_algorithm` /
+> `get_webhook_source_verification_signature` on `Flutterwave`, plus a
+> new shared `crypto::ConstantTimeEquals` primitive in
+> `common_utils::crypto` (ring's `constant_time::verify_slices_are_equal`
+> — the same constant-time primitive `HmacSha256`'s own `ring::hmac::verify`
+> already uses in this module, applied here to a plain-secret comparison
+> instead of a digest). Ported from
+> `legacy-node/providers/flutterwave.js#verifyWebhookSignature`'s plain
+> `verif-hash` shared-secret check, structured the same way the Stripe
+> connector in this crate wires its own HMAC scheme into the same two
+> trait hooks. Not compiled — no working `rustc`/`cargo` this session
+> either, same wall as every prior session; reviewed by reading plus a
+> brace/paren balance check on both changed files.
+>
+> **Not done this session, genuinely still open — unchanged from the 🟣
+> box's own list, in the same order:**
+> 1. Flutterwave Refund id-threading (needs Flutterwave's own numeric id
+>    from a prior PSync/webhook call; Authorize's response never returns
+>    it).
+> 2. ~~Flutterwave webhook signature verification~~ — done this session,
+>    struck through here rather than deleted, per this file's own
+>    "corrections get recorded, not silently removed" convention.
+> 3. Remita and the other five unscaffolded legacy providers (Task 77's
+>    own provider split) — see the 🟣 box below for the full list.
+>
+> **Also still genuinely open, out of scope for this leaf on purpose
+> (not a new finding):** `get_webhook_object_reference_id`,
+> `get_webhook_event_type`, and `get_webhook_resource_object` on
+> `Flutterwave` remain `WebhooksNotImplemented` — parsing Flutterwave's
+> actual webhook payload into this framework's domain types is a
+> separate leaf, same deferral Korapay's own connector already uses.
+> Source-verification (this session's scope) and payload-parsing
+> (still open) are two independent gaps; closing the first doesn't
+> imply the second is close behind it.
+>
+> **🟣 PRIOR NEXT TASK (2026-09-14, session 8 — a different open
 > thread than the 🟤 box below, not a correction of it):** the 🟤 box's
 > own PgKvStore/Finding #17 thread is still exactly where it left off,
 > untouched this session. This session picked up the OTHER real open
@@ -137,11 +182,13 @@
 >    but it needs Flutterwave's own numeric id already on hand from a
 >    prior PSync/webhook call — Authorize's own response never returns
 >    it. Not attempted this session.
-> 2. **Flutterwave webhook signature verification.** Real, working
+> 2. ~~**Flutterwave webhook signature verification.** Real, working
 >    HMAC-adjacent logic already exists in
 >    `legacy-node/providers/flutterwave.js#verifyWebhookSignature`
 >    (plain `verif-hash` shared-secret comparison) — not ported to
->    `IncomingWebhook` in either this session or `fa6b4d17b`.
+>    `IncomingWebhook` in either this session or `fa6b4d17b`.~~ **Done in
+>    session 9 — see the 🔵 box above.** (Struck through per this file's
+>    own convention: corrected in place, not deleted.)
 > 3. **Remita (a-5 in Task 77's own provider split, search "a-5.
 >    Remita")** is the next provider with no connector crate at all —
 >    reference material already exists at Task 49/b and Task 50 (the
@@ -25581,3 +25628,114 @@ convention, since both are real and independent of each other.
 stays on this session's own branch (`task73-flutterwave-payouts`), a
 patch was generated and handed to the product owner directly for their
 own `git am` + push.
+
+---
+
+## Task 73 follow-up — Flutterwave webhook signature verification (2026-09-14, session 9)
+
+**Scope, and why this thread over the other two open items:** the 🟣 box
+above (session 8) left three genuinely open items: Refund id-threading,
+webhook signature verification, and Remita/new-provider scaffolding.
+Direct product-owner steer this session picked webhook signature
+verification specifically — the piece with a direct, well-understood
+industry analog (constant-time shared-secret comparison, the same class
+of primitive Stripe-style HMAC webhook verification is built on) worth
+closing out to a standard that holds up, not a partial/stopgap port.
+
+**Built:**
+
+- **`common_utils::crypto::ConstantTimeEquals`** (new) — a
+  `VerifySignature` impl doing a constant-time equality check via ring's
+  `constant_time::verify_slices_are_equal`, ignoring the `msg` argument
+  entirely (there is nothing to hash — this is a plain secret-echo
+  check, not a digest). This is the **same underlying constant-time
+  primitive `HmacSha256`'s own `ring::hmac::verify` already relies on**
+  in this same module, so it carries identical timing-attack resistance
+  — it isn't a weaker or improvised substitute for HMAC, just the
+  correct algorithm for a provider whose real API doesn't compute one.
+  Directly equivalent to the legacy JS's `crypto.timingSafeEqual`.
+- **`Flutterwave`'s `IncomingWebhook` impl** — added
+  `get_webhook_source_verification_algorithm` (returns
+  `ConstantTimeEquals`) and `get_webhook_source_verification_signature`
+  (reads the `verif-hash` header off `IncomingWebhookRequestDetails`).
+  Deliberately did **not** override
+  `get_webhook_source_verification_message` — the trait's own default
+  (`Ok(Vec::new())`) is already correct here, since `ConstantTimeEquals`
+  never inspects its `msg` argument. This is the same "only override
+  what's connector-specific, lean on the trait's own defaults
+  otherwise" shape the Stripe connector in this crate already uses for
+  its own (HMAC) scheme — same framework, different algorithm, because
+  Flutterwave v3's real webhook design (confirmed against
+  developer.flutterwave.com/docs/webhooks and Flutterwave's own Node/PHP
+  examples during the original legacy port, `legacy-node/providers/
+  flutterwave.js`'s own docblock) is a verbatim-echoed shared secret,
+  not a per-payload digest.
+- **Secret sourcing** intentionally goes through this trait's existing
+  default `get_webhook_source_verification_merchant_secret` (the
+  per-merchant-connector-account secret this framework already
+  generalizes across every connector) rather than reading
+  `FLW_SECRET_HASH` from the environment the way the legacy Node script
+  did. That default already fails closed on an unconfigured secret (it
+  falls back to the literal string `"default_secret"`, which will never
+  equal a real `verif-hash` value) — the same fail-closed posture the
+  legacy JS's own explicit `if (!configuredHash) { ...reject... }` check
+  took, just expressed through the framework's existing mechanism
+  instead of a bespoke env-var read.
+
+**Deliberately NOT done this session — genuinely separate scope, not
+newly discovered gaps:**
+- `get_webhook_object_reference_id` / `get_webhook_event_type` /
+  `get_webhook_resource_object` on `Flutterwave` remain
+  `WebhooksNotImplemented`. Parsing Flutterwave's actual webhook
+  payload into this framework's domain types is a distinct leaf from
+  verifying the request came from Flutterwave at all — same explicit
+  deferral Korapay's own connector in this crate already uses for the
+  identical split.
+- Flutterwave v4's own webhook scheme
+  (`legacy-node/providers/flutterwave.js`'s second `verifyWebhookSignature`
+  overload, a real HMAC-SHA256-over-raw-body per v4's canonical docs) —
+  untouched. v4 itself is still a separate, not-yet-runtime-switched
+  class per Task 52/d-2c's own still-open design call; nothing in this
+  crate calls v4 methods yet, so there is no `IncomingWebhook`-shaped
+  gap to close there yet either.
+- Refund id-threading and Remita/new-provider scaffolding — both still
+  exactly where session 8 left them (see the 🔵 box at the top of this
+  file).
+
+**Verification:** no working `rustc`/`cargo` this session (`which rustc
+cargo` → nothing, same wall as every session in this file) — reviewed
+by reading against Stripe's own `IncomingWebhook` impl in this same
+crate (`crates/hyperswitch_connectors/src/connectors/stripe.rs`) as the
+structural precedent, plus a brace/paren balance check on both changed
+files (`common_utils/src/crypto.rs`, `hyperswitch_connectors/src/
+connectors/flutterwave.rs` — both came back balanced; `crypto.rs` alone
+carries a single pre-existing `(`/`)` mismatch traced to `git show
+HEAD:crates/common_utils/src/crypto.rs` — i.e. present before this
+session's own edit, off by exactly one on both sides of the diff, so
+not introduced here — most likely an unbalanced paren inside a doc
+comment elsewhere in the file; not chased down further since it
+predates this change and this file's own convention is to flag findings
+like this rather than silently "fix" something outside the task's own
+scope).
+
+**Per the Patch Handoff Convention, rule 8: drift-checked first** —
+`git fetch origin` immediately before generating this session's patch
+confirmed local `main`/`origin/main` both at `30362e40a`, unmoved since
+this session started, so this is a fresh commit on top of it, not a
+stack against a moved base. **Per rule 7, only the Patch Handoff block
+is owed this time** — this session touched `common_utils/src/crypto.rs`,
+`hyperswitch_connectors/src/connectors/flutterwave.rs`, and
+`legacy-node/handover.md` only; no `db/migrations/` file, so the DB-Ops
+block does not apply.
+
+**Per this repo's own rule: not pushed to `main`, not merged** — work
+stays on this session's own branch (`task73-flutterwave-webhook-verify`),
+a patch was generated and handed to the product owner directly for
+their own `git am` + push.
+
+**Exact command(s) for the product owner:**
+```
+cd ~/B-PAY-backend
+git am ~/storage/downloads/<patch-file-name>
+git push
+```

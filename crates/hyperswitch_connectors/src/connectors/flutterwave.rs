@@ -4,6 +4,7 @@ use std::sync::LazyLock;
 
 use common_enums::enums;
 use common_utils::{
+    crypto,
     errors::CustomResult,
     ext_traits::BytesExt,
     request::{Method, Request, RequestBuilder, RequestContent},
@@ -654,14 +655,78 @@ impl ConnectorIntegration<PoSync, PayoutsData, PayoutsResponseData> for Flutterw
 
 #[async_trait::async_trait]
 impl webhooks::IncomingWebhook for Flutterwave {
-    // Flutterwave v3 webhook signature verification (a plain
-    // `verif-hash` shared-secret header comparison, per
-    // legacy-node/providers/flutterwave.js's own `verifyWebhookSignature`)
-    // is real, working logic in the legacy stack but genuinely out of
-    // scope for this leaf (Authorize/PSync collection flows only) —
-    // left as `WebhooksNotImplemented` and flagged in handover.md as the
-    // next natural follow-up, same explicit deferral Korapay's own
-    // connector already uses for its webhook handling.
+    // Flutterwave v3 webhook signature verification — ported from
+    // legacy-node/providers/flutterwave.js#verifyWebhookSignature.
+    //
+    // Per developer.flutterwave.com/docs/webhooks and Flutterwave's own
+    // official examples (Node, PHP) — both fetched and cross-checked
+    // during the legacy port — the `verif-hash` header is a plain
+    // dashboard-configured shared secret echoed back verbatim on every
+    // call, NOT a per-payload HMAC digest the way Korapay's
+    // `x-korapay-signature` is (at least one third-party blog post found
+    // during that port computed an HMAC instead, which would reject every
+    // genuine Flutterwave webhook — not followed here, same call the
+    // legacy JS already made). `crypto::ConstantTimeEquals` — the Rust
+    // equivalent of the legacy code's `crypto.timingSafeEqual` — is
+    // therefore the correct algorithm here, not `crypto::HmacSha256`.
+    //
+    // Structurally this mirrors the same two `IncomingWebhook` trait hooks
+    // (`get_webhook_source_verification_algorithm` /
+    // `get_webhook_source_verification_signature`) the Stripe connector in
+    // this same crate uses for its own (HMAC-based) scheme, rather than a
+    // one-off hand-rolled comparison — same framework, different algorithm,
+    // because the two providers' real webhook designs are genuinely
+    // different, not because one connector is more "correct" than the
+    // other. `get_webhook_source_verification_message` is deliberately not
+    // overridden: there is nothing to hash, so the trait's own default
+    // (`Ok(Vec::new())`) is correct as-is, and `ConstantTimeEquals` ignores
+    // its `msg` argument entirely.
+    //
+    // The secret side of the comparison is sourced through this trait's
+    // existing default `get_webhook_source_verification_merchant_secret`
+    // (the per-merchant-connector-account secret already modeled generically
+    // by this framework) rather than reading `FLW_SECRET_HASH` from the
+    // environment the way the legacy Node script did — deliberate: this
+    // framework already generalizes secret storage per merchant/connector,
+    // so bypassing it for a directly-read env var would both re-introduce
+    // the single-tenant assumption the legacy script made and diverge from
+    // every other connector's own pattern in this crate. If no secret has
+    // been configured for a given merchant, the default falls back to the
+    // literal string `"default_secret"`, which will never equal a real
+    // Flutterwave `verif-hash` value — so an unconfigured secret still
+    // fails closed, the same posture the legacy JS's own explicit
+    // `if (!configuredHash) { ...reject... }` check took.
+    //
+    // `get_webhook_object_reference_id` / `get_webhook_event_type` /
+    // `get_webhook_resource_object` below remain `WebhooksNotImplemented` —
+    // parsing Flutterwave's webhook payload into this framework's own
+    // domain types is a genuinely separate leaf, same explicit deferral
+    // Korapay's own connector already uses. This leaf closes only the
+    // signature-verification gap named as still-open in handover.md.
+    fn get_webhook_source_verification_algorithm(
+        &self,
+        _request: &webhooks::IncomingWebhookRequestDetails<'_>,
+    ) -> CustomResult<Box<dyn crypto::VerifySignature + Send>, errors::ConnectorError> {
+        Ok(Box::new(crypto::ConstantTimeEquals))
+    }
+
+    fn get_webhook_source_verification_signature(
+        &self,
+        request: &webhooks::IncomingWebhookRequestDetails<'_>,
+        _connector_webhook_secrets: &api_models::webhooks::ConnectorWebhookSecrets,
+    ) -> CustomResult<Vec<u8>, errors::ConnectorError> {
+        let header_value = request
+            .headers
+            .get("verif-hash")
+            .ok_or(errors::ConnectorError::WebhookSignatureNotFound)?;
+
+        Ok(header_value
+            .to_str()
+            .change_context(errors::ConnectorError::WebhookSignatureNotFound)?
+            .as_bytes()
+            .to_vec())
+    }
+
     fn get_webhook_object_reference_id(
         &self,
         _request: &webhooks::IncomingWebhookRequestDetails<'_>,

@@ -6,7 +6,7 @@ use error_stack::ResultExt;
 use hyperswitch_masking::{ExposeInterface, PeekInterface, Secret};
 use ring::{
     aead::{self, BoundKey, OpeningKey, SealingKey, UnboundKey},
-    hmac, rand as ring_rand,
+    constant_time, hmac, rand as ring_rand,
     signature::{RsaKeyPair, RSA_PSS_SHA256},
 };
 #[cfg(feature = "logs")]
@@ -202,6 +202,29 @@ impl DecodeMessage for NoAlgorithm {
         msg: Secret<Vec<u8>, EncryptionStrategy>,
     ) -> CustomResult<Vec<u8>, errors::CryptoError> {
         Ok(msg.expose())
+    }
+}
+
+/// Represents a plain constant-time equality check between a
+/// dashboard-configured shared secret and a value an external party echoes
+/// back verbatim on each call (e.g. Flutterwave v3's `verif-hash` webhook
+/// header) — as opposed to a per-payload HMAC digest the caller computes
+/// fresh each time. There is nothing to hash here, so `verify_signature`'s
+/// `msg` argument is unused; only `secret` and `signature` are compared,
+/// in constant time, via the same primitive [`HmacSha256`]'s own
+/// `ring::hmac::verify` uses internally, so this carries the same
+/// timing-attack resistance as this module's HMAC variants.
+#[derive(Debug)]
+pub struct ConstantTimeEquals;
+
+impl VerifySignature for ConstantTimeEquals {
+    fn verify_signature(
+        &self,
+        secret: &[u8],
+        signature: &[u8],
+        _msg: &[u8],
+    ) -> CustomResult<bool, errors::CryptoError> {
+        Ok(constant_time::verify_slices_are_equal(secret, signature).is_ok())
     }
 }
 

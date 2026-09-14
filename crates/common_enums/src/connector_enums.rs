@@ -134,6 +134,7 @@ pub enum Connector {
     Imerchantsolutions,
     Itaubank,
     Jpmorgan,
+    Juicyway,
     Juspay,
     Juspaythreedsserver,
     Klarna,

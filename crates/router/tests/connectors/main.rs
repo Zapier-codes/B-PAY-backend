@@ -71,6 +71,7 @@ mod inespay;
 mod interpayments;
 mod itaubank;
 mod jpmorgan;
+mod juicyway;
 mod juspaythreedsserver;
 mod katapult;
 mod korapay;

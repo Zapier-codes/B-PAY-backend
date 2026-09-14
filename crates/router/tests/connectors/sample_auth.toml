@@ -408,3 +408,6 @@ api_key = "API Key"
 
 [korapay]
 api_key="API Key"
+
+[juicyway]
+api_key="API Key"

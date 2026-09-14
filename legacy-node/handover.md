@@ -106,7 +106,43 @@
 > task's own section. Nothing else in this file is required reading to
 > start work.**
 >
-> **🟤 NEWEST NEXT TASK (2026-09-13, latest — supersedes the 🟣 box
+> **🟠 NEWEST NEXT TASK (2026-09-14, latest — supersedes the 🟤 box
+> directly below for "what to work on" purposes; nothing in that box is
+> lost):** search this file for "Task 77/a-2-iii — Paystack payout
+> flows: `PoRecipient`/`PoFulfill`/`PoSync`, done this session" and read
+> that entry in full first. **a-2-iii is now built** — Paystack's
+> scaffold and its `Authorize`/`PSync`/`Capture`/`Void`/`Execute`/`RSync`/
+> webhook flows were already present in this crate from before Task 77
+> started and already matched a-2's own named reference scope (Task 3,
+> Task 8/8c/8d) exactly, so this session started straight at the one
+> genuinely open leaf: payout flows, per Task 51/c's already-confirmed
+> `createTransferRecipient`/`processPayout`/`verifyPayout` shapes.
+> Reviewed-by-reading only (no working `rustc` this session either, same
+> New-Clone Checklist wall), sitting on branch
+> `task77/a2iii-paystack-payout-flows` pending patch review —
+> `origin/main` re-confirmed at `e4ce02b06` via `git fetch origin`
+> immediately before this box was written, no drift. **One real,
+> flagged-not-solved gap carried forward, same root cause as Korapay's
+> own a-1-iii gap:** Hyperswitch's `PayoutMethodData` enum still has no
+> NUBAN/bank-code-shaped variant, so `BankTransfer::Ach`'s two plain
+> string fields are reused as a stopgap here too — see
+> `paystack/transformers.rs`'s own `get_paystack_payout_bank_account`
+> comment before trusting this with real money. **A second, Paystack-
+> specific gap, also flagged not solved:** a transfer that comes back
+> `status: "otp"` needs a human to finalize it with a one-time code
+> (`/transfer/finalize_transfer`, not implemented) — this connector
+> cannot complete such a transfer on its own. **The next active leaf is
+> a-3** (JuicyWay, starting again at its own `-i`), per the reading
+> order Task 77's own ideology entry already established.
+>
+> **🟤 NEXT TASK (2026-09-13, superseded by the 🟠 box above — kept for
+> history, not for "what to work on" purposes):** search this file for
+> "Task 77/a-1-iii — Korapay payout flows: `PoFulfill`/`PoSync`, done
+> this session" and read that entry in full first. **a-1-iii is now
+> built and since merged to `main` at `e4ce02b06`**, confirmed at the
+> start of the a-2-iii session above.
+>
+> **🟤 NEXT TASK — original text, 2026-09-13, kept for history — supersedes the 🟣 box
 > directly below for "what to work on" purposes; nothing in that box is
 > lost):** search this file for "Task 77/a-1-iii — Korapay payout
 > flows: `PoFulfill`/`PoSync`, done this session" and read that entry in
@@ -24294,6 +24330,160 @@ rule 5 (mandatory, every time) — not just described in prose.
 filename actually handed over:**
 ```
 cd ~/B-PAY-backend
+git am ~/storage/downloads/<patch-file-name>
+git push
+```
+
+No `db/migrations/` changes in this session's diff, so no DB-Ops
+Handoff block is owed this time — Patch Handoff only, per rule 7's own
+"how to decide" checklist above.
+
+### f. Task 77/a-2-iii — Paystack payout flows: `PoRecipient`/`PoFulfill`/`PoSync`, done this session
+
+**Picked up exactly where the a-1-iii session left off** — this
+session confirmed `main` had already absorbed Korapay's a-1-iii work
+(`git log --oneline -1` → `e4ce02b06`, matching the 🟤 box above, no
+drift per a `git fetch origin` at the start of this session), branched
+`task77/a2iii-paystack-payout-flows` off it, and moved to the next
+leaf in the reading order: **a-2, Paystack.**
+
+**Scope check done before writing any code:** a-2's own header lists
+Task 3 (webhook), Task 8/8c/8d (endpoint/response-shape audit, XOF
+currency) as its references — narrower than a-1's own header, which
+named Task 42's payout confirmations explicitly. Read the existing
+`crates/hyperswitch_connectors/src/connectors/paystack.rs` +
+`paystack/transformers.rs` directly rather than assuming a-2-i/-ii were
+still open: **both were already done**, and already match a-2's
+own named scope exactly — `get_webhook_source_verification_algorithm`
+already uses `crypto::HmacSha512` keyed correctly (Task 3's confirmed
+scheme), and the `PSync`/webhook response handling already reads the
+*nested* `data.status` field for the real per-transaction outcome, not
+just the outer `status: bool` (exactly Task 8c's fix — no "paid but no
+value" gap in this Rust connector). Currency isn't a Paystack-specific
+allowlist in this codebase's Rust layer the way
+`CONFIRMED_PROVIDER_CURRENCIES` was in the legacy JS (Task 8d) — the
+shared `common_enums::Currency` type already includes `XOF`, so there
+was nothing to add here. **Net effect: a-2-i and a-2-ii's own named
+scope was already satisfied by pre-existing code, not new work this
+session** — flagging this plainly rather than re-doing already-correct
+work or inventing busywork to make a-2-i/-ii "look" freshly done.
+
+**What's built this session, then, is the next real, unblocked leaf —
+payout flows, the same position a-1-iii occupied for Korapay** — per
+Task 51/c's already primary-source-confirmed
+`createTransferRecipient()`/`processPayout()`/`verifyPayout()`
+(`paystack.com/docs/api/transfer-recipient/`,
+`paystack.com/docs/api/transfer/`,
+`paystack.com/docs/transfers/{creating-transfer-recipients,
+single-transfers,bulk-transfers}`).
+
+**Real, load-bearing shape difference from Korapay, not a straight
+port — flagged, not papered over:** Paystack's real payout API needs a
+transfer *recipient* to exist first (`POST /transferrecipient` →
+`recipient_code`), then a separate transfer call (`POST /transfer`)
+that references it — unlike Korapay's single-call `disburse` endpoint.
+Hyperswitch already has a dedicated domain flow for exactly this
+shape, `PoRecipient` (Wise's own connector already uses it the same
+way), so this session modeled it as its own
+`ConnectorIntegration<PoRecipient, ...>` rather than trying to force a
+two-call provider flow into a one-call `PoFulfill` — the same "use the
+framework's own existing multi-step precedent, don't invent a new
+pattern" discipline this file's own reading order rewards.
+
+**What's built,
+`crates/hyperswitch_connectors/src/connectors/paystack.rs` +
+`paystack/transformers.rs`:**
+- `ConnectorIntegration<PoRecipient, PayoutsData, PayoutsResponseData>`
+  — `POST /transferrecipient`, `type: "nuban"` always sent explicitly.
+  Response's `recipient_code` is written into `connector_payout_id`
+  (same "reuse this field to hand an id to the next flow in the
+  chain" pattern Wise's own connector already uses between its own
+  `PoRecipient` and later steps).
+- `ConnectorIntegration<PoFulfill, PayoutsData, PayoutsResponseData>`
+  — `POST /transfer`, `source: "balance"`, reads the recipient_code
+  back out of `connector_payout_id` (failing loudly, via
+  `MissingRequiredField`, if `PoRecipient` was skipped or failed —
+  a real orchestration precondition, not recoverable here), then
+  overwrites `connector_payout_id` again with the real transfer
+  `reference` on a successful response, so `PoSync` has the right
+  identifier to poll.
+- `ConnectorIntegration<PoSync, PayoutsData, PayoutsResponseData>` —
+  `GET /transfer/verify/{reference}`, **confirmed directly** against
+  Paystack's own "Verify via polling" docs section (a stronger
+  citation than Korapay's own PoSync endpoint, which is a
+  pattern-match off a sibling bulk-transfers path, not a direct
+  citation — flagged as a real confidence difference between the two
+  connectors' PoSync implementations, not a mistake in either).
+- Shared response type (`PaystackPayoutResponse`) for both Fulfill and
+  Sync, since Paystack's own two-level `{ status, data: { status,
+  ... } }` shape is identical for both, same reasoning as Korapay's
+  own shared `KorapayPayoutResponse`. Outer `status: false` is a
+  thrown connector error; `data.status` (`success` / `failed` /
+  `pending` / `otp`) maps to a real `PayoutStatus`.
+
+**⚠️ Two real, unresolved gaps — flagged, not guessed around:**
+1. **Same root cause as Korapay's own a-1-iii gap:** Hyperswitch's
+   `PayoutMethodData` enum has no NUBAN/bank-code-shaped variant, so
+   `BankTransfer::Ach`'s `bank_account_number`/`bank_routing_number`
+   fields are reused as a stopgap here too (account number / Paystack
+   bank code respectively) — see
+   `paystack/transformers.rs`'s own `get_paystack_payout_bank_account`
+   comment. Not a confirmed-correct mapping; same "don't trust with
+   real money before a live sandbox call or a proper upstream variant"
+   caveat as Korapay's.
+2. **Paystack-specific, not shared with Korapay:** a transfer that
+   comes back `data.status: "otp"` (which happens whenever the
+   integration's Transfers OTP requirement is enabled on Paystack's
+   dashboard — the default) needs a human to finalize it with a
+   one-time code, via a separate `/transfer/finalize_transfer`
+   endpoint **not implemented here**, same limitation the legacy JS
+   this was ported from already carried and flagged. `Otp` is mapped
+   to `PayoutStatus::Pending` (the closest available non-terminal
+   status) but will **not** resolve on its own the way a normal
+   `Pending` might — see
+   `paystack/transformers.rs`'s own `PaystackPayoutTransactionStatus`
+   comment.
+
+**Not compiled this session either** — same toolchain wall as every
+session since the New-Clone Checklist's step 2 was retired (`which
+rustc cargo` → nothing available). Reviewed by reading against
+Korapay's own a-1-iii payout code (closest existing precedent for this
+exact "port a legacy-JS-confirmed payout shape onto
+`ConnectorIntegration`" pattern) and Wise's connector (the precedent
+for using `PoRecipient` as its own flow ahead of `PoFulfill`), not
+compile-checked. A plain-text brace/paren balance check was run over
+both changed files as a minimal sanity pass beyond what a read-through
+alone gives — not a substitute for `cargo check`, just a floor.
+
+**Deliberately NOT touched this session:** `PoCreate`/`PoCancel`/
+`PoEligibility`/`PoQuote`/`PoRecipientAccount` for Paystack (each would
+need its own, separately-confirmed Paystack API shape — genuinely out
+of this leaf's named scope, not an oversight); the `PayoutMethodData`
+NUBAN-shape gap itself (flagged above, same open design question
+Korapay's own a-1-iii already raised — a future session's job to
+resolve for both connectors together, not solved twice independently);
+`/transfer/finalize_transfer` (flagged above, a real product decision
+— disable OTP account-side, or build finalize support — not this
+leaf's call to make).
+
+**Next real task, per the reading order already on record:** **a-3**
+(JuicyWay, starting again at its own `-i`), per Task 77's finalized
+one-engine ideology's reading order.
+
+## Patch Handoff — Task 77/a-2-iii (Paystack payout flows)
+
+Per the Patch Handoff Convention above: this session's work is
+committed locally on branch `task77/a2iii-paystack-payout-flows`
+(based on `origin/main` at `e4ce02b06`, re-confirmed via `git fetch
+origin` immediately before generating the patch — no drift, so this
+is a fresh combined patch, not amending anything unapplied). A patch
+file has been generated and handed over alongside this entry, per
+rule 5 (mandatory, every time) — not just described in prose.
+
+**Exact commands, copy-paste as-is, filling in only the patch
+filename actually handed over:**
+```
+cd ~/B-Pay-backend
 git am ~/storage/downloads/<patch-file-name>
 git push
 ```

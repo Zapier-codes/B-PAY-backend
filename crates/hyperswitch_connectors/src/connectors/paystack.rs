@@ -31,6 +31,11 @@ use hyperswitch_domain_models::{
         RefundSyncRouterData, RefundsRouterData,
     },
 };
+#[cfg(feature = "payouts")]
+use hyperswitch_domain_models::{
+    router_flow_types::{PoFulfill, PoRecipient, PoSync},
+    types::{PayoutsData, PayoutsResponseData, PayoutsRouterData},
+};
 use hyperswitch_interfaces::{
     api::{
         self, ConnectorCommon, ConnectorCommonExt, ConnectorIntegration, ConnectorSpecifications,
@@ -72,6 +77,30 @@ impl api::Refund for Paystack {}
 impl api::RefundExecute for Paystack {}
 impl api::RefundSync for Paystack {}
 impl api::PaymentToken for Paystack {}
+
+// Task 77/a-2-iii — Paystack payout flows. `api::Payouts` itself (the
+// supertrait requiring every payout flow at once) is only real when the
+// `payouts` cargo feature is on -- see hyperswitch_interfaces::api::payouts,
+// same split Korapay's own connector (Task 77/a-1-iii) and Wise's already
+// follow. `PayoutRecipient`/`PayoutFulfill`/`PayoutSync` are implemented
+// for real below, per Task 51/c's already-confirmed request/response
+// shapes -- Paystack's real API needs a recipient created first (unlike
+// Korapay's single-call disburse), so `PayoutRecipient` is real here where
+// Korapay's connector correctly leaves it on this crate's default no-op.
+// Create/Cancel/Eligibility/Quote/RecipientAccount are deliberately left on
+// this crate's own `default_imp_for_payouts_*!` macros (Paystack was
+// removed ONLY from the recipient/fulfill/retrieve macro lists in
+// default_implementations.rs) -- each would need its own, separately-
+// confirmed Paystack API shape before being built for real, same
+// "confirm before wiring" posture as the rest of this connector and
+// Korapay's.
+impl api::Payouts for Paystack {}
+#[cfg(feature = "payouts")]
+impl api::PayoutRecipient for Paystack {}
+#[cfg(feature = "payouts")]
+impl api::PayoutFulfill for Paystack {}
+#[cfg(feature = "payouts")]
+impl api::PayoutSync for Paystack {}
 
 impl ConnectorIntegration<PaymentMethodToken, PaymentMethodTokenizationData, PaymentsResponseData>
     for Paystack
@@ -561,6 +590,275 @@ impl ConnectorIntegration<RSync, RefundsData, RefundsResponseData> for Paystack 
         let response: paystack::PaystackRefundsResponse = res
             .response
             .parse_struct("paystack RefundSyncResponse")
+            .change_context(errors::ConnectorError::ResponseDeserializationFailed)?;
+        event_builder.map(|i| i.set_response_body(&response));
+        router_env::logger::info!(connector_response=?response);
+        RouterData::try_from(ResponseRouterData {
+            response,
+            data: data.clone(),
+            http_code: res.status_code,
+        })
+    }
+
+    fn get_error_response(
+        &self,
+        res: Response,
+        event_builder: Option<&mut ConnectorEvent>,
+    ) -> CustomResult<ErrorResponse, errors::ConnectorError> {
+        self.build_error_response(res, event_builder)
+    }
+}
+
+// Task 77/a-2-iii — Paystack transfer-recipient creation. Endpoint and
+// request shape ported directly from this repo's own
+// legacy-node/providers/paystack.js#createTransferRecipient(), a real,
+// already primary-source-confirmed Task 51/c fix. Runs before
+// `PoFulfill` in the payout flow chain -- its response's
+// `recipient_code` is read back by `PoFulfill` below via
+// `connector_payout_id` (see paystack/transformers.rs's own file-level
+// comment on this section for the full chain).
+#[cfg(feature = "payouts")]
+impl ConnectorIntegration<PoRecipient, PayoutsData, PayoutsResponseData> for Paystack {
+    fn get_headers(
+        &self,
+        req: &PayoutsRouterData<PoRecipient>,
+        connectors: &Connectors,
+    ) -> CustomResult<Vec<(String, hyperswitch_masking::Maskable<String>)>, errors::ConnectorError>
+    {
+        self.build_headers(req, connectors)
+    }
+
+    fn get_content_type(&self) -> &'static str {
+        self.common_get_content_type()
+    }
+
+    fn get_url(
+        &self,
+        _req: &PayoutsRouterData<PoRecipient>,
+        connectors: &Connectors,
+    ) -> CustomResult<String, errors::ConnectorError> {
+        Ok(format!("{}/transferrecipient", self.base_url(connectors)))
+    }
+
+    fn get_request_body(
+        &self,
+        req: &PayoutsRouterData<PoRecipient>,
+        _connectors: &Connectors,
+    ) -> CustomResult<RequestContent, errors::ConnectorError> {
+        let connector_req = paystack::PaystackRecipientCreateRequest::try_from(req)?;
+        Ok(RequestContent::Json(Box::new(connector_req)))
+    }
+
+    fn build_request(
+        &self,
+        req: &PayoutsRouterData<PoRecipient>,
+        connectors: &Connectors,
+    ) -> CustomResult<Option<Request>, errors::ConnectorError> {
+        Ok(Some(
+            RequestBuilder::new()
+                .method(Method::Post)
+                .url(&types::PayoutRecipientType::get_url(self, req, connectors)?)
+                .attach_default_headers()
+                .headers(types::PayoutRecipientType::get_headers(
+                    self, req, connectors,
+                )?)
+                .set_body(types::PayoutRecipientType::get_request_body(
+                    self, req, connectors,
+                )?)
+                .build(),
+        ))
+    }
+
+    fn handle_response(
+        &self,
+        data: &PayoutsRouterData<PoRecipient>,
+        event_builder: Option<&mut ConnectorEvent>,
+        res: Response,
+    ) -> CustomResult<PayoutsRouterData<PoRecipient>, errors::ConnectorError> {
+        let response: paystack::PaystackRecipientResponse = res
+            .response
+            .parse_struct("Paystack PayoutRecipientResponse")
+            .change_context(errors::ConnectorError::ResponseDeserializationFailed)?;
+        event_builder.map(|i| i.set_response_body(&response));
+        router_env::logger::info!(connector_response=?response);
+        RouterData::try_from(ResponseRouterData {
+            response,
+            data: data.clone(),
+            http_code: res.status_code,
+        })
+    }
+
+    fn get_error_response(
+        &self,
+        res: Response,
+        event_builder: Option<&mut ConnectorEvent>,
+    ) -> CustomResult<ErrorResponse, errors::ConnectorError> {
+        self.build_error_response(res, event_builder)
+    }
+}
+
+// Task 77/a-2-iii — Paystack payout fulfillment (`POST /transfer`).
+// Request shape, and the two-level response shape, ported directly from
+// legacy-node/providers/paystack.js#processPayout() (Task 51/c). See
+// paystack/transformers.rs's own `PaystackPayoutTransactionStatus::Otp`
+// comment for a real, flagged caveat this leaf could NOT close: an
+// `"otp"` transfer needs a human to finalize it with a one-time code,
+// which this connector (like the legacy JS it's ported from) has no way
+// to supply.
+#[cfg(feature = "payouts")]
+impl ConnectorIntegration<PoFulfill, PayoutsData, PayoutsResponseData> for Paystack {
+    fn get_headers(
+        &self,
+        req: &PayoutsRouterData<PoFulfill>,
+        connectors: &Connectors,
+    ) -> CustomResult<Vec<(String, hyperswitch_masking::Maskable<String>)>, errors::ConnectorError>
+    {
+        self.build_headers(req, connectors)
+    }
+
+    fn get_content_type(&self) -> &'static str {
+        self.common_get_content_type()
+    }
+
+    fn get_url(
+        &self,
+        _req: &PayoutsRouterData<PoFulfill>,
+        connectors: &Connectors,
+    ) -> CustomResult<String, errors::ConnectorError> {
+        Ok(format!("{}/transfer", self.base_url(connectors)))
+    }
+
+    fn get_request_body(
+        &self,
+        req: &PayoutsRouterData<PoFulfill>,
+        _connectors: &Connectors,
+    ) -> CustomResult<RequestContent, errors::ConnectorError> {
+        let amount = utils::convert_amount(
+            self.amount_converter,
+            req.request.minor_amount,
+            req.request.destination_currency,
+        )?;
+        let connector_router_data = paystack::PaystackRouterData::from((amount, req));
+        let connector_req =
+            paystack::PaystackPayoutFulfillRequest::try_from(&connector_router_data)?;
+        Ok(RequestContent::Json(Box::new(connector_req)))
+    }
+
+    fn build_request(
+        &self,
+        req: &PayoutsRouterData<PoFulfill>,
+        connectors: &Connectors,
+    ) -> CustomResult<Option<Request>, errors::ConnectorError> {
+        Ok(Some(
+            RequestBuilder::new()
+                .method(Method::Post)
+                .url(&types::PayoutFulfillType::get_url(self, req, connectors)?)
+                .attach_default_headers()
+                .headers(types::PayoutFulfillType::get_headers(
+                    self, req, connectors,
+                )?)
+                .set_body(types::PayoutFulfillType::get_request_body(
+                    self, req, connectors,
+                )?)
+                .build(),
+        ))
+    }
+
+    fn handle_response(
+        &self,
+        data: &PayoutsRouterData<PoFulfill>,
+        event_builder: Option<&mut ConnectorEvent>,
+        res: Response,
+    ) -> CustomResult<PayoutsRouterData<PoFulfill>, errors::ConnectorError> {
+        let response: paystack::PaystackPayoutResponse = res
+            .response
+            .parse_struct("Paystack PayoutFulfillResponse")
+            .change_context(errors::ConnectorError::ResponseDeserializationFailed)?;
+        event_builder.map(|i| i.set_response_body(&response));
+        router_env::logger::info!(connector_response=?response);
+        RouterData::try_from(ResponseRouterData {
+            response,
+            data: data.clone(),
+            http_code: res.status_code,
+        })
+    }
+
+    fn get_error_response(
+        &self,
+        res: Response,
+        event_builder: Option<&mut ConnectorEvent>,
+    ) -> CustomResult<ErrorResponse, errors::ConnectorError> {
+        self.build_error_response(res, event_builder)
+    }
+}
+
+// Task 77/a-2-iii — Paystack payout verification
+// (`GET /transfer/verify/{reference}`), confirmed directly against
+// paystack.com/docs/transfers/bulk-transfers/'s "Verify via polling"
+// section (Task 51/c) -- unlike Korapay's own PoSync endpoint (Task
+// 77/a-1-iii), which carries a weaker, pattern-matched confidence
+// caveat, this path is a direct, named citation, not inferred from a
+// sibling endpoint.
+#[cfg(feature = "payouts")]
+impl ConnectorIntegration<PoSync, PayoutsData, PayoutsResponseData> for Paystack {
+    fn get_headers(
+        &self,
+        req: &PayoutsRouterData<PoSync>,
+        connectors: &Connectors,
+    ) -> CustomResult<Vec<(String, hyperswitch_masking::Maskable<String>)>, errors::ConnectorError>
+    {
+        self.build_headers(req, connectors)
+    }
+
+    fn get_content_type(&self) -> &'static str {
+        self.common_get_content_type()
+    }
+
+    fn get_url(
+        &self,
+        req: &PayoutsRouterData<PoSync>,
+        connectors: &Connectors,
+    ) -> CustomResult<String, errors::ConnectorError> {
+        // Left by `PoFulfill`'s own response, see that impl's own
+        // handler and paystack/transformers.rs's file-level comment on
+        // this section for the full connector_payout_id hand-off chain.
+        let reference = req.request.connector_payout_id.clone().ok_or(
+            errors::ConnectorError::MissingRequiredField {
+                field_name: "connector_payout_id (Paystack transfer reference from PoFulfill)"
+                    .into(),
+            },
+        )?;
+        Ok(format!(
+            "{}/transfer/verify/{}",
+            self.base_url(connectors),
+            reference
+        ))
+    }
+
+    fn build_request(
+        &self,
+        req: &PayoutsRouterData<PoSync>,
+        connectors: &Connectors,
+    ) -> CustomResult<Option<Request>, errors::ConnectorError> {
+        Ok(Some(
+            RequestBuilder::new()
+                .method(Method::Get)
+                .url(&types::PayoutSyncType::get_url(self, req, connectors)?)
+                .attach_default_headers()
+                .headers(types::PayoutSyncType::get_headers(self, req, connectors)?)
+                .build(),
+        ))
+    }
+
+    fn handle_response(
+        &self,
+        data: &PayoutsRouterData<PoSync>,
+        event_builder: Option<&mut ConnectorEvent>,
+        res: Response,
+    ) -> CustomResult<PayoutsRouterData<PoSync>, errors::ConnectorError> {
+        let response: paystack::PaystackPayoutResponse = res
+            .response
+            .parse_struct("Paystack PayoutSyncResponse")
             .change_context(errors::ConnectorError::ResponseDeserializationFailed)?;
         event_builder.map(|i| i.set_response_body(&response));
         router_env::logger::info!(connector_response=?response);

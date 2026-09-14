@@ -63,6 +63,7 @@ pub struct Connectors {
     pub fiservemea: ConnectorParams,
     pub fiuu: ConnectorParamsWithThreeUrls,
     pub flexiti: ConnectorParams,
+    pub flutterwave: ConnectorParams,
     pub forte: ConnectorParams,
     pub getnet: ConnectorParams,
     pub gigadat: ConnectorParams,

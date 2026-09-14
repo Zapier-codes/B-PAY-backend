@@ -9217,3 +9217,7 @@ api_key = "API Key"
 [juicyway]
 [juicyway.connector_auth.HeaderKey]
 api_key = "API Key"
+
+[flutterwave]
+[flutterwave.connector_auth.HeaderKey]
+api_key = "API Key"

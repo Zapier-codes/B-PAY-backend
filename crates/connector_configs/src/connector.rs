@@ -329,6 +329,7 @@ pub struct ConnectorConfig {
     pub fiservemea: Option<ConnectorTomlConfig>,
     pub fiuu: Option<ConnectorTomlConfig>,
     pub flexiti: Option<ConnectorTomlConfig>,
+    pub flutterwave: Option<ConnectorTomlConfig>,
     pub forte: Option<ConnectorTomlConfig>,
     pub getnet: Option<ConnectorTomlConfig>,
     pub gigadat: Option<ConnectorTomlConfig>,

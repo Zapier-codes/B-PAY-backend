@@ -136,6 +136,7 @@ mod trustpay;
 mod trustpayments;
 mod tsys;
 mod unified_authentication_service;
+mod flutterwave;
 mod utils;
 mod vgs;
 mod volt;

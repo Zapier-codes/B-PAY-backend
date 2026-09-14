@@ -113,6 +113,7 @@ pub enum Connector {
     Fiservcommercehub,
     Fiuu,
     Flexiti,
+    Flutterwave,
     Forte,
     Getnet,
     Gigadat,

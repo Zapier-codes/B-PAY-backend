@@ -50,6 +50,7 @@ pub mod fiservcommercehub;
 pub mod fiservemea;
 pub mod fiuu;
 pub mod flexiti;
+pub mod flutterwave;
 pub mod forte;
 pub mod getnet;
 pub mod gigadat;
@@ -199,4 +200,5 @@ pub use self::{
     worldpay::Worldpay, worldpaymodular::Worldpaymodular, worldpayraft::Worldpayraft,
     worldpayvantiv::Worldpayvantiv, worldpayxml::Worldpayxml, xendit::Xendit, zen::Zen, zift::Zift,
     zsl::Zsl,
+ flutterwave::Flutterwave,
 };

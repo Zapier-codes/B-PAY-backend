@@ -106,6 +106,60 @@
 > task's own section. Nothing else in this file is required reading to
 > start work.**
 >
+> **⚪ NEWEST NEXT TASK (2026-09-14, session 6 — corrects a stale pointer:
+> the 🔴 box below was already superseded by commit `fa6b4d17b`
+> ("Task 73 -- scaffold Flutterwave connector crate") before this
+> session started, which this file's own top box never recorded):**
+> confirmed via `git log --oneline -1` that current `main` is
+> `fa6b4d17b`, not the JuicyWay-only state the 🔴 box below describes —
+> that commit added a full hand-wired Flutterwave connector (Authorize +
+> PSync), and its own commit message named two concrete not-yet-done
+> items: a `grep -rn Flutterwave crates/` sanity pass (to confirm no
+> registration point was silently skipped the way four already were,
+> caught and fixed by hand in that same commit), and payout/refund-id-
+> threading/webhook work left for later.
+>
+> **Did the sanity pass this session — real, confirmed gap found and
+> fixed, not just re-confirmed clean.** Diffed every file mentioning
+> `Korapay`/`korapay` against every file mentioning
+> `Flutterwave`/`flutterwave` under `crates/`. Every real registration
+> point (`connector_enums.rs`, `euclid/enums.rs`, `connector_mapping.rs`,
+> `connector_transformers.rs`, `router/src/connector.rs`,
+> `hyperswitch_connectors/src/connectors.rs`) already had Flutterwave
+> wired correctly — re-confirmed by direct `grep`, not assumed from the
+> commit message alone. **But `crates/router/tests/connectors/main.rs`
+> already declares `mod flutterwave;` (added in the same commit) with no
+> backing `flutterwave.rs` file ever created** — Korapay and JuicyWay
+> both have one, Flutterwave didn't. That's a missing source file behind
+> a live `mod` declaration, which breaks even a plain build of the test
+> binary, not something that only shows up under `cargo check`. Also
+> missing, same pattern as Korapay/JuicyWay: a `[flutterwave]` entry in
+> `crates/router/tests/connectors/sample_auth.toml`.
+>
+> **Fixed:** added `crates/router/tests/connectors/flutterwave.rs`,
+> mirroring `korapay.rs`'s own structure exactly (same
+> `ConnectorActions`/`utils::Connector` impl shape, same single
+> `should_authorize_payment` test, `#[ignore]`d pending a real sandbox
+> key — no manual-capture/void/refund boilerplate copied, since those
+> flows are explicit `NotImplemented` stubs on this connector per the
+> prior commit, same reasoning `korapay.rs`'s own comment already gives).
+> Added the matching `[flutterwave]` / `api_key="API Key"` block to
+> `sample_auth.toml`, directly above the existing `[korapay]` block.
+>
+> - Verification: no `rustc`/`cargo` in this environment (same wall
+>   every prior session has hit — `which rustc cargo` → nothing), so this
+>   is a direct-reading + pattern-mirroring check, not a compile check —
+>   flagged plainly per this file's own discipline, not overstated as
+>   "verified." A brace/paren balance read of the new file against
+>   `korapay.rs`'s own shape found no mismatch.
+>
+> **Next real task, unchanged from the 🔴 box below (still accurate):**
+> the per-call-site TTL/atomicity audit for the 63 Redis call sites
+> under `crates/router/src`, or `cargo check -p hyperswitch_connectors`/
+> `cargo test -p router --no-run` (to actually compile-check this new
+> test file and the Flutterwave connector for the first time) if a
+> working `rustc` ≥ 1.85 ever turns out to be available.
+>
 > **🔴 NEWEST NEXT TASK (2026-09-14, session 5 — closes the gap the 🟡
 > box below flagged as the one remaining unconfirmed envelope):**
 > fetched `docs.juicyway.com/payments/initialize-payment/cards`, which

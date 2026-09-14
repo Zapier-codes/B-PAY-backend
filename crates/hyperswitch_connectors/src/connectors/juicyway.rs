@@ -31,6 +31,11 @@ use hyperswitch_domain_models::{
         RefundsRouterData,
     },
 };
+#[cfg(feature = "payouts")]
+use hyperswitch_domain_models::{
+    router_flow_types::{PoFulfill, PoRecipient, PoSync},
+    types::{PayoutsData, PayoutsResponseData, PayoutsRouterData},
+};
 use hyperswitch_interfaces::{
     api::{
         self, ConnectorCommon, ConnectorCommonExt, ConnectorIntegration, ConnectorSpecifications,
@@ -42,6 +47,8 @@ use hyperswitch_interfaces::{
     types::{PaymentsAuthorizeType, PaymentsSyncType, Response},
     webhooks,
 };
+#[cfg(feature = "payouts")]
+use hyperswitch_interfaces::types::{PayoutFulfillType, PayoutRecipientType, PayoutSyncType};
 use hyperswitch_masking::{ExposeInterface, Mask, Maskable};
 use transformers as juicyway;
 
@@ -73,14 +80,34 @@ impl api::RefundExecute for Juicyway {}
 impl api::RefundSync for Juicyway {}
 impl api::PaymentToken for Juicyway {}
 
-// Task 77/a-3-i scope is collection only (Authorize/PSync/Capture/Void/
-// Execute/RSync), same boundary Korapay's a-1-ii-X drew before its own
-// a-1-iii payout leaf. JuicyWay's payout shape (beneficiary-first,
-// pin-gated — legacy-node/providers/juicyway.js#processPayout, Task 52)
-// is real and confirmed but genuinely out of this leaf's scope, not an
-// oversight — left on this crate's default no-op payout implementations,
-// same as every other collection-only connector in this file's history.
+// Task 77/a-3-iii — JuicyWay payout flows. `api::Payouts` itself (the
+// supertrait requiring every payout flow at once) is only real when the
+// `payouts` cargo feature is on -- see hyperswitch_interfaces::api::payouts,
+// same split every other payout-capable connector in this crate follows.
+//
+// JuicyWay's real shape (legacy-node/providers/juicyway.js#processPayout,
+// Task 52) needs a beneficiary created ahead of time -- it does NOT take
+// raw bank_code/account_number the way Korapay's single-call disburse
+// does -- so this is the same three-flow architecture Paystack's own
+// connector (Task 77/a-2-iii) already uses for the identical reason, not
+// a new pattern: `PayoutRecipient` creates the beneficiary,
+// `PayoutFulfill` sends the actual payout referencing it, `PayoutSync`
+// polls JuicyWay's own payout `id` (not the merchant reference -- see
+// juicyway/transformers.rs's own note on why, ported directly from
+// legacy-node's own verifyPayout() docblock). Create/Eligibility/Cancel/
+// Quote/RecipientAccount are deliberately left on this crate's own
+// `default_imp_for_payouts_*!` macros (JuicyWay was removed ONLY from
+// the recipient/fulfill/retrieve macro lists in
+// default_implementations.rs, same three Paystack was removed from) --
+// each would need its own, separately-confirmed JuicyWay API shape
+// before being built for real.
 impl api::Payouts for Juicyway {}
+#[cfg(feature = "payouts")]
+impl api::PayoutRecipient for Juicyway {}
+#[cfg(feature = "payouts")]
+impl api::PayoutFulfill for Juicyway {}
+#[cfg(feature = "payouts")]
+impl api::PayoutSync for Juicyway {}
 
 impl ConnectorIntegration<PaymentMethodToken, PaymentMethodTokenizationData, PaymentsResponseData>
     for Juicyway
@@ -462,6 +489,276 @@ impl ConnectorIntegration<RSync, RefundsData, RefundsResponseData> for Juicyway 
 }
 
 #[async_trait::async_trait]
+// Task 77/a-3-iii — JuicyWay beneficiary creation. Endpoint path is
+// explicitly UNCONFIRMED -- ported as-is from
+// legacy-node/providers/juicyway.js#createBeneficiary()'s own docblock
+// caveat ("the exact endpoint PATH is the one thing here that is NOT
+// confirmed"). Only the `bank_account` beneficiary type is buildable
+// here; `crypto_address`/`interac` are real per that same legacy method
+// but Hyperswitch's `PayoutMethodData` has no matching shape to build
+// them from (same discipline as juicyway/transformers.rs's own
+// `get_juicyway_payout_bank_account` note below).
+#[cfg(feature = "payouts")]
+impl ConnectorIntegration<PoRecipient, PayoutsData, PayoutsResponseData> for Juicyway {
+    fn get_headers(
+        &self,
+        req: &PayoutsRouterData<PoRecipient>,
+        connectors: &Connectors,
+    ) -> CustomResult<Vec<(String, Maskable<String>)>, errors::ConnectorError> {
+        self.build_headers(req, connectors)
+    }
+
+    fn get_content_type(&self) -> &'static str {
+        self.common_get_content_type()
+    }
+
+    fn get_url(
+        &self,
+        _req: &PayoutsRouterData<PoRecipient>,
+        connectors: &Connectors,
+    ) -> CustomResult<String, errors::ConnectorError> {
+        Ok(format!("{}beneficiaries", self.base_url(connectors)))
+    }
+
+    fn get_request_body(
+        &self,
+        req: &PayoutsRouterData<PoRecipient>,
+        _connectors: &Connectors,
+    ) -> CustomResult<RequestContent, errors::ConnectorError> {
+        let connector_req = juicyway::JuicywayCreateBeneficiaryRequest::try_from(req)?;
+        Ok(RequestContent::Json(Box::new(connector_req)))
+    }
+
+    fn build_request(
+        &self,
+        req: &PayoutsRouterData<PoRecipient>,
+        connectors: &Connectors,
+    ) -> CustomResult<Option<Request>, errors::ConnectorError> {
+        Ok(Some(
+            RequestBuilder::new()
+                .method(Method::Post)
+                .url(&PayoutRecipientType::get_url(self, req, connectors)?)
+                .attach_default_headers()
+                .headers(PayoutRecipientType::get_headers(self, req, connectors)?)
+                .set_body(PayoutRecipientType::get_request_body(
+                    self, req, connectors,
+                )?)
+                .build(),
+        ))
+    }
+
+    fn handle_response(
+        &self,
+        data: &PayoutsRouterData<PoRecipient>,
+        event_builder: Option<&mut ConnectorEvent>,
+        res: Response,
+    ) -> CustomResult<PayoutsRouterData<PoRecipient>, errors::ConnectorError> {
+        let response: juicyway::JuicywayBeneficiaryResponse = res
+            .response
+            .parse_struct("Juicyway PayoutRecipientResponse")
+            .change_context(errors::ConnectorError::ResponseDeserializationFailed)?;
+        event_builder.map(|i| i.set_response_body(&response));
+        router_env::logger::info!(connector_response=?response);
+        RouterData::try_from(ResponseRouterData {
+            response,
+            data: data.clone(),
+            http_code: res.status_code,
+        })
+    }
+
+    fn get_error_response(
+        &self,
+        res: Response,
+        event_builder: Option<&mut ConnectorEvent>,
+    ) -> CustomResult<ErrorResponse, errors::ConnectorError> {
+        self.build_error_response(res, event_builder)
+    }
+}
+
+// Task 77/a-3-iii — JuicyWay payout fulfillment (`POST /payouts`).
+// Request shape ported directly from
+// legacy-node/providers/juicyway.js#processPayout() (Task 52/a-1,
+// confirmed against docs.juicyway.com/reference/payouts/initiate-a-payout.md
+// and the initiate-bank-transfer.md worked examples). See
+// juicyway/transformers.rs's own note on the `pin` field for a real,
+// flagged gap this leaf could NOT close cleanly: JuicyWay requires a
+// per-transfer PIN that has no matching field anywhere on Hyperswitch's
+// `PayoutsData`.
+#[cfg(feature = "payouts")]
+impl ConnectorIntegration<PoFulfill, PayoutsData, PayoutsResponseData> for Juicyway {
+    fn get_headers(
+        &self,
+        req: &PayoutsRouterData<PoFulfill>,
+        connectors: &Connectors,
+    ) -> CustomResult<Vec<(String, Maskable<String>)>, errors::ConnectorError> {
+        self.build_headers(req, connectors)
+    }
+
+    fn get_content_type(&self) -> &'static str {
+        self.common_get_content_type()
+    }
+
+    fn get_url(
+        &self,
+        _req: &PayoutsRouterData<PoFulfill>,
+        connectors: &Connectors,
+    ) -> CustomResult<String, errors::ConnectorError> {
+        Ok(format!("{}payouts", self.base_url(connectors)))
+    }
+
+    fn get_request_body(
+        &self,
+        req: &PayoutsRouterData<PoFulfill>,
+        _connectors: &Connectors,
+    ) -> CustomResult<RequestContent, errors::ConnectorError> {
+        // Confirmed (docs.juicyway.com/reference/payouts/initiate-a-payout.md):
+        // payout amount is minor units, NOT run through this connector's
+        // FloatMajorUnit-style `convert_amount` helper -- callers pass
+        // minor units directly, same rule Task 49/a already established
+        // for collection and legacy-node's own processPayout() already
+        // follows (it forwards `data.amount` unconverted).
+        let connector_router_data =
+            juicyway::JuicywayRouterData::from((req.request.minor_amount, req));
+        let connector_req =
+            juicyway::JuicywayPayoutFulfillRequest::try_from(&connector_router_data)?;
+        Ok(RequestContent::Json(Box::new(connector_req)))
+    }
+
+    fn build_request(
+        &self,
+        req: &PayoutsRouterData<PoFulfill>,
+        connectors: &Connectors,
+    ) -> CustomResult<Option<Request>, errors::ConnectorError> {
+        Ok(Some(
+            RequestBuilder::new()
+                .method(Method::Post)
+                .url(&PayoutFulfillType::get_url(self, req, connectors)?)
+                .attach_default_headers()
+                .headers(PayoutFulfillType::get_headers(self, req, connectors)?)
+                .set_body(PayoutFulfillType::get_request_body(
+                    self, req, connectors,
+                )?)
+                .build(),
+        ))
+    }
+
+    fn handle_response(
+        &self,
+        data: &PayoutsRouterData<PoFulfill>,
+        event_builder: Option<&mut ConnectorEvent>,
+        res: Response,
+    ) -> CustomResult<PayoutsRouterData<PoFulfill>, errors::ConnectorError> {
+        let response: juicyway::JuicywayPayoutResponse = res
+            .response
+            .parse_struct("Juicyway PayoutFulfillResponse")
+            .change_context(errors::ConnectorError::ResponseDeserializationFailed)?;
+        event_builder.map(|i| i.set_response_body(&response));
+        router_env::logger::info!(connector_response=?response);
+        RouterData::try_from(ResponseRouterData {
+            response,
+            data: data.clone(),
+            http_code: res.status_code,
+        })
+    }
+
+    fn get_error_response(
+        &self,
+        res: Response,
+        event_builder: Option<&mut ConnectorEvent>,
+    ) -> CustomResult<ErrorResponse, errors::ConnectorError> {
+        self.build_error_response(res, event_builder)
+    }
+}
+
+// Task 77/a-3-iii — JuicyWay payout verification (`GET /payouts/{id}`).
+// Endpoint confidence is explicitly weaker than Fulfill's -- see
+// juicyway/transformers.rs's own note, ported directly from
+// legacy-node/providers/juicyway.js#verifyPayout()'s own docblock: this
+// path was located via docs.juicyway.com/llms.txt as a sibling of the
+// confirmed POST /payouts, not independently confirmed for GET. Same
+// "verify against a live sandbox call before production trust" caveat
+// as Korapay's own PoSync in this crate.
+//
+// Takes JuicyWay's own `id` (left in `connector_payout_id` by
+// `PoFulfill`'s own response below), NOT the merchant reference --
+// unlike Korapay/Paystack's PoSync, which both key off a reference. See
+// legacy-node's own verifyPayout() docblock for why: JuicyWay's
+// processPayout() worked-example response has no `reference` field at
+// all, only its own `id`.
+#[cfg(feature = "payouts")]
+impl ConnectorIntegration<PoSync, PayoutsData, PayoutsResponseData> for Juicyway {
+    fn get_headers(
+        &self,
+        req: &PayoutsRouterData<PoSync>,
+        connectors: &Connectors,
+    ) -> CustomResult<Vec<(String, Maskable<String>)>, errors::ConnectorError> {
+        self.build_headers(req, connectors)
+    }
+
+    fn get_content_type(&self) -> &'static str {
+        self.common_get_content_type()
+    }
+
+    fn get_url(
+        &self,
+        req: &PayoutsRouterData<PoSync>,
+        connectors: &Connectors,
+    ) -> CustomResult<String, errors::ConnectorError> {
+        let connector_payout_id = req.request.connector_payout_id.clone().ok_or(
+            errors::ConnectorError::MissingRequiredField {
+                field_name: "connector_payout_id (Juicyway payout id from PoFulfill)".into(),
+            },
+        )?;
+        Ok(format!(
+            "{}payouts/{}",
+            self.base_url(connectors),
+            connector_payout_id
+        ))
+    }
+
+    fn build_request(
+        &self,
+        req: &PayoutsRouterData<PoSync>,
+        connectors: &Connectors,
+    ) -> CustomResult<Option<Request>, errors::ConnectorError> {
+        Ok(Some(
+            RequestBuilder::new()
+                .method(Method::Get)
+                .url(&PayoutSyncType::get_url(self, req, connectors)?)
+                .attach_default_headers()
+                .headers(PayoutSyncType::get_headers(self, req, connectors)?)
+                .build(),
+        ))
+    }
+
+    fn handle_response(
+        &self,
+        data: &PayoutsRouterData<PoSync>,
+        event_builder: Option<&mut ConnectorEvent>,
+        res: Response,
+    ) -> CustomResult<PayoutsRouterData<PoSync>, errors::ConnectorError> {
+        let response: juicyway::JuicywayPayoutResponse = res
+            .response
+            .parse_struct("Juicyway PayoutSyncResponse")
+            .change_context(errors::ConnectorError::ResponseDeserializationFailed)?;
+        event_builder.map(|i| i.set_response_body(&response));
+        router_env::logger::info!(connector_response=?response);
+        RouterData::try_from(ResponseRouterData {
+            response,
+            data: data.clone(),
+            http_code: res.status_code,
+        })
+    }
+
+    fn get_error_response(
+        &self,
+        res: Response,
+        event_builder: Option<&mut ConnectorEvent>,
+    ) -> CustomResult<ErrorResponse, errors::ConnectorError> {
+        self.build_error_response(res, event_builder)
+    }
+}
+
 impl webhooks::IncomingWebhook for Juicyway {
     // JuicyWay's webhook checksum scheme (checksum travels INSIDE the
     // JSON body, keyed by the merchant's separate "business ID", over an

@@ -106,6 +106,53 @@
 > task's own section. Nothing else in this file is required reading to
 > start work.**
 >
+> **🟣 NEWEST NEXT TASK (2026-09-14, session 8 — a different open
+> thread than the 🟤 box below, not a correction of it):** the 🟤 box's
+> own PgKvStore/Finding #17 thread is still exactly where it left off,
+> untouched this session. This session picked up the OTHER real open
+> thread instead, per direct product-owner steer: Task 73's own
+> Flutterwave connector is not complete, and Flutterwave itself is only
+> the third of the ten legacy providers scaffolded (Korapay, JuicyWay,
+> Flutterwave) — six (Remita, PaymentPoint, `telcos.opik.net`,
+> DodoPayments, Xixapay, Prestmit) have no connector crate at all yet.
+>
+> **Done this session:** Flutterwave `PoFulfill`/`PoSync` (search "Task
+> 73 follow-up -- payout flows" below for the full entry) — the payout
+> half of `fa6b4d17b`'s own explicit not-yet-done list. Ported directly
+> from `legacy-node/providers/flutterwave.js#processPayout()`/
+> `verifyPayout()`: a flat single-call `/transfers` disburse (unlike
+> Korapay's nested `destination` shape), synced by Flutterwave's own
+> internal numeric id (unlike Korapay's reference-based sync — no
+> reference-based single-transfer lookup exists on Flutterwave's side,
+> confirmed in the legacy JS's own docblock). Same NUBAN/bank-code
+> `PayoutMethodData` stopgap Korapay/Paystack/JuicyWay already carry.
+> Not compiled — no working `rustc`/`cargo` this session either, same
+> wall as every prior session; reviewed by reading plus a brace/paren
+> balance check.
+>
+> **Not done this session, genuinely still open, in order of what a
+> future session should reach for next:**
+> 1. **Flutterwave Refund id-threading.** `fa6b4d17b`'s own note: the
+>    real endpoint (`POST /v3/transactions/:id/refund`) is confirmed,
+>    but it needs Flutterwave's own numeric id already on hand from a
+>    prior PSync/webhook call — Authorize's own response never returns
+>    it. Not attempted this session.
+> 2. **Flutterwave webhook signature verification.** Real, working
+>    HMAC-adjacent logic already exists in
+>    `legacy-node/providers/flutterwave.js#verifyWebhookSignature`
+>    (plain `verif-hash` shared-secret comparison) — not ported to
+>    `IncomingWebhook` in either this session or `fa6b4d17b`.
+> 3. **Remita (a-5 in Task 77's own provider split, search "a-5.
+>    Remita")** is the next provider with no connector crate at all —
+>    reference material already exists at Task 49/b and Task 50 (the
+>    Accept Online Payments / Checkout Solutions surface is the
+>    recommended target per Task 50/c, not the classic RRR flow, whose
+>    base URL/auth scheme is still unresolved per that same task).
+> 4. The five net-new providers (PaymentPoint, `telcos.opik.net`,
+>    DodoPayments, Xixapay, Prestmit) after Remita — each has a full
+>    discovery audit already on file (Task 0/a-8, a-10, a-4, a-7, a-9
+>    respectively) but no connector crate yet.
+>
 > **🟤 NEWEST NEXT TASK (2026-09-14, session 7 — corrects a stale
 > pointer again, same class of correction session 6 made below, but a
 > different miss): every box below this one keeps repeating "next real
@@ -25433,3 +25480,104 @@ cd ~/B-Pay-backend
 git am ~/storage/downloads/<patch-file-name>
 git push
 ```
+
+---
+
+## Task 73 follow-up — Flutterwave payout flows (PoFulfill/PoSync) (2026-09-14, session 8)
+
+**Scope, and why this thread over the PgKvStore one:** the 🟤 NEXT TASK
+box above (PgKvStore Finding #17 / `ephemeral_key.rs` wiring) was the
+most-recently-stacked pointer when this session started, but the
+product owner steered this session toward a different, also-real open
+thread instead: Flutterwave's connector (`fa6b4d17b`, `94e74ce08`) is
+not complete, and Flutterwave is only the third of ten legacy providers
+scaffolded at all. Both threads are genuinely open; this session closed
+one item on the connector-scaffolding thread specifically, per that
+direct instruction — see the 🟣 box at the top of this file for the
+full "what's still open" list on both threads.
+
+**Built:** `crates/hyperswitch_connectors/src/connectors/flutterwave.rs`
++ `flutterwave/transformers.rs` — `PoFulfill`/`PoSync`, the payout half
+`fa6b4d17b`'s own commit message named as not-yet-done. Ported directly
+from this repo's own
+`legacy-node/providers/flutterwave.js#processPayout()`/`verifyPayout()`
+(Task 52/d-2a):
+
+- **PoFulfill → `POST /transfers`.** Flat top-level request
+  (`account_bank`/`account_number`/`amount`/`currency`/`narration`/
+  `reference`) — confirmed real difference from Korapay's own connector
+  in this crate, whose payout destination nests under a `destination`
+  object; not an inconsistency, the two providers' real APIs are just
+  shaped differently, same note the legacy JS file's own comment
+  already makes. Same base/major-unit amount rule as Flutterwave's own
+  collection flow (`convert_amount`, not a separate payout-specific
+  rule — confirmed by legacy-node's own `processPayout()` reusing the
+  identical `convertAmountForProvider()` call).
+- **Bank-account field mapping — same real, unresolved gap already on
+  record for Korapay/Paystack/JuicyWay, not independently re-solved
+  here.** Hyperswitch's `PayoutMethodData` has no NUBAN/bank-code-shaped
+  variant; `BankTransfer::Ach`'s two plain string fields are reused as a
+  stopgap (`bank_routing_number` → Flutterwave's own bank code,
+  `bank_account_number` → account number). Flagged in code exactly like
+  the other three connectors' own versions of this same gap — do not
+  trust in production before a live sandbox call confirms it round-trips.
+- **PoSync → `GET /transfers/{id}`.** Keyed on Flutterwave's own
+  internal numeric transfer id, **not** a merchant reference — a real,
+  confirmed asymmetry from Korapay's own PoSync in this crate.
+  `verifyPayout()`'s own docblock in the legacy JS states plainly: no
+  reference-based single-transfer lookup exists on Flutterwave's side,
+  only the id-based path. `PoFulfill`'s own response therefore
+  overwrites `connector_payout_id` with Flutterwave's own `data.id`
+  (not the merchant reference this connector generated), so `PoSync`
+  has the right value to poll against.
+- **Status vocabulary (`NEW`/`SUCCESSFUL`/`FAILED`)** matched via a
+  plain case-insensitive string comparison rather than a strict serde
+  enum — deliberately mirroring the legacy JS's own defensive
+  `.toUpperCase() === 'FAILED'` comparison (that comment itself implies
+  the legacy author didn't fully trust the API's own casing), rather
+  than risking a hard deserialization failure on an unexpected case
+  Korapay's own strict-enum approach would produce.
+
+**`default_implementations.rs`:** removed Flutterwave from the
+`retrieve`/`fulfill` default no-op payout macros only — same two
+Korapay was removed from, for the same reason (a single-call disburse,
+no beneficiary-creation step, so `Recipient` correctly stays on the
+default macro — unlike Paystack/JuicyWay's beneficiary-first shape,
+which needed `recipient` removed too).
+
+**Verification:** no working `rustc`/`cargo` this session (same wall
+every prior session in this file has hit — `which rustc cargo` →
+nothing) — reviewed by reading against Korapay's own already-"working"
+payout pattern in this crate, plus a brace/paren balance check over
+both changed `.rs` files. Not compile-checked.
+
+**Deliberately NOT done this session, same list `fa6b4d17b` already
+named plus one addition:**
+- Refund's id-threading (endpoint confirmed — `POST
+  /v3/transactions/:id/refund` — but needs Flutterwave's own numeric id
+  from a prior PSync/webhook call, which nothing in this connector
+  threads through yet).
+- Webhook signature verification (`legacy-node/providers/
+  flutterwave.js#verifyWebhookSignature`'s real `verif-hash`
+  shared-secret comparison — not ported).
+- The `grep -rn Flutterwave crates/` sanity pass style of check
+  `94e74ce08` already did for the Authorize/PSync leaf was **not**
+  independently repeated for this leaf's own registration surface —
+  `PoFulfill`/`PoSync` don't touch any of the ~25 registration points a
+  brand-new connector needs (those all landed with `fa6b4d17b`), only
+  the two payout default-macro lists and the connector's own two new
+  trait impls, so the risk surface this leaf could have silently missed
+  is much smaller — but it's a real, not fully closed, gap, not a claim
+  of certainty.
+
+**Next real task on this thread (per the 🟣 box at the top of this
+file):** Refund id-threading or webhook verification to finish
+Flutterwave, or Remita (Task 77's own a-5) as the next unscaffolded
+provider — either is a legitimate pick, not a required order, per this
+file's own "sessions should not jump ahead without a reason recorded"
+convention, since both are real and independent of each other.
+
+**Per this repo's own rule: not pushed to `main`, not merged** — work
+stays on this session's own branch (`task73-flutterwave-payouts`), a
+patch was generated and handed to the product owner directly for their
+own `git am` + push.

@@ -1,4 +1,8 @@
+#[cfg(feature = "payouts")]
+use api_models::payouts::{BankTransfer, PayoutMethodData};
 use common_enums::{enums, AttemptStatus};
+#[cfg(feature = "payouts")]
+use common_enums::PayoutStatus;
 use common_utils::{pii::Email, types::FloatMajorUnit};
 use hyperswitch_domain_models::{
     payment_method_data::PaymentMethodData,
@@ -7,10 +11,16 @@ use hyperswitch_domain_models::{
     router_response_types::{PaymentsResponseData, RedirectForm},
     types::PaymentsAuthorizeRouterData,
 };
+#[cfg(feature = "payouts")]
+use hyperswitch_domain_models::types::{PayoutsResponseData, PayoutsRouterData};
 use hyperswitch_interfaces::errors;
 use hyperswitch_masking::Secret;
+#[cfg(feature = "payouts")]
+use hyperswitch_masking::ExposeInterface;
 use serde::{Deserialize, Serialize};
 
+#[cfg(feature = "payouts")]
+use crate::types::PayoutsResponseRouterData;
 use crate::{
     types::ResponseRouterData,
     utils::{PaymentsAuthorizeRequestData, RouterData as OtherRouterData},
@@ -324,4 +334,205 @@ impl<F, T> TryFrom<ResponseRouterData<F, FlutterwaveVerifyResponse, T, PaymentsR
 pub struct FlutterwaveErrorResponse {
     pub status: String,
     pub message: String,
+}
+
+// ---------------------------------------------------------------------
+// Payout Fulfill — POST /transfers
+// Payout Sync    — GET  /transfers/{id}
+// ---------------------------------------------------------------------
+//
+// Request shape ported directly from this repo's own
+// legacy-node/providers/flutterwave.js#processPayout() (Task 52/d-2a) --
+// confirmed there against developer.flutterwave.com/reference/endpoints/transfers
+// and the Transfers overview guide. FLAT top-level fields -- a real,
+// confirmed difference from Korapay's own connector in this crate, whose
+// payout destination fields are nested under a `destination` object; not
+// an inconsistency to "fix", the two providers' real APIs are just
+// shaped differently, same note the legacy JS file's own comment already
+// makes.
+//
+// PoSync's id handling is the other real, confirmed difference from
+// Korapay's connector: legacy-node's own verifyPayout() docblock (Task
+// 52/d-2a) states plainly that Flutterwave has no confirmed
+// reference-based single-transfer lookup -- `GET /transfers/:id` only
+// takes Flutterwave's own internal numeric transfer id. So, unlike
+// Korapay's PoSync (which keys off the merchant reference),
+// `connector_payout_id` here MUST carry Flutterwave's own `id` -- and
+// PoFulfill's own response below stores exactly that, not the merchant
+// reference this connector generated.
+#[cfg(feature = "payouts")]
+#[derive(Debug, Serialize)]
+pub struct FlutterwavePayoutFulfillRequest {
+    pub account_bank: Secret<String>,
+    pub account_number: Secret<String>,
+    pub amount: FloatMajorUnit,
+    pub currency: enums::Currency,
+    pub narration: String,
+    pub reference: String,
+}
+
+// ⚠️ Real, unresolved shape gap -- flagged, not guessed around, same
+// root cause and same stopgap already flagged in korapay/transformers.rs's
+// own `get_korapay_payout_bank_account`: Hyperswitch's `PayoutMethodData`
+// (api_models::payouts) has no NUBAN/bank-code-shaped variant.
+// `BankTransfer::Ach` is reused purely because it is the one variant
+// with two plain (non-IBAN, non-BIC-formatted) string fields --
+// `bank_account_number` carries the account number, `bank_routing_number`
+// carries Flutterwave's own bank code (from Flutterwave's own
+// `GET /banks/:country` list, NOT a US ABA routing number, which is what
+// that field is documented elsewhere in this same enum as). Not a
+// confirmed-correct mapping -- do not trust this in production before
+// either a live Flutterwave sandbox call confirms it round-trips, or a
+// proper NUBAN-shaped `PayoutMethodData` variant is added upstream and
+// every connector using this same stopgap (Korapay, Paystack, JuicyWay,
+// now Flutterwave) is switched to it together.
+#[cfg(feature = "payouts")]
+fn get_flutterwave_payout_bank_account<F>(
+    router_data: &PayoutsRouterData<F>,
+) -> Result<(Secret<String>, Secret<String>), error_stack::Report<errors::ConnectorError>> {
+    match router_data.get_payout_method_data()? {
+        PayoutMethodData::BankTransfer(BankTransfer::Ach(ach)) => {
+            Ok((ach.bank_routing_number, ach.bank_account_number))
+        }
+        other => Err(errors::ConnectorError::NotSupported {
+            message: format!(
+                "{other:?} via Flutterwave payouts (see flutterwave/transformers.rs's own \
+                 get_flutterwave_payout_bank_account note on the real NUBAN/bank-code shape gap)"
+            ),
+            connector: "flutterwave",
+        }
+        .into()),
+    }
+}
+
+#[cfg(feature = "payouts")]
+impl<F> TryFrom<&FlutterwaveRouterData<&PayoutsRouterData<F>>> for FlutterwavePayoutFulfillRequest {
+    type Error = error_stack::Report<errors::ConnectorError>;
+    fn try_from(
+        item: &FlutterwaveRouterData<&PayoutsRouterData<F>>,
+    ) -> Result<Self, Self::Error> {
+        let router_data = item.router_data;
+        let (account_bank, account_number) = get_flutterwave_payout_bank_account(router_data)?;
+
+        Ok(Self {
+            account_bank,
+            account_number,
+            amount: item.amount,
+            currency: router_data.request.destination_currency,
+            // Hyperswitch's `PayoutsData` carries no narration field at
+            // all (unlike the legacy JS request, which took a
+            // caller-supplied `narration`) -- a generic, connector-level
+            // default is used here instead, same choice Korapay's own
+            // connector in this crate already made for the identical gap.
+            narration: "Payout via Flutterwave".to_string(),
+            reference: router_data.connector_request_reference_id.clone(),
+        })
+    }
+}
+
+// Real lifecycle state of the transfer itself. Per
+// legacy-node/providers/flutterwave.js#processPayout()'s own comment,
+// worked examples confirm `NEW`/`SUCCESSFUL`/`FAILED` (compared there via
+// `.toUpperCase() === 'FAILED'`, implying the API's own casing isn't
+// fully trusted even in the legacy code) -- kept as a plain `String`
+// here, matched case-insensitively below, rather than a strict enum,
+// deliberately mirroring that same defensive `.toUpperCase()` posture
+// instead of risking a deserialization failure on an unexpected case.
+#[cfg(feature = "payouts")]
+fn flutterwave_payout_status_from_str(status: &str) -> PayoutStatus {
+    match status.to_uppercase().as_str() {
+        "SUCCESSFUL" => PayoutStatus::Success,
+        "FAILED" => PayoutStatus::Failed,
+        // "NEW" is Flutterwave's own confirmed non-terminal acknowledgement
+        // state (per the legacy JS's own comment: "acknowledgement only,
+        // not final confirmation") -- and anything else unrecognized folds
+        // to the same non-terminal `Pending`, same "don't fail closed on
+        // an unrecognized status string" posture Korapay's own
+        // `KorapayPayoutTransactionStatus::Unknown` mapping already uses.
+        _ => PayoutStatus::Pending,
+    }
+}
+
+#[cfg(feature = "payouts")]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct FlutterwavePayoutData {
+    // Flutterwave's own internal numeric transfer id -- required by
+    // PoSync (see this section's own file-level comment on why this,
+    // not `reference`, is what `connector_payout_id` must carry).
+    // Modeled as `String` via `#[serde(default)]` + a permissive
+    // deserialize would be more defensive, but this session found no
+    // primary-source confirmation either way of whether Flutterwave
+    // returns this as a JSON number or a numeric string, so the
+    // straightforward `i64` (the common shape for this field across
+    // every public Flutterwave example this session is aware of) is
+    // used directly rather than adding untested flexibility for a case
+    // that isn't confirmed to occur. Flag before trusting in production,
+    // same as every other unconfirmed-shape note in this file.
+    pub id: i64,
+    #[serde(default)]
+    pub status: Option<String>,
+    #[serde(default)]
+    pub complete_message: Option<String>,
+}
+
+#[cfg(feature = "payouts")]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct FlutterwavePayoutResponse {
+    pub status: String,
+    pub message: String,
+    #[serde(default)]
+    pub data: FlutterwavePayoutData,
+}
+
+#[cfg(feature = "payouts")]
+impl<F> TryFrom<PayoutsResponseRouterData<F, FlutterwavePayoutResponse>> for PayoutsRouterData<F> {
+    type Error = error_stack::Report<errors::ConnectorError>;
+    fn try_from(
+        item: PayoutsResponseRouterData<F, FlutterwavePayoutResponse>,
+    ) -> Result<Self, Self::Error> {
+        // Outer `status != "success"` is Flutterwave's own signal that
+        // the API call itself was rejected -- same discipline as
+        // `FlutterwavePaymentsResponse`'s own handling above and every
+        // method in legacy-node/providers/flutterwave.js (`if
+        // (!response.ok || responseData.status !== 'success') throw
+        // ...`). Deliberately different from a `data.status: "FAILED"`
+        // outcome below, which is a normal, successfully-verified
+        // terminal payout state, not an error calling this function.
+        if item.response.status != "success" {
+            return Err(errors::ConnectorError::ResponseHandlingFailed.into());
+        }
+
+        let payout_status = item
+            .response
+            .data
+            .status
+            .as_deref()
+            .map(flutterwave_payout_status_from_str)
+            // No `data.status` at all (seen on some acknowledgement-only
+            // responses per the legacy JS's own logging comment) is the
+            // same non-terminal "accepted, not yet confirmed" case as an
+            // explicit `NEW` -- not a failure.
+            .unwrap_or(PayoutStatus::Pending);
+        let error_message = payout_status.is_payout_failure().then(|| {
+            item.response
+                .data
+                .complete_message
+                .clone()
+                .unwrap_or_else(|| item.response.message.clone())
+        });
+
+        Ok(Self {
+            response: Ok(PayoutsResponseData {
+                status: Some(payout_status),
+                connector_payout_id: Some(item.response.data.id.to_string()),
+                payout_eligible: None,
+                should_add_next_step_to_process_tracker: false,
+                error_code: None,
+                error_message,
+                payout_connector_metadata: None,
+                connector_eligibility_reference_id: None,
+            }),
+            ..item.data
+        })
+    }
 }

@@ -31,6 +31,11 @@ use hyperswitch_domain_models::{
         RefundsRouterData,
     },
 };
+#[cfg(feature = "payouts")]
+use hyperswitch_domain_models::{
+    router_flow_types::{PoFulfill, PoSync},
+    types::{PayoutsData, PayoutsResponseData, PayoutsRouterData},
+};
 use hyperswitch_interfaces::{
     api::{
         self, ConnectorCommon, ConnectorCommonExt, ConnectorIntegration, ConnectorSpecifications,
@@ -42,6 +47,8 @@ use hyperswitch_interfaces::{
     types::{PaymentsAuthorizeType, PaymentsSyncType, Response},
     webhooks,
 };
+#[cfg(feature = "payouts")]
+use hyperswitch_interfaces::types::{PayoutFulfillType, PayoutSyncType};
 use hyperswitch_masking::{ExposeInterface, Mask, Maskable};
 use transformers as flutterwave;
 
@@ -73,17 +80,29 @@ impl api::RefundExecute for Flutterwave {}
 impl api::RefundSync for Flutterwave {}
 impl api::PaymentToken for Flutterwave {}
 
-// Payouts: NOT implemented this leaf, unlike Korapay's own payout flows
-// elsewhere in this crate. legacy-node/providers/flutterwave.js does have
-// a working `processPayout()`/`verifyPayout()` (POST /v3/transfers, flat
-// top-level shape per that file's own comment) but porting it is
-// deliberately out of scope here — this leaf is Authorize/PSync
-// (collection) only, following the same one-flow-group-at-a-time
-// discipline the legacy file itself used when it built v3's methods
-// before v4's. A future session can add `PayoutFulfill`/`PayoutSync` the
-// same way Korapay's own Task 77/a-1-iii leaf did, with its own
-// confirmed request/response shapes.
+// Payout flows, continuing the prior leaf's own explicit follow-up note.
+// `api::Payouts` itself (the supertrait requiring every payout flow at
+// once) is only real when the `payouts` cargo feature is on -- see
+// hyperswitch_interfaces::api::payouts, same split Korapay's own
+// connector in this crate already follows. Only `PayoutFulfill`/
+// `PayoutSync` are implemented for real below, per
+// legacy-node/providers/flutterwave.js#processPayout()/verifyPayout()'s
+// own confirmed request/response shapes (Task 52/d-2a) -- a flat,
+// single-call disburse, same shape class as Korapay's own connector, NOT
+// the beneficiary-first shape Paystack/JuicyWay both need in this crate.
+// Create/Cancel/Eligibility/Quote/Recipient/RecipientAccount are
+// deliberately left on this crate's own `default_imp_for_payouts_*!`
+// macros (Flutterwave was removed ONLY from the fulfill/retrieve macro
+// lists in default_implementations.rs, same two Korapay was removed
+// from) -- each would need its own, separately-confirmed Flutterwave API
+// shape before being built for real. Refund's id-threading gap above and
+// webhook verification remain the other genuinely open follow-ups this
+// leaf does not close.
 impl api::Payouts for Flutterwave {}
+#[cfg(feature = "payouts")]
+impl api::PayoutFulfill for Flutterwave {}
+#[cfg(feature = "payouts")]
+impl api::PayoutSync for Flutterwave {}
 
 impl ConnectorIntegration<PaymentMethodToken, PaymentMethodTokenizationData, PaymentsResponseData>
     for Flutterwave
@@ -453,6 +472,183 @@ impl ConnectorIntegration<RSync, RefundsData, RefundsResponseData> for Flutterwa
             "Refund sync flow for Flutterwave".to_string(),
         )
         .into())
+    }
+}
+
+// Payout fulfillment (`POST /transfers`). Request shape ported from
+// legacy-node/providers/flutterwave.js#processPayout() (Task 52/d-2a) --
+// see transformers.rs's own file-level note on this section for the
+// flat-vs-nested shape difference from Korapay's own connector, and the
+// real NUBAN/bank-code stopgap this leaf shares with Korapay/Paystack/
+// JuicyWay.
+#[cfg(feature = "payouts")]
+impl ConnectorIntegration<PoFulfill, PayoutsData, PayoutsResponseData> for Flutterwave {
+    fn get_headers(
+        &self,
+        req: &PayoutsRouterData<PoFulfill>,
+        connectors: &Connectors,
+    ) -> CustomResult<Vec<(String, Maskable<String>)>, errors::ConnectorError> {
+        self.build_headers(req, connectors)
+    }
+
+    fn get_content_type(&self) -> &'static str {
+        self.common_get_content_type()
+    }
+
+    fn get_url(
+        &self,
+        _req: &PayoutsRouterData<PoFulfill>,
+        connectors: &Connectors,
+    ) -> CustomResult<String, errors::ConnectorError> {
+        Ok(format!("{}/transfers", self.base_url(connectors)))
+    }
+
+    fn get_request_body(
+        &self,
+        req: &PayoutsRouterData<PoFulfill>,
+        _connectors: &Connectors,
+    ) -> CustomResult<RequestContent, errors::ConnectorError> {
+        // Same base/major-unit rule as collection above (see
+        // transformers.rs's own `FlutterwaveRouterData` note) --
+        // legacy-node's own processPayout() reuses the identical
+        // `convertAmountForProvider(..., 'flutterwave', ...)` call for
+        // payouts, not a separate payout-specific unit rule.
+        let amount = convert_amount(
+            self.amount_converter,
+            req.request.minor_amount,
+            req.request.destination_currency,
+        )?;
+        let connector_router_data = flutterwave::FlutterwaveRouterData::from((amount, req));
+        let connector_req =
+            flutterwave::FlutterwavePayoutFulfillRequest::try_from(&connector_router_data)?;
+        Ok(RequestContent::Json(Box::new(connector_req)))
+    }
+
+    fn build_request(
+        &self,
+        req: &PayoutsRouterData<PoFulfill>,
+        connectors: &Connectors,
+    ) -> CustomResult<Option<Request>, errors::ConnectorError> {
+        Ok(Some(
+            RequestBuilder::new()
+                .method(Method::Post)
+                .url(&PayoutFulfillType::get_url(self, req, connectors)?)
+                .attach_default_headers()
+                .headers(PayoutFulfillType::get_headers(self, req, connectors)?)
+                .set_body(PayoutFulfillType::get_request_body(
+                    self, req, connectors,
+                )?)
+                .build(),
+        ))
+    }
+
+    fn handle_response(
+        &self,
+        data: &PayoutsRouterData<PoFulfill>,
+        event_builder: Option<&mut ConnectorEvent>,
+        res: Response,
+    ) -> CustomResult<PayoutsRouterData<PoFulfill>, errors::ConnectorError> {
+        let response: flutterwave::FlutterwavePayoutResponse = res
+            .response
+            .parse_struct("Flutterwave PayoutFulfillResponse")
+            .change_context(errors::ConnectorError::ResponseDeserializationFailed)?;
+        event_builder.map(|i| i.set_response_body(&response));
+        router_env::logger::info!(connector_response=?response);
+        RouterData::try_from(ResponseRouterData {
+            response,
+            data: data.clone(),
+            http_code: res.status_code,
+        })
+    }
+
+    fn get_error_response(
+        &self,
+        res: Response,
+        event_builder: Option<&mut ConnectorEvent>,
+    ) -> CustomResult<ErrorResponse, errors::ConnectorError> {
+        self.build_error_response(res, event_builder)
+    }
+}
+
+// Payout verification (`GET /transfers/{id}`). Keyed on Flutterwave's own
+// internal numeric transfer id, NOT a merchant reference -- unlike
+// Korapay's own PoSync in this crate. See
+// legacy-node/providers/flutterwave.js#verifyPayout()'s own docblock
+// (Task 52/d-2a): no confirmed reference-based single-transfer lookup
+// exists on Flutterwave's side, only the id-based path. `PoFulfill`'s own
+// response above stores that id in `connector_payout_id` for this flow
+// to read back.
+#[cfg(feature = "payouts")]
+impl ConnectorIntegration<PoSync, PayoutsData, PayoutsResponseData> for Flutterwave {
+    fn get_headers(
+        &self,
+        req: &PayoutsRouterData<PoSync>,
+        connectors: &Connectors,
+    ) -> CustomResult<Vec<(String, Maskable<String>)>, errors::ConnectorError> {
+        self.build_headers(req, connectors)
+    }
+
+    fn get_content_type(&self) -> &'static str {
+        self.common_get_content_type()
+    }
+
+    fn get_url(
+        &self,
+        req: &PayoutsRouterData<PoSync>,
+        connectors: &Connectors,
+    ) -> CustomResult<String, errors::ConnectorError> {
+        let connector_payout_id = req.request.connector_payout_id.clone().ok_or(
+            errors::ConnectorError::MissingRequiredField {
+                field_name: "connector_payout_id (Flutterwave transfer id from PoFulfill)".into(),
+            },
+        )?;
+        Ok(format!(
+            "{}/transfers/{}",
+            self.base_url(connectors),
+            connector_payout_id
+        ))
+    }
+
+    fn build_request(
+        &self,
+        req: &PayoutsRouterData<PoSync>,
+        connectors: &Connectors,
+    ) -> CustomResult<Option<Request>, errors::ConnectorError> {
+        Ok(Some(
+            RequestBuilder::new()
+                .method(Method::Get)
+                .url(&PayoutSyncType::get_url(self, req, connectors)?)
+                .attach_default_headers()
+                .headers(PayoutSyncType::get_headers(self, req, connectors)?)
+                .build(),
+        ))
+    }
+
+    fn handle_response(
+        &self,
+        data: &PayoutsRouterData<PoSync>,
+        event_builder: Option<&mut ConnectorEvent>,
+        res: Response,
+    ) -> CustomResult<PayoutsRouterData<PoSync>, errors::ConnectorError> {
+        let response: flutterwave::FlutterwavePayoutResponse = res
+            .response
+            .parse_struct("Flutterwave PayoutSyncResponse")
+            .change_context(errors::ConnectorError::ResponseDeserializationFailed)?;
+        event_builder.map(|i| i.set_response_body(&response));
+        router_env::logger::info!(connector_response=?response);
+        RouterData::try_from(ResponseRouterData {
+            response,
+            data: data.clone(),
+            http_code: res.status_code,
+        })
+    }
+
+    fn get_error_response(
+        &self,
+        res: Response,
+        event_builder: Option<&mut ConnectorEvent>,
+    ) -> CustomResult<ErrorResponse, errors::ConnectorError> {
+        self.build_error_response(res, event_builder)
     }
 }
 

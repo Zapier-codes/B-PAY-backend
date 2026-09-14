@@ -271,7 +271,7 @@ impl TryFrom<&JuicywayRouterData<&PaymentsAuthorizeRouterData>> for JuicywayPaym
 }
 
 // ---------------------------------------------------------------------
-// Response — shared by Authorize and PSync
+// Authorize response — POST /payment-sessions
 // ---------------------------------------------------------------------
 //
 // Shape confirmed against docs.juicyway.com (handover.md's "FULL API
@@ -280,13 +280,28 @@ impl TryFrom<&JuicywayRouterData<&PaymentsAuthorizeRouterData>> for JuicywayPaym
 // id, amount, currency, status, customer, order, payment_method,
 // reference, date, description, mode, cancellation_reason } } }`.
 //
-// ⚠️ The exact string values `payment.status` takes on are NOT quoted
-// verbatim anywhere in this session's sources — only the field's
-// existence and nesting are confirmed. The variants below are a
-// reasonable, common-pattern guess (`#[serde(other)]` catches anything
-// unrecognized as `Unknown` rather than failing deserialization), NOT a
-// docs-confirmed enumeration. Flagged for a live sandbox call before
-// this status mapping is trusted with real money.
+// No longer shared with PSync (see `JuicywayFetchPaymentResponse`
+// below) — `GET /payments/{id}`'s real response has no `payment`
+// sub-object at all, confirmed this session; reusing this struct for
+// both was a real bug, not just an unconfirmed assumption. This
+// nested-`payment` envelope itself remains specific to
+// `/payment-sessions` and still has NOT been independently confirmed
+// with its own worked example this session.
+//
+// ⚠️ The exact string values `payment.status` takes on for THIS
+// endpoint (`/payment-sessions`, Authorize) are still NOT independently
+// confirmed — no worked example for that specific endpoint was fetched
+// this session either. What changed this session: `GET /payments/{id}`
+// (the Fetch Payment endpoint, confirmed below for PSync) documents the
+// same underlying payment resource's `status` field with a full worked
+// example — `pending`, `processing`, `succeeded`, `failed`, `cancelled`.
+// Since both endpoints describe the identical payment object's
+// lifecycle state, this enum now uses that confirmed vocabulary
+// (`succeeded`, not the previous unconfirmed `successful` guess; plus
+// the previously-missing `cancelled`) on the reasonable assumption the
+// two endpoints share one status vocabulary — flagged as an assumption,
+// not re-guessed from nothing. `#[serde(other)]` still folds anything
+// unrecognized to `Unknown` rather than failing deserialization.
 //
 // `links` (documented, presumably a redirect/checkout URL for
 // non-instant payment methods) is deliberately NOT typed or used for
@@ -299,8 +314,9 @@ impl TryFrom<&JuicywayRouterData<&PaymentsAuthorizeRouterData>> for JuicywayPaym
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum JuicywayPaymentStatus {
-    Successful,
+    Succeeded,
     Failed,
+    Cancelled,
     #[default]
     Pending,
     Processing,
@@ -311,8 +327,18 @@ pub enum JuicywayPaymentStatus {
 impl From<JuicywayPaymentStatus> for AttemptStatus {
     fn from(status: JuicywayPaymentStatus) -> Self {
         match status {
-            JuicywayPaymentStatus::Successful => Self::Charged,
+            JuicywayPaymentStatus::Succeeded => Self::Charged,
             JuicywayPaymentStatus::Failed => Self::Failure,
+            // Confirmed via docs.juicyway.com/payment-transactions/fetch-payment
+            // this session -- `cancelled` is a real, distinct terminal
+            // state, not a synonym for `failed`. Mapped to `Voided`
+            // rather than `Failure` so downstream reconciliation can
+            // tell "the merchant/customer called it off" apart from
+            // "the provider declined it" -- previously this state
+            // wasn't representable at all and would have fallen into
+            // `Unknown` -> `Pending`, which is the more dangerous
+            // failure mode (a dead payment reported as still in flight).
+            JuicywayPaymentStatus::Cancelled => Self::Voided,
             JuicywayPaymentStatus::Pending | JuicywayPaymentStatus::Processing => {
                 Self::AuthenticationPending
             }
@@ -377,6 +403,66 @@ impl<F, T> TryFrom<ResponseRouterData<F, JuicywayPaymentsResponse, T, PaymentsRe
                 network_txn_id: None,
                 network_txn_link_id: None,
                 connector_response_reference_id: Some(item.response.data.payment.reference),
+                incremental_authorization_allowed: None,
+                authentication_data: None,
+                charges: None,
+                payment_account_reference: None,
+            }),
+            ..item.data
+        })
+    }
+}
+
+// ---------------------------------------------------------------------
+// PSync response — GET /payments/{id} (Fetch Payment)
+// ---------------------------------------------------------------------
+//
+// CONFIRMED this session against
+// docs.juicyway.com/payment-transactions/fetch-payment — the exact
+// endpoint PSync calls (see juicyway.rs's own PSync `get_url`), with a
+// full worked response example. This is a REAL BUG FIX, not just a
+// confirmation: the shape below is FLAT (`data: { id, status,
+// reference, ... }`), not nested under a `payment` sub-object the way
+// `JuicywayPaymentSessionData` above is. PSync previously reused that
+// nested-`payment` struct (this file's own former "shared by Authorize
+// and PSync" comment) — since `payment` is a required field with no
+// `#[serde(default)]`, every real `GET /payments/{id}` response would
+// have failed deserialization outright with
+// `ResponseDeserializationFailed`, since the real response has no
+// `payment` key at all. PSync now has its own correctly-shaped struct
+// instead of sharing Authorize's still-unconfirmed one.
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq)]
+pub struct JuicywayFetchPaymentData {
+    pub id: String,
+    pub status: JuicywayPaymentStatus,
+    #[serde(default)]
+    pub reference: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq)]
+pub struct JuicywayFetchPaymentResponse {
+    pub data: JuicywayFetchPaymentData,
+}
+
+impl<F, T> TryFrom<ResponseRouterData<F, JuicywayFetchPaymentResponse, T, PaymentsResponseData>>
+    for RouterData<F, T, PaymentsResponseData>
+{
+    type Error = error_stack::Report<errors::ConnectorError>;
+    fn try_from(
+        item: ResponseRouterData<F, JuicywayFetchPaymentResponse, T, PaymentsResponseData>,
+    ) -> Result<Self, Self::Error> {
+        let status = AttemptStatus::from(item.response.data.status.clone());
+
+        Ok(Self {
+            status,
+            response: Ok(PaymentsResponseData::TransactionResponse {
+                resource_id: ResponseId::ConnectorTransactionId(item.response.data.id),
+                redirection_data: Box::new(None),
+                mandate_reference: Box::new(None),
+                connector_metadata: None,
+                network_txn_id: None,
+                network_txn_link_id: None,
+                connector_response_reference_id: item.response.data.reference,
                 incremental_authorization_allowed: None,
                 authentication_data: None,
                 charges: None,

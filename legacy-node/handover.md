@@ -221,6 +221,59 @@
 > hyperswitch_connectors` against every JuicyWay file, a-3-i through this
 > leaf.
 >
+> **🟡 NEWEST NEXT TASK (2026-09-14, session 4 — real bug fix, not just
+> confirmation):** followed the "unconfirmed payment.status string
+> values" gap carried since a-3-i to a real primary source —
+> `docs.juicyway.com/payment-transactions/fetch-payment` — which is
+> `GET /payments/{id}`, the EXACT endpoint PSync calls (confirmed
+> against juicyway.rs's own PSync `get_url`). Two confirmed findings,
+> the second a severe, live bug:
+> - **Status vocabulary confirmed:** `pending`, `processing`,
+>   `succeeded`, `failed`, `cancelled` — a full worked example included.
+>   The connector's enum had `successful` (wrong string — would never
+>   have matched a real `succeeded` response) and no `cancelled`
+>   variant at all (would have silently fallen into `Unknown` ->
+>   `Pending`, misreporting a dead payment as still in flight). Fixed:
+>   `JuicywayPaymentStatus` now has `Succeeded`/`Cancelled` matching the
+>   confirmed strings; `Cancelled` maps to `AttemptStatus::Voided`.
+> - **Structural bug, more severe:** the real Fetch Payment response is
+>   FLAT (`data: { id, status, reference, ... }`) — no nested `payment`
+>   sub-object. PSync was reusing Authorize's `JuicywayPaymentsResponse`
+>   struct (this file's own former "shared by Authorize and PSync"
+>   framing), which requires a `payment` field with no
+>   `#[serde(default)]`. **Every real PSync call would have failed
+>   deserialization outright** (`ResponseDeserializationFailed`) — this
+>   wasn't a shape guess that happened to be close, it was structurally
+>   incompatible with the endpoint actually being called. Fixed: PSync
+>   now has its own `JuicywayFetchPaymentResponse`/`JuicywayFetchPaymentData`
+>   matching the confirmed flat shape; `juicyway.rs`'s PSync
+>   `handle_response` now parses into that type instead. Authorize's own
+>   `/payment-sessions` nested-`payment` shape is untouched and still
+>   NOT independently confirmed with its own worked example — the status
+>   vocabulary change is applied there too only on the reasonable (and
+>   flagged) assumption both endpoints describe the same payment
+>   resource's lifecycle field.
+> - Also newly confirmed, not yet acted on: the same Fetch Payment
+>   worked example shows real shapes for `order.items` (`name`, `type`)
+>   and `customer` (`billing_address`, `email`, `first_name`, `id`,
+>   `last_name`, `phone_number`) — closes part of the "customer.type/
+>   order.items flagged defaults" gap carried from a-3-i, though nothing
+>   in this connector currently reads either field, so no code change
+>   was needed for those specifically.
+> - Verification: brace/paren balance check on both changed files.
+>   `juicyway.rs` reports a false positive both before and after this
+>   session's one-line change (confirmed via `git stash`) — same
+>   apostrophe/lifetime scanner artifact this file's own connector_auth.rs
+>   precedent already documents, not something this session introduced.
+>   `transformers.rs` is clean. Not a `cargo check` — still no working
+>   `rustc`/`cargo` this session (`which rustc cargo` -> nothing).
+>
+> **Next real task:** Authorize's own `/payment-sessions` response shape
+> is the one remaining unconfirmed envelope in this connector's payment
+> flows — fetch a worked example for it specifically before trusting it
+> further. After that, same as above: `cargo check` once a toolchain
+> exists.
+>
 > **🔵 NEWEST NEXT TASK (2026-09-14, latest — supersedes the 🟢 box
 > directly below for "what to work on" purposes; nothing in that box is
 > lost):** search this file for "Task 77/a-3-ii — JuicyWay engine

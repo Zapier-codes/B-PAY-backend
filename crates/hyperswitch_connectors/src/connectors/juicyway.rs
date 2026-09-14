@@ -395,7 +395,7 @@ impl ConnectorIntegration<PSync, PaymentsSyncData, PaymentsResponseData> for Jui
         event_builder: Option<&mut ConnectorEvent>,
         res: Response,
     ) -> CustomResult<PaymentsSyncRouterData, errors::ConnectorError> {
-        let response: juicyway::JuicywayPaymentsResponse = res
+        let response: juicyway::JuicywayFetchPaymentResponse = res
             .response
             .parse_struct("Juicyway PaymentsSyncResponse")
             .change_context(errors::ConnectorError::ResponseDeserializationFailed)?;

@@ -25121,3 +25121,90 @@ git push
 No `db/migrations/` changes in this session's diff, so no DB-Ops
 Handoff block is owed this time — Patch Handoff only, per rule 7's own
 "how to decide" checklist above.
+
+## Task 73/a — status verification against ground truth (2026-09-14, session 6): both call-site audits confirmed already complete; one real documentation contradiction found and resolved against actual code, not narrative
+
+**Trigger:** with the JuicyWay a-3 chain now fully closed (previous
+entry), the New-Clone Checklist's own step 4 names the per-call-site
+Redis audit as the next currently-open, no-toolchain-needed work. Before
+starting it as if it were open, this session traced this file's own
+audit history first — and found it isn't open.
+
+**Finding: both audits this file has tracked are already complete,
+recorded well before this session's checklist was last written.** The
+New-Clone Checklist's step 4 wording is itself stale on this one point —
+same category of staleness as the a-3-iii pointer-box gap two sessions
+ago, just smaller:
+- The 63-real-call-site Redis locking/caching audit under
+  `crates/router/src`: completed 63/63 (tenth pass, 2026-09-11), then
+  independently reconciled against a second, broader keyword
+  methodology and re-confirmed complete with **zero new files or
+  findings** ("batch 3", 2026-09-13, this file's own most recent word on
+  it before this session).
+- The pub/sub call-site audit (the New-Clone Checklist doesn't name this
+  one, but it's the same category of work): resolved to 15 real call
+  sites, independently reproduced twice against two different clones,
+  with the file's own "18" figure traced and confirmed unreconstructable
+  — a stale number, not a missed-files gap.
+
+**Real discrepancy found and resolved against the actual code, not
+against either conflicting doc entry:** this file has two contradictory
+claims about `pg_lock.rs`'s multi-key locking gap (Finding #1) —
+"Task 73/a — Finding #1 fixed (2026-09-11)" says
+`PgLock::try_acquire_multiple` was built; the later "batch 3"
+reconciliation entry (2026-09-13) says Finding #1 "remains the one
+genuinely still-unfixed API gap on record." Checked `pg_lock.rs`
+directly rather than trusting either narrative: `try_acquire_multiple`
+is real, present, and is in fact what `try_acquire` (single-key) now
+delegates to internally. **The 2026-09-11 "fixed" entry was right; the
+2026-09-13 "still-unfixed" line was the stale one** — recorded here
+plainly, per this file's own practice, rather than left standing.
+Also confirmed via `grep` across `crates/router/src` and
+`crates/storage_impl/src`: no real call site anywhere constructs or
+calls `PgLock` today — the method is built and correct-by-reading but,
+like every other Task 73/a finding, genuinely not wired into any real
+call site yet. That part of every prior entry's framing holds up.
+
+**What this means for what's actually next:** with both audits done and
+Finding #1 confirmed built (not just claimed), the single remaining
+prerequisite the New-Clone Checklist itself sets for wiring
+Findings #6–#13/#16/#17/#1 into `RedisStore` and the real call sites is
+a working `rustc` ≥ 1.85 — still not available this session (per the
+checklist's own retired-check policy, not re-probed here). **Deliberately
+not starting that wiring uncompiled anyway:** the batch-3 entry already
+flagged that this would need either a working toolchain or explicit
+product-owner sign-off to proceed uncompiled, and neither exists yet.
+Hand-editing lock/cache-acquisition code that real payment flows would
+depend on, with no compiler to catch a mistake, is exactly the kind of
+change this file's own standing discipline (and rule 4's money-movement
+rationale) argues against doing speculatively.
+
+**Verification:** reading + `grep` only, no `.rs` file changed this
+session, nothing to compile-check.
+
+**Not done, genuinely still open:** the `RedisStore` wiring itself
+(blocked on toolchain, as above); everything else this file has flagged
+as open in other threads (unrelated to Task 73/a) is unaffected by this
+entry.
+
+## Patch Handoff — Task 73/a status verification (2026-09-14, session 6)
+
+Per the Patch Handoff Convention above: this session's work is
+committed locally on branch
+`docs/task73a-redis-wiring-status-verify-2026-09-14` (based on
+`origin/main` at `aa7400351`, re-confirmed via `git fetch origin`
+immediately before generating the patch — no drift; the previous
+session's patch is confirmed applied, so this is a fresh commit, not a
+stack on an unapplied base, per rule 6). A patch file has been
+generated and handed over alongside this entry, per rule 5.
+
+**Doc-only commit** (this file only, no `.rs`/`db/migrations/` changes)
+— no DB-Ops block owed.
+
+**Exact commands, copy-paste as-is — run from the product owner's own
+device, per rule 4:**
+```
+cd ~/B-PAY-backend
+git am ~/storage/downloads/<patch-file-name>
+git push
+```

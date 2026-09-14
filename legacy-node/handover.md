@@ -106,7 +106,68 @@
 > task's own section. Nothing else in this file is required reading to
 > start work.**
 >
-> **⚪ NEWEST NEXT TASK (2026-09-14, session 6 — corrects a stale pointer:
+> **🟤 NEWEST NEXT TASK (2026-09-14, session 7 — corrects a stale
+> pointer again, same class of correction session 6 made below, but a
+> different miss): every box below this one keeps repeating "next real
+> task: the per-call-site TTL/atomicity audit" as if it were still
+> open. It is not — confirmed by direct search, not just re-reading a
+> box: "Task 73/a — audit COMPLETE (63/63)" (search that exact phrase)
+> landed several sessions ago, and a later entry explicitly notes the
+> "still open" framing itself was already wrong once before ("the
+> premise was wrong: the audit was already marked complete (63/63)
+> several sessions ago"). The 🔴 and ⚪ boxes below both cite "the
+> audit" as the next task anyway — neither is right anymore, they're
+> just repeating the same stale line from further down the stack.
+> **Real current status, confirmed against actual code this session,
+> not just prose:** all 63 call sites read, Findings #1/#6 through #17
+> (see below) designed in `pg_kv_store.rs`/`pg_lock.rs`, but wiring
+> any finding into its real Redis call site is almost entirely
+> unstarted — `kill_switch.rs` (Finding #12) is the **only** call site
+> actually migrated off `redis_interface` onto `PgKvStore`, confirmed
+> by `grep`, not assumed. Every other Redis-backed file this session
+> checked (`db/ephemeral_key.rs` at minimum) is still 100%
+> `redis_interface`-based in the real committed code at `94e74ce08`.
+>
+> **This session attempted the next concrete wiring candidate —
+> `db/ephemeral_key.rs`'s two `set_expire_at` calls, per Finding #16's
+> own comment naming this exact file as the concrete need — and found
+> a real, new, blocking gap rather than a straightforward swap:**
+> `create_ephemeral_key`/`create_client_secret` don't just call
+> `set_expire_at` — they first call
+> `serialize_and_set_multiple_hash_field_if_not_exist` to write the
+> **same value under two different keys** (`secret_key`/`id_key`) with
+> **one atomic all-or-nothing duplicate check across both**, which is
+> exactly what makes `create_ephemeral_key` reject a collision instead
+> of silently overwriting. `PgKvStore` has no method with that shape —
+> `set_hash_field_if_not_exist` takes one key; `set_hash_fields` takes
+> one key with many fields. Swapping only the `set_expire_at` calls
+> while leaving the write path on Redis would set a Postgres TTL on a
+> row that was never written (silently a no-op) — swapping the write
+> path too with two separate `set_hash_field_if_not_exist` calls would
+> compile and mostly work but lose the atomic collision check (a race
+> could leave one key written and the other not). **Not attempted
+> either way this session** — this is exactly the class of correctness
+> regression this file's own discipline exists to catch before it
+> reaches financial/security-adjacent code (ephemeral keys gate client-
+> secret exposure), not a case to force through uncompiled. Recorded
+> as **Finding #17** (search that heading at the end of this file) —
+> genuinely new, not a restatement of #16.
+>
+> **Next real task, in order:** (a) design and add an atomic
+> multi-key "set same value under N keys, fail if any already exists"
+> primitive to `pg_kv_store.rs` (Finding #17) before `ephemeral_key.rs`
+> can be wired safely; (b) once that exists, wire `ephemeral_key.rs`'s
+> full Redis usage (not just `set_expire_at`) onto `PgKvStore` in one
+> pass, since a partial per-method swap on this particular file is the
+> silent-no-op trap described above; (c) the `storage_impl` compile
+> error and the four other untriaged CI jobs from the 2026-09-12
+> `--log-failed` triage entry (search "full CI failure triage from a
+> real `--log-failed` dump") still need the V2-feature `KafkaStore`/
+> `DejaLoadConnection` design call and a second real CI run to confirm
+> the 3 applied fixes actually landed clean — genuinely independent of
+> (a)/(b), pick whichever a session has the right access/expertise for.
+>
+> **⚪ NEXT TASK (2026-09-14, session 6 — corrects a stale pointer:
 > the 🔴 box below was already superseded by commit `fa6b4d17b`
 > ("Task 73 -- scaffold Flutterwave connector crate") before this
 > session started, which this file's own top box never recorded):**
@@ -25259,6 +25320,116 @@ generated and handed over alongside this entry, per rule 5.
 device, per rule 4:**
 ```
 cd ~/B-PAY-backend
+git am ~/storage/downloads/<patch-file-name>
+git push
+```
+
+### Task 73/a — Finding #17: no atomic multi-key "set same value under N keys, fail if any already exists" primitive on `PgKvStore` (2026-09-14, new session)
+
+**Trigger:** after reconciling this sandbox's local `main` with
+`origin/main` (10 commits of drift — JuicyWay's a-3-ii engine
+registration and a-3-iii payouts both landed, plus a real PSync bug
+found and fixed in that connector by a later session, plus
+Flutterwave's own Task 73 scaffold and its own follow-up sanity-pass
+commit; `git fetch origin` + `git reset --hard origin/main`, verified
+clean, no local work lost beyond a stale uncommitted draft this
+session discarded), picked up what every stale "next task" pointer in
+this file still named: the per-call-site TTL/atomicity audit. Direct
+search confirmed that audit is actually complete (63/63) and has been
+for several sessions — the pointer boxes just kept repeating an old
+line. The real open item, confirmed by `grep`ping actual code rather
+than trusting prose, is that only one Finding (#12, `kill_switch.rs`)
+has ever been wired into a real call site.
+
+**Attempted the next concrete candidate named in Finding #16's own
+comment: wiring `db/ephemeral_key.rs`'s two `set_expire_at` calls onto
+`PgKvStore`.** Reading the real caller in full (not just the two
+`set_expire_at` lines) surfaced a genuine blocker: `create_ephemeral_key`
+and `create_client_secret` both call
+`serialize_and_set_multiple_hash_field_if_not_exist` first — writing
+the *same* value under *two different keys* (`secret_key`/`id_key`,
+resp. `secret_key`/`id_key` for the client-secret variant) with one
+atomic check that *neither* key already exists, returning
+`HsetnxReply::KeyNotSet` (translated to `StorageError::DuplicateValue`)
+if either does. That's the actual duplicate-prevention mechanism for
+ephemeral key/client secret creation — not incidental.
+
+`PgKvStore`'s existing "if not exist" methods don't cover this shape:
+- `set_hash_field_if_not_exist` — one key, one field.
+- `set_key_if_not_exist` / `set_key_if_not_exist_with_expiry` — one key,
+  no hash field.
+- `set_hash_fields` — one key, many fields, always overwrites (no
+  if-not-exist check at all).
+
+None of them take a *list of keys* and fail the whole operation if any
+one of them already exists. Two real, wrong ways to paper over this,
+both considered and rejected:
+1. **Swap only the `set_expire_at` calls, leave the write path on
+   Redis.** Compiles, looks like progress, is actually a silent no-op:
+   the row `set_expire_at` targets in Postgres was never written by the
+   (still-Redis) create call, so `UPDATE ... WHERE cache_key = $1`
+   matches zero rows and returns `Ok(())` having done nothing. The key
+   would keep whatever TTL Redis's own `EXPIREAT` gave it (if any is
+   still being called) or none at all — a real, silent expiry
+   regression that would only surface later as ephemeral keys that
+   don't expire, or expire at the wrong time.
+2. **Swap the whole write path too, using two separate
+   `set_hash_field_if_not_exist` calls (one per key).** Compiles, does
+   real work, but loses the atomicity: a concurrent duplicate-creation
+   race could now succeed on the first key and fail on the second,
+   leaving one key written and the other not — silently different
+   behavior from today's Redis path, in security-adjacent code
+   (ephemeral keys gate client-secret exposure). Not acceptable to
+   introduce uncompiled and unable to be tested against a real
+   concurrent-access scenario in this sandbox.
+
+**Not fixed this session — flagged, not forced.** What's actually
+needed: a `PgKvStore` method taking a list of `(key, field, value)`
+triples (or the existing `secret_key`/`id_key`-style pair, generalized)
+that inserts all of them in one statement, atomically failing the
+whole batch if any `(cache_key, field)` pair already exists — the
+`ON CONFLICT DO NOTHING` + row-count-check shape `set_hash_field_if_not_exist`
+(single-key) already uses, generalized to `UNNEST` over multiple keys
+the way `set_hash_fields` generalizes `set_hash_field` over multiple
+fields on one key. Not designed or written this session — this entry
+is the flag, not the fix; a future session should design it with
+`ephemeral_key.rs`'s exact two-key/one-field-name shape as the
+concrete test case, the same way Finding #16 was designed directly
+against this file's `set_expire_at` calls.
+
+**Not compiled** — same toolchain wall as every entry in this file
+(`which rustc cargo` → nothing, re-confirmed this session). No `.rs`
+file was changed this session — this is a documentation-only entry,
+consistent with "flag a real gap found by reading the actual caller,
+don't guess a fix," the same discipline Finding #16's own writeup
+already modeled.
+
+**Not done, still open:**
+- Finding #17's own atomic multi-key primitive — not designed, not
+  written.
+- `ephemeral_key.rs` itself — still 100% `redis_interface`-based,
+  unchanged.
+- Every other unwired Finding (#1, #6–#11, #13–#16) beyond #12's
+  `kill_switch.rs` precedent — still not wired into any real call
+  site, independent of this entry.
+- The 2026-09-12 CI-triage entry's own two open items (the V2-feature
+  `KafkaStore`/`DejaLoadConnection` design call; confirming the 3
+  applied fixes against a second real CI run) — untouched this
+  session, flagged again in the box above since every pointer between
+  that entry and the top of the file kept citing the stale audit
+  instead.
+
+**Per the Patch Handoff Convention, rule 8: drift-checked first** —
+`git fetch origin` immediately before generating this session's patch
+confirmed local `main`/`origin/main` both at `94e74ce08`, unmoved since
+this session's own earlier reconciliation, so this is a fresh commit on
+top of it. **Per rule 7, only the Patch Handoff block is owed this
+time** — `legacy-node/handover.md` is the only file this session
+touched; no `.rs` file, no `db/migrations/` file.
+
+**Exact command(s) for the product owner:**
+```
+cd ~/B-Pay-backend
 git am ~/storage/downloads/<patch-file-name>
 git push
 ```

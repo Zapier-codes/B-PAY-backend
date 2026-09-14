@@ -106,9 +106,63 @@
 > task's own section. Nothing else in this file is required reading to
 > start work.**
 >
-> **🟠 NEWEST NEXT TASK (2026-09-14, latest — supersedes the 🟤 box
+> **🟢 NEWEST NEXT TASK (2026-09-14, latest — supersedes the 🟠 box
 > directly below for "what to work on" purposes; nothing in that box is
-> lost):** search this file for "Task 77/a-2-iii — Paystack payout
+> lost):** search this file for "Task 77/a-3-i — JuicyWay connector
+> crate: scaffold + `ConnectorIntegration`, done this session" and read
+> that entry in full first. **a-3-i is now built**, mirroring Korapay's
+> own a-1-ii-X scope exactly: `crates/hyperswitch_connectors/src/
+> connectors/juicyway.rs` + `juicyway/transformers.rs`, covering
+> `Authorize`/`PSync`, with `Capture`/`Void`/`Execute`/`RSync` correctly
+> left as `FlowNotSupported`/`NotImplemented` (no confirmed shape for any
+> of those four in `legacy-node/providers/juicyway.js` or this session's
+> own docs audit — same "flag, don't guess" discipline Korapay's own
+> Capture/Void/refund gaps already follow in this crate). Reviewed-by-
+> reading only (no working `rustc` this session either, same New-Clone
+> Checklist wall — a plain-text brace/paren balance check was run over
+> both new files as a minimal sanity floor beyond a read-through, same
+> as every uncompiled `.rs` change since Task 73), sitting on branch
+> `task77/a3i-juicyway-scaffold-connector-integration` pending patch
+> review — `origin/main` re-confirmed at `3e499039d` via `git fetch
+> origin` immediately before this box was written, no drift.
+>
+> **⚠️ One real, load-bearing blocker this leaf could NOT close, flagged
+> not papered over — genuinely different in kind from every prior
+> leaf's gaps:** the mechanical, multi-file engine registration that
+> `scripts/add_connector.sh` automates (wiring the new connector into
+> `Connectors`/`connector_enums`/`connector.rs`/`routing.rs`/
+> `admin.rs`/`default_implementations*.rs`/the config TOMLs/the
+> Control-Center frontend — roughly 15 files) was **not done by hand**
+> this session. The script itself needs `cargo install cargo-generate`
+> + `cargo generate` (no working `cargo` — the same toolchain wall the
+> New-Clone Checklist already retired re-confirming) **and** uses
+> macOS/BSD `sed -i ''` syntax that is not portable to this sandbox's
+> GNU `sed` even if a toolchain were available — a second, independent
+> reason the script itself cannot run here, not just the usual Rust
+> compile wall. Hand-editing all ~15 files without either the script or
+> a compiler to catch a mis-wired macro/enum/config entry was judged
+> too risky for a fork whose whole later purpose (Task 77/b's
+> "one-layer" blueprint) is routing real settlement money — same
+> "reviewed by reading, not guessed at scale" posture as leaving
+> JuicyWay's own currency-list conflict unresolved rather than picking
+> one of three documented answers. **This means the two files built
+> this session are correct-by-reading connector logic that is not yet
+> reachable through the router** — `connectors.juicyway.base_url` etc.
+> don't exist in the config structs yet. Next session picking this up
+> should either (a) get a working `cargo`+GNU-sed-compatible run of
+> `add_connector.sh` (possibly by porting its `sed -i ''` calls to GNU
+> `sed -i` first), or (b) do the ~15-file wiring by hand with a real
+> `cargo check` immediately after to catch mistakes — **not** by hand
+> with no compiler, which is the one combination this session
+> deliberately avoided. **JuicyWay's payout flows (a-3-iii, per Task
+> 52's already-confirmed beneficiary-first/pin-gated shape) are the
+> next leaf in the collection-flows sense, but are blocked behind this
+> same registration gap** just like `Authorize`/`PSync` are — not a new
+> problem, the same one.
+>
+> **🟠 NEXT TASK (2026-09-14, superseded by the 🟢 box above — kept for
+> history, not for "what to work on" purposes):** search this file for
+> "Task 77/a-2-iii — Paystack payout
 > flows: `PoRecipient`/`PoFulfill`/`PoSync`, done this session" and read
 > that entry in full first. **a-2-iii is now built** — Paystack's
 > scaffold and its `Authorize`/`PSync`/`Capture`/`Void`/`Execute`/`RSync`/
@@ -24482,6 +24536,156 @@ rule 5 (mandatory, every time) — not just described in prose.
 
 **Exact commands, copy-paste as-is, filling in only the patch
 filename actually handed over:**
+```
+cd ~/B-Pay-backend
+git am ~/storage/downloads/<patch-file-name>
+git push
+```
+
+No `db/migrations/` changes in this session's diff, so no DB-Ops
+Handoff block is owed this time — Patch Handoff only, per rule 7's own
+"how to decide" checklist above.
+
+### g. Task 77/a-3-i — JuicyWay connector crate: scaffold + `ConnectorIntegration`, done this session
+
+**Scope, per the reading order already on record:** a-3 (JuicyWay),
+starting again at its own `-i`, same position a-1-i/a-1-ii-X occupied
+for Korapay. Reference material for this whole branch is already fully
+audited in this file: Task 5 (webhook scheme), Task 8b/45a–45e
+(endpoint path, auth header, payload shape, error extraction,
+reference-vs-ID verify flow, stablecoin currency-list conflict) — no
+new doc research was needed this session, only translating already-
+confirmed findings into `ConnectorIntegration` code, same posture
+a-2-iii took toward Task 51/c's already-confirmed payout shapes.
+
+**What's built,
+`crates/hyperswitch_connectors/src/connectors/juicyway.rs` +
+`juicyway/transformers.rs`:**
+- `ConnectorCommon` — id `"juicyway"`, `CurrencyUnit::Minor` (Task
+  49/a's confirmed ×100 rule, across every currency including the
+  still-open stablecoin entries), auth header sends the **raw** secret
+  key with **no** `Bearer ` prefix (confirmed at
+  docs.juicyway.com/authentication.md — the opposite of Korapay's and
+  Paystack's own `Bearer` schemes in this same crate), and
+  `build_error_response` reads the real nested `error.message` /
+  `errors[].message` fields rather than a top-level `message` that
+  JuicyWay's actual envelope never populates (Task 45c's confirmed bug
+  in `legacy-node/providers/juicyway.js`, not repeated here).
+- `ConnectorIntegration<Authorize, ...>` — `POST /payment-sessions`
+  (Task 8b's confirmed-correct path; `legacy-node`'s own `/v1/charges`
+  is confirmed not to exist on JuicyWay's API). Request body is the
+  full nested shape Task 8b/45b's audit documented — `description`,
+  `payment_method: { type }`, `order: { identifier, items }`, and a
+  `customer` object with `email`/`first_name`/`last_name`/
+  `phone_number`/`billing_address`/`type` — not the flat
+  `{ amount, email, reference, currency }` the legacy JS still sends
+  (a confirmed, real, still-open bug there; Task 45b/Task 57/a's
+  canonical-envelope fix was itself never built either — see Task 57/a
+  in this file). Two fields the docs mark required have no generic
+  RouterData source and are filled with explicitly-flagged, non-guessed
+  defaults rather than silently omitted: `customer.type` defaults to
+  `individual`, and `order.items` falls back to a single generic
+  `"Payment"` item when `order_details` is absent. `customer.ip_address`
+  is left unset rather than guessed from an unrelated field.
+- `ConnectorIntegration<PSync, ...>` — `GET /payments/{id}`. **This is
+  a real fix over the legacy integration, not a straight port:** Task
+  45d's "reference-vs-ID distinction" finding says this endpoint takes
+  JuicyWay's own `payment.id` (a UUID), not the merchant `reference` —
+  `legacy-node/providers/juicyway.js#verifyTransaction` still calls a
+  reference-keyed (and separately wrong-path) endpoint because it has
+  no id-from-reference lookup. This connector closes the gap **by
+  construction**: Authorize's own response transformer stores
+  `payment.id` as `connector_transaction_id`, and Hyperswitch's own
+  PSync flow always looks that field up — so there is no
+  reference-based call to get wrong here in the first place.
+- `Capture`/`Void`/`Execute` (refund)/`RSync` — all `FlowNotSupported`/
+  `NotImplemented`. None of the four has any confirmed endpoint in
+  `legacy-node/providers/juicyway.js` or in this session's own re-read
+  of the file, matching Korapay's own Capture/Void/refund gaps in this
+  crate exactly (same discipline, not an oversight).
+- `IncomingWebhook` — left `WebhooksNotImplemented`, same scope
+  boundary Korapay's own a-1-ii-X drew (`ConnectorIntegration` only,
+  not `IncomingWebhook`, for this leaf) — even though JuicyWay's own
+  checksum-in-body/business-ID-keyed/alphabetical-JSON scheme (Task 5,
+  `legacy-node/providers/juicyway.js#verifyWebhookSignature`) is
+  already fully confirmed and would be unusually low-risk to port.
+  Flagged as the natural next follow-up rather than half-built here.
+
+**⚠️ Real, unresolved gaps, flagged not guessed around:**
+1. `payment.status`'s exact string values are not quoted verbatim
+   anywhere in this session's sources — only the field's existence and
+   nesting are confirmed (Task 8b's audit). The
+   `JuicywayPaymentStatus` enum's variants are a reasonable
+   common-pattern guess with a `#[serde(other)] Unknown` catch-all, not
+   a docs-confirmed enumeration. Needs a live sandbox call before this
+   status mapping is trusted with real money.
+2. The confirmed response also documents a `links` field (presumably a
+   redirect/checkout URL for non-card methods) whose own shape was
+   never fetched this session — `redirection_data` is left `None`
+   rather than guessed at, a real gap for any non-instant payment
+   method until that shape is confirmed.
+3. JuicyWay's three-way currency-list conflict (Task 8b's audit:
+   NGN/CAD vs. NGN/USD/CAD/USDT/USDC vs. a 422 example excluding the
+   two stablecoins, all on JuicyWay's own docs) is **not resolved
+   here** — this connector accepts whatever `enums::Currency` the
+   caller passes and lets JuicyWay's own API be the source of truth at
+   call time, same "don't pick one of three documented answers, check
+   live" posture the audit itself already recommended.
+4. `customer.type` and the `order.items` fallback (see above) are
+   flagged defaults, not confirmed-correct field values.
+
+**⚠️ The one blocker this leaf could not close — see the 🟢 NEXT TASK
+box at the top of this file for the full writeup:** the ~15-file
+engine-wide registration `scripts/add_connector.sh` normally automates
+(`Connectors` struct, `connector_enums`, `connector.rs`, routing enums,
+`admin.rs`, `default_implementations*.rs`, config TOMLs, Control-Center
+frontend) was **not done by hand** this session — the script itself
+needs `cargo generate` (no working `cargo`) and uses macOS/BSD
+`sed -i ''` syntax incompatible with this sandbox's GNU `sed`, a
+second, independent reason it can't just be run here. Hand-editing
+~15 unfamiliar files with no compiler to catch a mistake was judged too
+risky for a connector that will eventually route real settlement
+money, so it was left undone and flagged rather than forced through.
+**Net effect: `juicyway.rs`/`juicyway/transformers.rs` are
+correct-by-reading connector logic that the router cannot reach yet**
+(`connectors.juicyway.base_url` and friends don't exist in the config
+structs). This is a new, distinct blocker — not the familiar
+"can't compile" wall, a "can't even wire in" one — and should be the
+first thing the next session picks up before touching JuicyWay's
+payout flows (a-3-iii) or webhook (both are blocked behind this same
+gap, not separately blocked).
+
+**Not compiled this session** — same toolchain wall as every session
+since the New-Clone Checklist's step 2 was retired (`which rustc
+cargo` → nothing available). Reviewed by reading against Korapay's own
+a-1-ii-X connector (closest existing precedent for this exact
+"single hosted-checkout endpoint, no capture/void/refund" shape) and
+Paystack's own `MinorUnit` amount-converter choice. A plain-text
+brace/paren balance check (a small script, not a substitute for `cargo
+check`) was run over both new files and passed clean.
+
+**Next real task, per the reading order already on record, once the
+registration blocker above is resolved:** **a-3-ii/iii** (JuicyWay
+payout flows, per Task 52's already-confirmed beneficiary-first/
+pin-gated shape) — or, if the registration blocker is resolved first
+by a session with working `cargo`, that session's own first move
+should be `cargo check -p hyperswitch_connectors` against this leaf's
+two new files before anything else, per the New-Clone Checklist's own
+"if this ever turns out to be wrong" clause.
+
+## Patch Handoff — Task 77/a-3-i (JuicyWay connector scaffold)
+
+Per the Patch Handoff Convention above: this session's work is
+committed locally on branch
+`task77/a3i-juicyway-scaffold-connector-integration` (based on
+`origin/main` at `3e499039d`, re-confirmed via `git fetch origin`
+immediately before generating the patch — no drift, so this is a fresh
+combined patch, not amending anything unapplied). A patch file has
+been generated and handed over alongside this entry, per rule 5
+(mandatory, every time) — not just described in prose.
+
+**Exact commands, copy-paste as-is, filling in only the patch filename
+actually handed over:**
 ```
 cd ~/B-Pay-backend
 git am ~/storage/downloads/<patch-file-name>

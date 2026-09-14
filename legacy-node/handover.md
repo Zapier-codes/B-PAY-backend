@@ -106,6 +106,61 @@
 > task's own section. Nothing else in this file is required reading to
 > start work.**
 >
+> **🟣 NEWEST NEXT TASK (2026-09-14, session 2 — corrects the 🔵 box
+> directly below): Task 77/a-3-iii was already merged to `origin/main`
+> (commit `c056be40c`, authored by a prior sandbox session) before this
+> session started, but this file was never updated to say so** — the
+> 🔵 box below still named a-3-iii as pending, and there is no Patch
+> Handoff entry for it anywhere in this file, even though every other
+> completed leaf in this file has one. Two things are being corrected
+> here, not just one:
+>
+> 1. **This file is now caught up.** a-3-iii is done — see its
+>    commit message (`git show c056be40c`) for the real content:
+>    PoRecipient/PoFulfill/PoSync built against Task 52's
+>    beneficiary-first/pin-gated shape, using Paystack's a-2-iii as the
+>    closed-shape precedent. Flagged gaps carried forward unresolved:
+>    the beneficiary-response envelope shape, the bank-account
+>    field-reuse stopgap (no NUBAN/bank-code field), and JuicyWay's
+>    undocumented payout-status vocabulary beyond `pending`.
+> 2. **That commit landed directly on `main`**, not via the Patch
+>    Handoff Convention's branch → `git format-patch` → product-owner
+>    `git am` flow every other task in this file went through (rule 4
+>    below is explicit that a session should never push to `main`
+>    itself). Recorded here as a real discrepancy, per this file's own
+>    standing practice of correcting itself in the open rather than
+>    quietly patching over it — not re-litigated further, since the
+>    work itself is legitimate and re-doing it would just create a
+>    second, divergent implementation of live payout code.
+>
+> **This session's actual work (real progress on the first flagged
+> gap above, not just bookkeeping):** attempted to confirm the
+> beneficiary-response envelope shape against
+> `docs.juicyway.com/transfers/beneficiaries` and its linked
+> Create-Beneficiary reference page. The overview page fetched clean
+> and confirms the three request shapes already coded
+> (`account_details`/`crypto_details`/`interac_details`) match the
+> primary source exactly, plus one new fact not previously on record:
+> a fourth beneficiary type, **Mobile Money, is listed as "Coming
+> Soon"** — not yet buildable, but worth knowing it's on JuicyWay's own
+> roadmap rather than assuming bank/crypto/interac is the permanent
+> full set. The dedicated Create-Beneficiary endpoint reference page
+> (linked from the overview as `/transfers/beneficiaries/create-beneficiary`)
+> did not surface via search this session, so **the response envelope
+> (`id` vs `data.id`) remains genuinely unconfirmed** — this is a real
+> negative result (a primary source was actually sought, this time),
+> not the earlier sessions' inference-for-consistency. Next session:
+> try fetching that reference page directly, or its neighboring
+> `/reference/beneficiaries/create-a-beneficiary.md` raw-OpenAPI form
+> (the pattern that worked for `initiate-a-payout.md`).
+>
+> **Next real task, in order:** (a) resolve the beneficiary-response
+> envelope shape above, since PoFulfill's `connector_payout_id` handoff
+> depends on it being right; (b) once a working `rustc` ≥ 1.85 exists,
+> `cargo check -p hyperswitch_connectors` against every JuicyWay file
+> from a-3-i through a-3-iii — still never run, same as `storage_impl`
+> below.
+>
 > **🔵 NEWEST NEXT TASK (2026-09-14, latest — supersedes the 🟢 box
 > directly below for "what to work on" purposes; nothing in that box is
 > lost):** search this file for "Task 77/a-3-ii — JuicyWay engine

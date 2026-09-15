@@ -569,12 +569,34 @@ impl ConnectorIntegration<RSync, RefundsData, RefundsResponseData> for Flutterwa
         req: &RefundsRouterData<RSync>,
         connectors: &Connectors,
     ) -> CustomResult<String, errors::ConnectorError> {
-        let refund_id = req.request.connector_refund_id.clone().ok_or(
-            errors::ConnectorError::MissingRequiredField {
-                field_name: "connector_refund_id",
-            },
-        )?;
-        Ok(format!("{}/refunds/{}", self.base_url(connectors), refund_id))
+        // CORRECTED (see comment above the previous version of this
+        // method in git blame / commit eeb6156af): GET /v3/refunds/{id}
+        // is keyed on Flutterwave's own numeric *transaction* id, NOT
+        // the refund's own connector_refund_id -- confirmed two ways
+        // this session:
+        //   1. developer.flutterwave.com/v3.0.0/reference/get-transaction-refunds
+        //      itself: this endpoint's own `id` path param is documented
+        //      as "returned in the initiate charge and verify transaction
+        //      responses as data.id" -- explicitly the transaction id,
+        //      not a refund-record id.
+        //   2. The official `flutterwave-node-v3` npm package's own
+        //      refund-creation example uses an identically-named `id`
+        //      field with the same docstring ("This is the transaction
+        //      unique identifier. It is returned in the initiate
+        //      transaction call as data.id"), confirming both the
+        //      create and fetch endpoints share one id namespace: the
+        //      transaction's, not the refund's.
+        // So this pulls the same FlutterwaveTransactionMeta the Execute
+        // flow above reads, not req.request.connector_refund_id -- using
+        // connector_refund_id here would build a URL Flutterwave's API
+        // was never documented to accept.
+        let meta: flutterwave::FlutterwaveTransactionMeta =
+            crate::utils::to_connector_meta(req.request.connector_metadata.clone())?;
+        Ok(format!(
+            "{}/refunds/{}",
+            self.base_url(connectors),
+            meta.transaction_id
+        ))
     }
 
     fn build_request(

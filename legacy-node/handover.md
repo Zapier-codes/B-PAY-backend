@@ -106,7 +106,40 @@
 > task's own section. Nothing else in this file is required reading to
 > start work.**
 >
-> **🟢 NEWEST NEXT TASK (2026-09-14, session 10 — closes item #1 of the
+> **🟠 NEWEST NEXT TASK (2026-09-15, session 11 — a correction to the
+> 🟢 box's own session-10 work below, not a new gap):** `RSync`'s
+> `get_url`, as landed by session 10, read
+> `req.request.connector_refund_id` to build `GET /v3/refunds/{id}`.
+> That's the wrong id. Confirmed two ways this session:
+> `developer.flutterwave.com/v3.0.0/reference/get-transaction-refunds`
+> documents that same endpoint's own `id` path param as "returned in
+> the initiate charge and verify transaction responses as `data.id`" —
+> i.e. the *transaction* id, not a refund-record id — and the official
+> `flutterwave-node-v3` npm package's own refund-creation example
+> carries an identically-worded docstring on its own `id` field,
+> confirming both the create and fetch endpoints share one id
+> namespace (the transaction's), not two. Fixed by reading the same
+> `FlutterwaveTransactionMeta` (via `connector_metadata`) the `Execute`
+> flow already reads, instead of `connector_refund_id` — see "Task 73
+> follow-up -- refund id-threading" below, now amended in place with
+> this correction rather than a second separate entry.
+>
+> This was caught by a genuine origin-drift check this session found
+> — session 10's commit had already landed on `origin/main` before this
+> session started work on the *same* named task from a different
+> starting assumption, and the two disagreed on exactly this point.
+> Resolved by researching the actual Flutterwave docs fresh rather than
+> either side simply asserting or deferring to whichever commit landed
+> first.
+>
+> **Not done this session, genuinely still open — unchanged from the
+> 🟢 box's own list:**
+> 1. Remita and the other five unscaffolded legacy providers (Task 77's
+>    own provider split) — see the 🟣 box below for the full list.
+> 2. The 🟤 box's own PgKvStore/Finding #17 thread — untouched this
+>    session, a separate open thread, not a correction of it.
+>
+> **🟢 PRIOR NEXT TASK (2026-09-14, session 10 — closes item #1 of the
 > 🔵 box's own "not done" list below):** Flutterwave Refund (`Execute`/
 > `RSync`) is now wired for real (search "Task 73 follow-up -- refund
 > id-threading" below for the full entry). This session started by
@@ -126,9 +159,13 @@
 > (`FlutterwaveTransactionMeta`) the moment it's known — closing the
 > exact gap the 🟣 box below named. `Execute` reads that id back via
 > `crate::utils::to_connector_meta` to build
-> `POST /v3/transactions/{id}/refund`; `RSync` reads `connector_refund_id`
-> (populated by Execute's own response) directly, no metadata-threading
-> needed there. Request/response shapes — including the full confirmed
+> `POST /v3/transactions/{id}/refund`; ~~`RSync` reads
+> `connector_refund_id` (populated by Execute's own response) directly,
+> no metadata-threading needed there.~~ **Corrected in session 11 (see
+> the 🟠 box above) — `RSync` needs the same `connector_metadata`
+> lookup `Execute` uses, not `connector_refund_id`; struck through here
+> rather than deleted, per this file's own convention.** Request/response
+> shapes — including the full confirmed
 > refund-status vocabulary (`completed`/`completed-bank-transfer`/
 > `completed-momo`/`completed-mpgs`/`completed-offline`/
 > `completed-preauth`/`processing`/`pending-momo`) — were fetched fresh
@@ -25831,10 +25868,21 @@ flutterwave.rs` + `flutterwave/transformers.rs`:**
   <FlutterwaveTransactionMeta>(req.request.connector_metadata.clone())`.
   Request body `{ amount, comments }` (`comments` only sent when
   `RefundsData.reason` is `Some`).
-- `ConnectorIntegration<RSync, ...>` — `GET /v3/refunds/{id}`, `{id}`
+- `ConnectorIntegration<RSync, ...>` — `GET /v3/refunds/{id}`, ~~`{id}`
   read directly from `req.request.connector_refund_id` (populated by
   Execute's own response) — a clean field-for-field handoff with no
-  metadata-threading gap, unlike Execute's own transaction-id lookup.
+  metadata-threading gap, unlike Execute's own transaction-id
+  lookup.~~ **Wrong — corrected in session 11. Both
+  `developer.flutterwave.com/v3.0.0/reference/get-transaction-refunds`'s
+  own path-param description and the official `flutterwave-node-v3`
+  npm package's refund-creation example independently describe this
+  `{id}` as the *transaction* id ("returned in the initiate charge and
+  verify transaction responses as `data.id`"), not a separate
+  refund-record id — so `RSync` needed the same
+  `to_connector_meta::<FlutterwaveTransactionMeta>` lookup `Execute`
+  uses, not `connector_refund_id`. Struck through rather than deleted,
+  per this file's own convention; see the 🟠 box at the top of this
+  file for the fix itself.**
 - Response shape and the full refund-status vocabulary (`completed`,
   `completed-bank-transfer`, `completed-momo`, `completed-mpgs`,
   `completed-offline`, `completed-preauth`, `processing`,
@@ -25893,6 +25941,79 @@ block is owed this time** — no `db/migrations/` changes.
 **Exact command(s) for the product owner:**
 ```
 cd ~/B-Pay-backend
+git am ~/storage/downloads/<patch-file-name>
+git push
+```
+
+---
+
+## Task 73 follow-up — Flutterwave RSync id-source correction (2026-09-15, session 11)
+
+**Trigger:** direct product-owner instruction to check the industry-standard
+(Flutterwave's own documented) approach and use whichever is actually
+correct — prompted by this session finding real drift: `origin/main` had
+moved to `eeb6156af` (session 10's own refund id-threading commit) after
+a WIP commit in this sandbox had started the *same* task from a different,
+untested assumption about `RSync`'s id source. Rather than pick a side by
+guessing or deferring to whichever commit landed first, the actual
+Flutterwave docs were checked fresh.
+
+**Finding, not an opinion:** `GET /v3/refunds/{id}`'s own reference page
+(`developer.flutterwave.com/v3.0.0/reference/get-transaction-refunds`)
+documents its `id` path param as "returned in the initiate charge and
+verify transaction responses as `data.id`" — i.e. the original
+*transaction* id. The official `flutterwave-node-v3` npm package's own
+refund-creation example carries an identically-worded docstring on its
+own `id` field ("This is the transaction unique identifier. It is
+returned in the initiate transaction call as `data.id`"). Both
+independently confirm the create and fetch endpoints share one id
+namespace — the transaction's — not two separate ones. Session 10's own
+`RSync` implementation read `req.request.connector_refund_id` instead
+(the *refund's* own id, populated by `Execute`'s response), which is a
+real bug: it would build a request against an id Flutterwave's own docs
+never described that endpoint as accepting, not a style disagreement.
+
+**Fix — `crates/hyperswitch_connectors/src/connectors/flutterwave.rs`
+only** (no `transformers.rs` change needed — `FlutterwaveTransactionMeta`
+and `to_connector_meta` already existed from session 10's own work):
+`RSync`'s `get_url` now reads the same
+`to_connector_meta::<FlutterwaveTransactionMeta>(req.request
+.connector_metadata.clone())` lookup `Execute`'s `get_url` already uses,
+instead of `req.request.connector_refund_id`. The `MissingRequiredField`
+fail-closed behavior `to_connector_meta` already provides on a missing/
+malformed metadata blob carries over unchanged — same posture session
+10's own `Execute` implementation already established for exactly this
+kind of "id genuinely isn't available yet" case.
+
+**Not touched this session:** `Execute`'s own implementation (already
+correct — it was `RSync` alone that had the wrong id source),
+`transformers.rs` (no struct/shape changes needed), Remita/new-provider
+scaffolding, and the 🟤 box's own PgKvStore thread — none of these are
+this correction's scope.
+
+**Verification:** no working `rustc`/`cargo` this session either (same
+wall as every session in this file's history) — reviewed by reading
+against `Execute`'s own already-landed implementation as the direct
+in-file precedent for the corrected pattern, plus a brace/paren balance
+check on the one changed file (`flutterwave.rs`; came back balanced,
+141/141 braces, 360/360 parens).
+
+**Per the Patch Handoff Convention, rule 8: drift-checked before
+starting this correction** — `git fetch origin` at the top of this
+session surfaced the `eeb6156af` drift described above (the actual
+trigger for this whole entry); local `main` was `git reset --hard` to
+it before making this fix, so this correction sits directly on top of
+session 10's own commit, not stacked against a stale base. **Per rule
+7, only the Patch Handoff block is owed this time** — no `db/
+migrations/` changes.
+
+**Per this repo's own rule: not pushed to `main`, not merged** — work
+stays on this session's own branch, a patch was generated and handed to
+the product owner directly for their own `git am` + push.
+
+**Exact command(s) for the product owner:**
+```
+cd ~/B-PAY-backend
 git am ~/storage/downloads/<patch-file-name>
 git push
 ```

@@ -200,17 +200,17 @@ impl TryFrom<&JuicywayRouterData<&PaymentsAuthorizeRouterData>> for JuicywayPaym
         let email = router_data.request.get_email()?;
         let first_name = router_data.get_optional_billing_first_name().ok_or(
             errors::ConnectorError::MissingRequiredField {
-                field_name: "billing.first_name",
+                field_name: "billing.first_name".into(),
             },
         )?;
         let last_name = router_data.get_optional_billing_last_name().ok_or(
             errors::ConnectorError::MissingRequiredField {
-                field_name: "billing.last_name",
+                field_name: "billing.last_name".into(),
             },
         )?;
         let phone_number = router_data.get_optional_billing_phone_number().ok_or(
             errors::ConnectorError::MissingRequiredField {
-                field_name: "billing.phone_number",
+                field_name: "billing.phone_number".into(),
             },
         )?;
 
@@ -669,7 +669,8 @@ fn get_juicyway_payout_bank_account<F>(
                     .ok_or(errors::ConnectorError::MissingRequiredField {
                         field_name: "bank_name (required by Juicyway's confirmed \
                         Create-NGN-Bank-Account-Beneficiary shape; not optional \
-                        despite AchBankTransfer.bank_name being Option<String>)",
+                        despite AchBankTransfer.bank_name being Option<String>)"
+                            .into(),
                     })?;
             Ok(JuicywayBeneficiaryRequest::BankAccount {
                 currency: router_data.request.destination_currency,

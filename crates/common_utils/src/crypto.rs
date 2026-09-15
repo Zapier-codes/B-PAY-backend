@@ -6,7 +6,7 @@ use error_stack::ResultExt;
 use hyperswitch_masking::{ExposeInterface, PeekInterface, Secret};
 use ring::{
     aead::{self, BoundKey, OpeningKey, SealingKey, UnboundKey},
-    constant_time, hmac, rand as ring_rand,
+    hmac, rand as ring_rand,
     signature::{RsaKeyPair, RSA_PSS_SHA256},
 };
 #[cfg(feature = "logs")]
@@ -18,6 +18,7 @@ use rsa::{
     traits::PublicKeyParts,
     Oaep,
 };
+use subtle::ConstantTimeEq;
 
 use crate::{
     consts::{BASE64_ENGINE, BASE64_ENGINE_URL_SAFE_NO_PAD},
@@ -210,10 +211,25 @@ impl DecodeMessage for NoAlgorithm {
 /// back verbatim on each call (e.g. Flutterwave v3's `verif-hash` webhook
 /// header) — as opposed to a per-payload HMAC digest the caller computes
 /// fresh each time. There is nothing to hash here, so `verify_signature`'s
-/// `msg` argument is unused; only `secret` and `signature` are compared,
-/// in constant time, via the same primitive [`HmacSha256`]'s own
-/// `ring::hmac::verify` uses internally, so this carries the same
-/// timing-attack resistance as this module's HMAC variants.
+/// `msg` argument is unused; only `secret` and `signature` are compared, in
+/// constant time.
+///
+/// CI correction (2026-09-15): this originally called
+/// `ring::constant_time::verify_slices_are_equal`. The pinned `ring`
+/// version this workspace resolves to has since renamed that whole module
+/// to `ring::deprecated_constant_time`, with `ring`'s own deprecation
+/// notice reading, in full: "Internal module not intended for external
+/// use, with no promises regarding side channels." That is not a rename
+/// to shrug off — `ring` is explicitly saying external callers were never
+/// covered by its side-channel-resistance guarantee in the first place.
+/// Silencing the deprecation warning (e.g. by switching the import to
+/// `ring::deprecated_constant_time`) would still leave that gap. The
+/// actual fix is `subtle::ConstantTimeEq` — the crate the wider
+/// RustCrypto ecosystem (and `ring` itself, internally) uses for exactly
+/// this externally-callable-constant-time-comparison purpose. It was
+/// already present in this workspace's `Cargo.lock` transitively (pulled
+/// in by other crypto dependencies) before this fix made it a direct
+/// dependency of `common_utils` — see that crate's own `Cargo.toml`.
 #[derive(Debug)]
 pub struct ConstantTimeEquals;
 
@@ -224,7 +240,7 @@ impl VerifySignature for ConstantTimeEquals {
         signature: &[u8],
         _msg: &[u8],
     ) -> CustomResult<bool, errors::CryptoError> {
-        Ok(constant_time::verify_slices_are_equal(secret, signature).is_ok())
+        Ok(secret.ct_eq(signature).into())
     }
 }
 

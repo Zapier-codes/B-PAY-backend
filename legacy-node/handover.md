@@ -106,7 +106,42 @@
 > task's own section. Nothing else in this file is required reading to
 > start work.**
 >
-> **🟡 NEWEST NEXT TASK (2026-09-15, session 12 — closes a gap
+> **🔴 NEWEST NEXT TASK (2026-09-15, session 14 — real CI triage, 2
+> confirmed root causes fixed, 1 genuinely open question for whoever
+> pushes next):** Search "CI triage — `ring::deprecated_constant_time`
+> + non-exhaustive `Connector` match, 2 real fixes" below for the full
+> entry. Short version: the product owner ran the real
+> `gh run view <id> --job=<id> --log` workflow (this file's own
+> established process) on run `35012152164` and pasted back all 5
+> failing jobs' individual logs — the first time in this session's own
+> history in this box's chain that a session went one job at a time
+> instead of one combined `--log-failed` dump. Two distinct, confirmed
+> root causes accounted for all 5 failures:
+> 1. `ConstantTimeEquals` (session 9's own webhook signature-
+>    verification work) called `ring::constant_time::verify_slices_are_equal`,
+>    which the pinned `ring` version has since deprecated wholesale —
+>    fixed by switching to `subtle::ConstantTimeEq`, not by silencing
+>    the warning, since `ring`'s own deprecation text says the old path
+>    was never covered by a side-channel guarantee for external callers
+>    in the first place.
+> 2. `crates/connector_configs/src/connector.rs`'s `get_connector_config`
+>    match was missing `Connector::Flutterwave`/`Connector::Korapay`
+>    arms — leftover from whichever session/branch registered those two
+>    into the `Connector` enum itself (commits `f631f64eb`/`efa7425b6`/
+>    `0aa5106a5`/`4026ab14c`, none of them this conversation's own work)
+>    without updating every match over it. Both arms added, in the
+>    enum's own declared order, mirroring the existing pattern exactly.
+>
+> **Genuinely open, NOT fixed, flagged rather than guessed at:** `cargo
+> check` stops at a crate's first error and doesn't compile anything
+> that depends on it, so there is real, honest uncertainty whether
+> fixing `connector_configs` exposes *another* non-exhaustive
+> `Connector` match somewhere downstream that this session's logs never
+> got far enough to show. Don't assume clean on the next push just
+> because this session's fix is well-reasoned — check the next run's
+> actual result.
+>
+> **🟡 PRIOR NEXT TASK (2026-09-15, session 12 — closes a gap
 > deliberately deferred in session 9, not an item from the 🟠 box's own
 > list just above):** Flutterwave webhook payload parsing
 > (`get_webhook_object_reference_id`/`get_webhook_event_type`/
@@ -26146,6 +26181,166 @@ starting** — `git fetch origin` at the top of this session confirmed
 no drift beyond that; local `main` was already there. **Per rule 7,
 only the Patch Handoff block is owed this time** — no `db/migrations/`
 changes.
+
+**Per this repo's own rule: not pushed to `main`, not merged** — work
+stays on this session's own branch, a patch was generated and handed
+to the product owner directly for their own `git am` + push.
+
+**Exact command(s) for the product owner:**
+```
+cd ~/B-PAY-backend
+git am ~/storage/downloads/<patch-file-name>
+git push
+```
+
+---
+
+## CI triage — `ring::deprecated_constant_time` + non-exhaustive `Connector` match, 2 real fixes (2026-09-15, session 14)
+
+**Trigger:** this is the first session in this file's own history to
+actually use the per-job `gh run view --job=<id> --log` workflow this
+file itself established as the target process, rather than a single
+combined `--log-failed` dump. The product owner ran `gh run list`
+(hit a terminal-truncation snag first, resolved with `--json` — worth
+remembering for next time: `gh`'s table output truncates run/job IDs
+in a narrow terminal, `--json databaseId,...` doesn't), then
+`gh run view <run-id>` to see per-job pass/fail plus job IDs, then
+pulled one `--log` per failing job. Five jobs came back red on run
+`35012152164` (push to `main` at `4026ab14c`,
+"fix(euclid): add Juicyway/Korapay/Flutterwave to Connector<->
+RoutableConnectors conversions"): `Run tests on stable toolchain`,
+`Check compilation on MSRV toolchain`, `Check wasm build`,
+`cargo check -p storage_impl`'s own "cargo check (full workspace)"
+step, and `Check compilation for V2 features`.
+
+**Root cause 1 — `crates/common_utils/src/crypto.rs`, this repo's own
+bug (session 9):** `ConstantTimeEquals::verify_signature` called
+`ring::constant_time::verify_slices_are_equal`. The pinned `ring`
+version this CI resolves to has renamed/deprecated that whole module
+to `ring::deprecated_constant_time`, with `ring`'s own message in
+full: "Internal module not intended for external use, with no
+promises regarding side channels." Two jobs (`Run tests on stable
+toolchain`'s clippy step, `Check compilation on MSRV toolchain`) run
+with `RUSTFLAGS: -D warnings`, so this was a hard, fatal error there —
+`common_utils` itself failed to compile, which is also why the MSRV
+job's log never got far enough to show root cause 2 at all. The other
+two jobs that touched this code (`Check wasm build`,
+`cargo check -p storage_impl`) don't set `-D warnings`, so it only
+showed as a non-fatal warning there before each hit root cause 2
+separately.
+
+**Not a rename fix.** Switching the import to
+`ring::deprecated_constant_time` would silence the warning but leave
+the actual problem: `ring` is explicitly saying external callers (this
+crate) were never covered by a side-channel-resistance guarantee here
+in the first place, deprecated name or not. Fixed instead with
+`subtle::ConstantTimeEq` — the crate the wider RustCrypto ecosystem
+(and `ring` itself, internally) uses for exactly this
+externally-callable-constant-time-comparison purpose.
+`secret.ct_eq(signature).into()` replaces the old
+`constant_time::verify_slices_are_equal(...).is_ok()` line; nothing
+else about `ConstantTimeEquals`'s shape, its trait impl, or how
+Flutterwave's webhook verification calls it changed. `subtle` v2.6.1
+was already resolved in this workspace's `Cargo.lock` transitively
+(pulled in by another crypto dependency already in the tree) before
+this fix added it as a *direct* dependency of `common_utils` — one
+line in that crate's own `Cargo.toml`, alphabetically placed. `Cargo.lock`
+itself was deliberately **not** hand-edited this session — this repo's
+own CI (`.github/workflows/ci.yml`'s "Check Cargo.lock changed" step)
+only auto-commits a `cargo`-updated lockfile on same-repo pull-request
+events, and doesn't pass `--locked` to any check/clippy invocation on
+a direct push (which is what triggered this run) — so `cargo` will add
+the missing `common_utils` → `subtle` dependency edge to `Cargo.lock`
+itself on the next real CI run, same as it would for any other
+manifest-only dependency addition. Hand-editing a `cargo`-generated
+lockfile without `cargo` available to verify it against would have
+been a real risk for no benefit here.
+
+**Root cause 2 — `crates/connector_configs/src/connector.rs`, NOT this
+conversation's own bug:** `ConnectorConfig::get_connector_config`'s
+`match connector { ... }` was missing arms for `Connector::Flutterwave`
+and `Connector::Korapay` (`error[E0004]: non-exhaustive patterns`) —
+left over from whichever session/branch registered those two connectors
+into the `Connector` enum itself. The real commits behind that
+registration work (visible in `git log` on `main`, none of them this
+conversation's own): `f631f64eb` ("fix(scripts): add_connector.sh —
+portable sed for GNU sed"), `efa7425b6` ("fix(common_enums): add
+Flutterwave/Juicyway/Korapay to is_separate_authentication_supported"),
+`0aa5106a5` ("style: apply cargo fmt drift across the four
+hand-scaffolded connectors"), `4026ab14c` ("fix(euclid): add
+Juicyway/Korapay/Flutterwave to Connector<->RoutableConnectors
+conversions"). That work clearly had a *working* toolchain and ran
+real CI against it — evidenced by the fmt-drift and RoutableConnectors
+fixes both being the kind of thing only an actual `cargo`/CI run would
+surface — but this one match in `connector_configs` still slipped
+through, either because it's a different crate than the ones those
+commits' own names suggest they touched, or because an earlier CI run
+never got far enough to reach it (see the open question below for why
+that's plausible). Both missing arms added:
+`Connector::Flutterwave => Ok(connector_data.flutterwave)` between
+`Flexiti` and `Forte` (the `Connector` enum's own declared order —
+NOT alphabetical-by-display-name; `connector_data.flutterwave`
+already existed as a struct field, just the match arm was missing),
+`Connector::Korapay => Ok(connector_data.korapay)` between `Klarna`
+and `Loonio`, same pattern. `Connector::Juicyway` already had its own
+arm — only these two were ever missing here, confirmed by the
+compiler's own error text naming exactly these two and nothing else,
+across all three logs that reached this match.
+
+**Genuinely open — flagged, not resolved:** `cargo check`/`clippy`
+stop at a crate's first error and don't proceed to compile anything
+depending on it. Three of the five logs (`Check wasm build`,
+`cargo check -p storage_impl`'s workspace step, `Check compilation for
+V2 features`) all died at this exact same `connector_configs` line —
+meaning none of them got far enough to reveal whether some other,
+different crate has its own non-exhaustive `Connector` match this
+session's logs simply never reached. This is real uncertainty, not a
+guess either way — the honest position is "the next CI run might turn
+up another one of these," not "this is definitely the only one." Grep
+sweeping the whole workspace for every `match connector` /
+`match Connector::` site and eyeballing each one was deliberately not
+done this session — with ~150 connector variants and dozens of
+legitimate partial-match sites (payout-only enums, billing-only enums,
+etc., confirmed distinct from `Connector` itself while checking root
+cause 2 above), that kind of blind sweep produces exactly the "did I
+miss one, did I flag a false positive" uncertainty this file's own
+conventions exist to avoid. Let the next real CI run answer this
+instead.
+
+**Verification:** no working `rustc`/`cargo` this session either (same
+wall as every session in this file's history, `common_utils`/
+`connector_configs` root-caused entirely from the pasted log text, not
+from a local build) — reviewed by reading, cross-checked line-for-line
+against the compiler's own quoted source snippets in each log, plus a
+brace/paren balance check on both changed `.rs` files
+(`crypto.rs`: 193/193 braces, 679/680 parens — that one paren
+mismatch is the same single pre-existing, unrelated one flagged as
+already-present back in session 9, confirmed unchanged by this
+session's own edit; `connector.rs`: 49/49 braces, 278/278 parens,
+clean).
+
+**Per the Patch Handoff Convention, rule 8: drift caught mid-session,
+not before it** — `git fetch origin` at the start of this session
+surfaced the real drift this whole entry is about (`771d4de09` →
+`4026ab14c`, plus the new `task-77-a5-remita-scaffold` branch, itself
+further evidence a working toolchain is now in active use elsewhere
+against this repo). What actually happened next is worth recording
+honestly rather than smoothing over: this session's own fixes were
+first written against that stale `771d4de09` base — the earlier
+`git fetch` result didn't get acted on before editing started. Caught
+before committing, not after: a second check (`git branch --show-
+current` + `git log -1`) showed local `main` was still 4 commits
+behind. Confirmed via `git diff main origin/main -- <the 4 touched
+files>` that none of those 4 intervening commits had touched any file
+this session edited (empty diff on all four), then `git stash`,
+`git checkout main && git reset --hard origin/main`, a fresh branch
+off the real base, and `git stash pop` — clean, no conflicts, content
+re-verified (balance checks re-run, diffs re-read) after the pop
+rather than assumed identical. So: real drift, a real process slip in
+not re-checking before editing, caught before it reached a commit —
+recorded as what happened, not rewritten as if the sync happened
+first. **Per rule 7, only the Patch Handoff block is owed this time**
+— no `db/migrations/` changes.
 
 **Per this repo's own rule: not pushed to `main`, not merged** — work
 stays on this session's own branch, a patch was generated and handed

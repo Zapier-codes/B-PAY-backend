@@ -106,7 +106,53 @@
 > task's own section. Nothing else in this file is required reading to
 > start work.**
 >
-> **🔵 NEWEST NEXT TASK (2026-09-14, session 9 — closes item #2 of the
+> **🟢 NEWEST NEXT TASK (2026-09-14, session 10 — closes item #1 of the
+> 🔵 box's own "not done" list below):** Flutterwave Refund (`Execute`/
+> `RSync`) is now wired for real (search "Task 73 follow-up -- refund
+> id-threading" below for the full entry). This session started by
+> reconciling against `origin/main` — twice, per explicit instruction —
+> and found real drift each time: two prior sessions' own patches
+> (payout flows, then webhook verification) had already landed on top
+> of this session's own starting point mid-session. In-progress local
+> work was safely `git stash`ed both times rather than lost or forced
+> through against stale context, and manually reapplied against each
+> new `origin/main` afterward (an automatic `git apply`/stash-pop hit a
+> real merge conflict the second time, from the payout commit's own
+> import-block changes — resolved by hand, not by force-pushing over
+> either side).
+>
+> **Done this session:** PSync's own response transformer now stores
+> Flutterwave's numeric transaction id in `connector_metadata`
+> (`FlutterwaveTransactionMeta`) the moment it's known — closing the
+> exact gap the 🟣 box below named. `Execute` reads that id back via
+> `crate::utils::to_connector_meta` to build
+> `POST /v3/transactions/{id}/refund`; `RSync` reads `connector_refund_id`
+> (populated by Execute's own response) directly, no metadata-threading
+> needed there. Request/response shapes — including the full confirmed
+> refund-status vocabulary (`completed`/`completed-bank-transfer`/
+> `completed-momo`/`completed-mpgs`/`completed-offline`/
+> `completed-preauth`/`processing`/`pending-momo`) — were fetched fresh
+> this session from developer.flutterwave.com/docs/collecting-payments/
+> refunds, not assumed or carried over from an earlier session's
+> citation. Not compiled — no working `rustc`/`cargo` this session
+> either, same wall as every prior session; reviewed by reading plus a
+> brace/paren balance check on both changed files.
+>
+> **Real, load-bearing consequence flagged in the code comment, not
+> just here:** a refund can only succeed once PSync has run at least
+> once for that payment and populated `connector_metadata` — attempting
+> one straight after Authorize (before any sync call) now fails with a
+> clear `MissingRequiredField`, not a confusing downstream 404.
+>
+> **Not done this session, genuinely still open:**
+> 1. ~~Flutterwave Refund id-threading~~ — done this session, struck
+>    through here rather than deleted, per this file's own convention.
+> 2. Remita and the other five unscaffolded legacy providers (Task 77's
+>    own provider split) — see the 🟣 box below for the full list.
+> 3. The 🟤 box's own PgKvStore/Finding #17 thread — untouched this
+>    session, a separate open thread, not a correction of it.
+>
+> **🔵 PRIOR NEXT TASK (2026-09-14, session 9 — closes item #2 of the
 > 🟣 box's own "not done" list below, per direct product-owner steer):**
 > Flutterwave v3 webhook signature verification is now wired into
 > `IncomingWebhook` (search "Task 73 follow-up -- webhook signature
@@ -25736,6 +25782,117 @@ their own `git am` + push.
 **Exact command(s) for the product owner:**
 ```
 cd ~/B-PAY-backend
+git am ~/storage/downloads/<patch-file-name>
+git push
+```
+
+### Task 73 follow-up — Flutterwave refund id-threading (2026-09-14, session 10)
+
+**Trigger:** the 🔵 box's own "not done" list named Flutterwave Refund
+id-threading as the one remaining item from the original Task 73
+scaffold (`fa6b4d17b`) that neither the payout-flows follow-up
+(`30362e40a`) nor the webhook-verification follow-up (`84a928e8e`) had
+closed. Picked up directly, per explicit instruction to check `origin`
+before continuing.
+
+**Real drift hit twice this session, both handled by stash-and-reapply,
+not by force:** this session started against `e4a64757b` (this
+sandbox's own last patch, Finding #17). A `git fetch origin` before
+starting any edit found `84a928e8e` already ahead (webhook
+verification), one commit past a payout-flows commit
+(`30362e40a`) this session hadn't seen yet either. Work in progress
+(the refund-wiring edits themselves) was `git stash`ed, `main` was
+`git reset --hard`  to the new `origin/main`, and the stash was
+reapplied. The automatic reapply (`git stash pop`) hit a real conflict
+in `transformers.rs` — not from this session's own edits colliding with
+each other, but because the payout-flows commit had rewritten the same
+top-of-file import block this session's own edits also touched (adding
+`#[cfg(feature = "payouts")]`-gated imports). Rather than force-resolve
+the auto-generated conflict markers blind, the conflicted merge was
+discarded (`git reset --hard HEAD`, stash kept safe), and this
+session's own isolated diff (`git diff` against its own true starting
+point, `e4a64757b`) was re-applied by hand against the new file
+content — the same discipline as reading a real caller in full before
+changing it, applied to git state instead of application code. A
+second `git fetch origin` (per a second explicit instruction to
+re-check) confirmed no further drift before finalizing.
+
+**What's built — `crates/hyperswitch_connectors/src/connectors/
+flutterwave.rs` + `flutterwave/transformers.rs`:**
+- `FlutterwaveTransactionMeta { transaction_id: i64 }` — a new struct,
+  populated in PSync's own response `TryFrom` and stored in
+  `PaymentsResponseData::TransactionResponse.connector_metadata` via
+  `common_utils::ext_traits::Encode::encode_to_value()`. Same "thread an
+  id forward through connector_metadata for a later flow to read back"
+  pattern this crate's `authorizedotnet.rs` already uses for its own
+  refund metadata — not a new mechanism invented for this connector.
+- `ConnectorIntegration<Execute, ...>` — `POST /v3/transactions/{id}/
+  refund`, `{id}` read back via `crate::utils::to_connector_meta::
+  <FlutterwaveTransactionMeta>(req.request.connector_metadata.clone())`.
+  Request body `{ amount, comments }` (`comments` only sent when
+  `RefundsData.reason` is `Some`).
+- `ConnectorIntegration<RSync, ...>` — `GET /v3/refunds/{id}`, `{id}`
+  read directly from `req.request.connector_refund_id` (populated by
+  Execute's own response) — a clean field-for-field handoff with no
+  metadata-threading gap, unlike Execute's own transaction-id lookup.
+- Response shape and the full refund-status vocabulary (`completed`,
+  `completed-bank-transfer`, `completed-momo`, `completed-mpgs`,
+  `completed-offline`, `completed-preauth`, `processing`,
+  `pending-momo`) fetched fresh this session from
+  developer.flutterwave.com/docs/collecting-payments/refunds — a real
+  worked example (`{"status":"success","message":"Transaction refund
+  initiated","data":{"id":75923,...,"status":"completed",...}}`), not
+  assumed or carried over from `fa6b4d17b`'s own citation of the same
+  page. No `failed`/rejected status value was shown on the fetched
+  page — `#[serde(other)] Unknown` catches anything outside this list,
+  mapped to `RefundStatus::Pending` rather than guessed at, same
+  fail-safe default `FlutterwaveTransactionStatus::Unknown` already
+  uses in this same file.
+
+**⚠️ Real, load-bearing consequence of the id-threading fix, flagged in
+the code comment too:** a refund can only succeed once PSync has
+actually run at least once for that payment and populated
+`connector_metadata` with the numeric id. A refund attempted
+immediately after Authorize (before any sync call ever ran) now fails
+with a clear `MissingRequiredField`, not a confusing downstream 404
+from calling the refund endpoint with an empty or wrong id. This is
+inherent to Flutterwave's own API shape (Authorize's response
+genuinely never returns the numeric id — see `FlutterwavePaymentsResponse`'s
+own note in transformers.rs) — not a bug introduced by this fix, but a
+real operational constraint worth knowing before relying on
+same-request refunds.
+
+**Not compiled** — no working `rustc`/`cargo` this session either, same
+wall as every session in this file's history (re-confirmed:
+`which rustc cargo` → nothing). Reviewed by reading against this
+crate's own `authorizedotnet.rs` (metadata-threading precedent) and
+`affirm.rs`/`aci.rs` (RSync/refund `ConnectorIntegration` boilerplate
+precedent). A plain-text brace/paren balance check was run over both
+changed files and passed clean, same minimal sanity floor as every
+uncompiled `.rs` change since Task 73.
+
+**Not done, still genuinely open:**
+- Remita and the other five unscaffolded legacy providers (Task 77's
+  own provider split) — untouched this session.
+- The PgKvStore/Finding #17 thread (`db/ephemeral_key.rs`'s own
+  multi-key atomic-write gap) — a separate open thread, untouched this
+  session.
+- Flutterwave's own `get_webhook_object_reference_id`/
+  `get_webhook_event_type`/`get_webhook_resource_object` (payload
+  parsing) — still `WebhooksNotImplemented`, unchanged, same deferral
+  the webhook-verification session already flagged as separate scope.
+
+**Per the Patch Handoff Convention, rule 8: drift-checked twice this
+session, not once** — `git fetch origin` was run both at the start of
+this session and again immediately before generating this session's
+patch, per explicit instruction each time; both confirmed
+`origin/main` at `84a928e8e`, unmoved since the second check, so this
+is a fresh commit on top of it. **Per rule 7, only the Patch Handoff
+block is owed this time** — no `db/migrations/` changes.
+
+**Exact command(s) for the product owner:**
+```
+cd ~/B-Pay-backend
 git am ~/storage/downloads/<patch-file-name>
 git push
 ```

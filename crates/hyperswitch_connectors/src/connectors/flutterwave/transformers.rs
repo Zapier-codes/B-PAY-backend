@@ -1,15 +1,17 @@
 #[cfg(feature = "payouts")]
 use api_models::payouts::{BankTransfer, PayoutMethodData};
-use common_enums::{enums, AttemptStatus};
+use common_enums::{enums, AttemptStatus, RefundStatus};
 #[cfg(feature = "payouts")]
 use common_enums::PayoutStatus;
-use common_utils::{pii::Email, types::FloatMajorUnit};
+use common_utils::{ext_traits::Encode, pii::Email, types::FloatMajorUnit};
+use error_stack::ResultExt;
 use hyperswitch_domain_models::{
     payment_method_data::PaymentMethodData,
     router_data::{ConnectorAuthType, RouterData},
-    router_request_types::ResponseId,
-    router_response_types::{PaymentsResponseData, RedirectForm},
-    types::PaymentsAuthorizeRouterData,
+    router_flow_types::refunds::Execute,
+    router_request_types::{RefundsData, ResponseId},
+    router_response_types::{PaymentsResponseData, RedirectForm, RefundsResponseData},
+    types::{PaymentsAuthorizeRouterData, RefundsRouterData},
 };
 #[cfg(feature = "payouts")]
 use hyperswitch_domain_models::types::{PayoutsResponseData, PayoutsRouterData};
@@ -274,6 +276,23 @@ impl From<FlutterwaveTransactionStatus> for AttemptStatus {
     }
 }
 
+// Closes the "confirmed endpoint, not yet wired" gap this connector's own
+// Execute/RSync stubs (mod.rs) previously flagged: Flutterwave v3's refund
+// endpoint (`POST /v3/transactions/{id}/refund`, confirmed against
+// developer.flutterwave.com/docs/collecting-payments/refunds and its
+// linked API reference, fetched this session) keys off Flutterwave's own
+// numeric transaction `id` -- the same id `FlutterwavePaymentsResponse`'s
+// own note above confirms Authorize never returns, and which PSync only
+// learns once the hosted checkout actually completes. Threading that id
+// forward via `connector_metadata` -- populated below, read back out by
+// Execute's own `get_url` in mod.rs -- is the same "carry an id you'll
+// need for a later flow" pattern this crate's authorizedotnet.rs already
+// uses for its own refund metadata, not a new mechanism invented here.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FlutterwaveTransactionMeta {
+    pub transaction_id: i64,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct FlutterwaveVerifyData {
     pub id: i64,
@@ -299,13 +318,27 @@ impl<F, T> TryFrom<ResponseRouterData<F, FlutterwaveVerifyResponse, T, PaymentsR
             return Err(errors::ConnectorError::ResponseHandlingFailed.into());
         }
 
+        // Real numeric id, only ever knowable from this response (see
+        // `FlutterwaveTransactionMeta`'s own note above) -- stored here so
+        // a later Refund call has somewhere to read it back from. A
+        // serialization failure here is unreachable in practice (a
+        // struct with one `i64` field cannot fail `serde_json` encoding),
+        // but `encode_to_value` returns a `Result` so this is handled
+        // rather than unwrapped, matching this crate's own no-panics
+        // posture.
+        let connector_metadata = FlutterwaveTransactionMeta {
+            transaction_id: item.response.data.id,
+        }
+        .encode_to_value()
+        .change_context(errors::ConnectorError::ResponseHandlingFailed)?;
+
         Ok(Self {
             status: AttemptStatus::from(item.response.data.status.clone()),
             response: Ok(PaymentsResponseData::TransactionResponse {
                 resource_id: ResponseId::ConnectorTransactionId(item.response.data.tx_ref),
                 redirection_data: Box::new(None),
                 mandate_reference: Box::new(None),
-                connector_metadata: None,
+                connector_metadata: Some(connector_metadata),
                 network_txn_id: None,
                 network_txn_link_id: None,
                 connector_response_reference_id: Some(item.response.data.id.to_string()),
@@ -313,6 +346,141 @@ impl<F, T> TryFrom<ResponseRouterData<F, FlutterwaveVerifyResponse, T, PaymentsR
                 authentication_data: None,
                 charges: None,
                 payment_account_reference: None,
+            }),
+            ..item.data
+        })
+    }
+}
+
+// ---------------------------------------------------------------------
+// Execute (Refund) — POST /v3/transactions/{id}/refund
+// ---------------------------------------------------------------------
+//
+// Request/response shape confirmed directly against
+// developer.flutterwave.com/docs/collecting-payments/refunds, fetched
+// this session (not carried over from an earlier session's summary):
+// body is `{ amount, comments }` (`comments` optional — only sent when
+// the caller actually supplies a reason); the id in the URL is
+// Flutterwave's own numeric transaction id (see `FlutterwaveTransactionMeta`
+// above for where this connector gets it from, since it's genuinely not
+// the same id `RefundsData.connector_transaction_id` carries here).
+#[derive(Debug, Serialize)]
+pub struct FlutterwaveRefundRequest {
+    pub amount: FloatMajorUnit,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub comments: Option<String>,
+}
+
+impl TryFrom<&FlutterwaveRouterData<&RefundsRouterData<Execute>>> for FlutterwaveRefundRequest {
+    type Error = error_stack::Report<errors::ConnectorError>;
+    fn try_from(
+        item: &FlutterwaveRouterData<&RefundsRouterData<Execute>>,
+    ) -> Result<Self, Self::Error> {
+        Ok(Self {
+            amount: item.amount,
+            comments: item.router_data.request.reason.clone(),
+        })
+    }
+}
+
+// Response shape confirmed via the same fetch as the request above — a
+// real worked example, not an inferred/guessed shape:
+// `{"status":"success","message":"Transaction refund initiated","data":
+// {"id":75923,"account_id":...,"tx_id":...,"flw_ref":"...",
+// "wallet_id":...,"amount_refunded":6900,"status":"completed",
+// "destination":"payment_source","meta":{...},"created_at":"..."}}`.
+// Only the fields this connector actually reads are modeled (`id`,
+// `status`), same "model what's used" posture as `FlutterwaveVerifyData`
+// above. `data.id` here is the REFUND's own id (distinct from `tx_id`,
+// the original transaction's id) — this is what
+// `RefundsResponseData.connector_refund_id` stores, and in turn what
+// RSync's own `get_url` below reads back to build `GET /v3/refunds/{id}`,
+// a clean field-for-field handoff with no metadata-threading gap the way
+// Execute's own id lookup needed one.
+//
+// Status vocabulary is the full confirmed list from that same page's own
+// table, not a guessed subset: `completed` (general),
+// `completed-bank-transfer`, `completed-momo`, `completed-mpgs`,
+// `completed-offline`, `completed-preauth` all map to success;
+// `processing`/`pending-momo` map to pending. No `failed`/rejected value
+// was shown on the fetched page — `#[serde(other)]` catches anything
+// outside this list as `Unknown`, mapped to `Pending` rather than
+// guessed at, same fail-safe default this connector's own
+// `FlutterwaveTransactionStatus::Unknown` uses.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "kebab-case")]
+pub enum FlutterwaveRefundStatus {
+    Completed,
+    CompletedBankTransfer,
+    CompletedMomo,
+    CompletedMpgs,
+    CompletedOffline,
+    CompletedPreauth,
+    Processing,
+    PendingMomo,
+    #[serde(other)]
+    Unknown,
+}
+
+impl From<FlutterwaveRefundStatus> for RefundStatus {
+    fn from(status: FlutterwaveRefundStatus) -> Self {
+        match status {
+            FlutterwaveRefundStatus::Completed
+            | FlutterwaveRefundStatus::CompletedBankTransfer
+            | FlutterwaveRefundStatus::CompletedMomo
+            | FlutterwaveRefundStatus::CompletedMpgs
+            | FlutterwaveRefundStatus::CompletedOffline
+            | FlutterwaveRefundStatus::CompletedPreauth => Self::Success,
+            FlutterwaveRefundStatus::Processing
+            | FlutterwaveRefundStatus::PendingMomo
+            | FlutterwaveRefundStatus::Unknown => Self::Pending,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+pub struct FlutterwaveRefundData {
+    pub id: i64,
+    pub status: FlutterwaveRefundStatus,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+pub struct FlutterwaveRefundResponse {
+    pub status: String,
+    pub message: String,
+    pub data: FlutterwaveRefundData,
+}
+
+// ---------------------------------------------------------------------
+// RSync — GET /v3/refunds/{id}, and why one impl below covers Execute too
+// ---------------------------------------------------------------------
+//
+// Confirmed against developer.flutterwave.com/reference/get-transaction-
+// refunds ("Fetch a refunded transaction", fetched this session): takes
+// the refund's own id (not the original transaction's), a clean handoff
+// from Execute's own `connector_refund_id` below — no metadata-threading
+// gap here, unlike Execute's own transaction-id lookup (see
+// `FlutterwaveTransactionMeta` above). That same fetched page also shows
+// RSync's response as the identical `{status, message, data: {id, ...}}`
+// wrapper Execute's own response uses — genuinely the same shape, not an
+// assumption — so one generic `impl<F>` below handles both flows'
+// response parsing, same "one shared response type" pattern
+// `FlutterwavePaymentsResponse`'s own doc comment above already uses for
+// Authorize/PSync.
+impl<F> TryFrom<ResponseRouterData<F, FlutterwaveRefundResponse, RefundsData, RefundsResponseData>>
+    for RefundsRouterData<F>
+{
+    type Error = error_stack::Report<errors::ConnectorError>;
+    fn try_from(
+        item: ResponseRouterData<F, FlutterwaveRefundResponse, RefundsData, RefundsResponseData>,
+    ) -> Result<Self, Self::Error> {
+        if item.response.status != "success" {
+            return Err(errors::ConnectorError::ResponseHandlingFailed.into());
+        }
+        Ok(Self {
+            response: Ok(RefundsResponseData {
+                connector_refund_id: item.response.data.id.to_string(),
+                refund_status: RefundStatus::from(item.response.data.status),
             }),
             ..item.data
         })

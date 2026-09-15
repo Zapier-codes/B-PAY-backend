@@ -45,7 +45,7 @@ use hyperswitch_interfaces::{
     configs::Connectors,
     consts, errors,
     events::connector_api_logs::ConnectorEvent,
-    types::{PaymentsAuthorizeType, PaymentsSyncType, Response},
+    types::{PaymentsAuthorizeType, PaymentsSyncType, RefundExecuteType, RefundSyncType, Response},
     webhooks,
 };
 #[cfg(feature = "payouts")]
@@ -96,9 +96,11 @@ impl api::PaymentToken for Flutterwave {}
 // macros (Flutterwave was removed ONLY from the fulfill/retrieve macro
 // lists in default_implementations.rs, same two Korapay was removed
 // from) -- each would need its own, separately-confirmed Flutterwave API
-// shape before being built for real. Refund's id-threading gap above and
-// webhook verification remain the other genuinely open follow-ups this
-// leaf does not close.
+// shape before being built for real. Refund's id-threading and webhook
+// verification (both once open follow-ups from this same list) are now
+// closed too -- see the Execute/RSync impls and the IncomingWebhook impl
+// below for each. What's left open for a future leaf is only the
+// deliberately-deferred payout sub-flows named above.
 impl api::Payouts for Flutterwave {}
 #[cfg(feature = "payouts")]
 impl api::PayoutFulfill for Flutterwave {}
@@ -441,38 +443,181 @@ impl ConnectorIntegration<Void, PaymentsCancelData, PaymentsResponseData> for Fl
     }
 }
 
-// Refund: Flutterwave v3 does have a real `/v3/transactions/:id/refund`
-// endpoint (confirmed against developer.flutterwave.com's own "Refunds"
-// reference page, fetched this session) but it keys off Flutterwave's
-// own numeric `id` — the same id Authorize's response doesn't return
-// (see the PSync note above). Wiring Refund correctly needs that id to
-// already be on hand from a prior PSync/webhook, which this leaf doesn't
-// thread through yet. Left as an explicit, confirmed-endpoint-but-
-// not-yet-wired gap rather than guessed at, same "confirm before wiring"
-// posture as every other gap in this file.
+// Refund: Flutterwave v3's real `/v3/transactions/:id/refund` endpoint
+// (confirmed against developer.flutterwave.com/docs/collecting-payments/
+// refunds, fetched this session) keys off Flutterwave's own numeric `id`
+// — the same id Authorize's response doesn't return (see the PSync note
+// above). This was previously left `NotImplemented` pending exactly that
+// id-threading; PSync's own transformer (transformers.rs) now stores the
+// id in `connector_metadata` the moment it's known, closing the gap —
+// see `FlutterwaveTransactionMeta`'s own comment there for the full
+// reasoning and why a naive fix would have been wrong.
+//
+// Real, load-bearing consequence of that fix, not a footnote: a refund
+// can only succeed once PSync has actually run at least once for this
+// payment and populated `connector_metadata` — a refund attempted before
+// any sync call (Authorize's own response alone) fails with a clear
+// `MissingRequiredField`, not a confusing downstream 404 from calling
+// the refund endpoint with no id at all.
 impl ConnectorIntegration<Execute, RefundsData, RefundsResponseData> for Flutterwave {
+    fn get_headers(
+        &self,
+        req: &RefundsRouterData<Execute>,
+        connectors: &Connectors,
+    ) -> CustomResult<Vec<(String, Maskable<String>)>, errors::ConnectorError> {
+        self.build_headers(req, connectors)
+    }
+
+    fn get_content_type(&self) -> &'static str {
+        self.common_get_content_type()
+    }
+
+    fn get_url(
+        &self,
+        req: &RefundsRouterData<Execute>,
+        connectors: &Connectors,
+    ) -> CustomResult<String, errors::ConnectorError> {
+        let meta: flutterwave::FlutterwaveTransactionMeta =
+            crate::utils::to_connector_meta(req.request.connector_metadata.clone())?;
+        Ok(format!(
+            "{}/transactions/{}/refund",
+            self.base_url(connectors),
+            meta.transaction_id
+        ))
+    }
+
+    fn get_request_body(
+        &self,
+        req: &RefundsRouterData<Execute>,
+        _connectors: &Connectors,
+    ) -> CustomResult<RequestContent, errors::ConnectorError> {
+        let amount = convert_amount(
+            self.amount_converter,
+            req.request.minor_refund_amount,
+            req.request.currency,
+        )?;
+        let connector_router_data = flutterwave::FlutterwaveRouterData::from((amount, req));
+        let connector_req =
+            flutterwave::FlutterwaveRefundRequest::try_from(&connector_router_data)?;
+        Ok(RequestContent::Json(Box::new(connector_req)))
+    }
+
     fn build_request(
         &self,
-        _req: &RefundsRouterData<Execute>,
-        _connectors: &Connectors,
+        req: &RefundsRouterData<Execute>,
+        connectors: &Connectors,
     ) -> CustomResult<Option<Request>, errors::ConnectorError> {
-        Err(errors::ConnectorError::NotImplemented(
-            "Refund flow for Flutterwave (endpoint confirmed, id-threading not yet wired -- see mod.rs comment)".to_string(),
-        )
-        .into())
+        Ok(Some(
+            RequestBuilder::new()
+                .method(Method::Post)
+                .url(&RefundExecuteType::get_url(self, req, connectors)?)
+                .attach_default_headers()
+                .headers(RefundExecuteType::get_headers(self, req, connectors)?)
+                .set_body(RefundExecuteType::get_request_body(self, req, connectors)?)
+                .build(),
+        ))
+    }
+
+    fn handle_response(
+        &self,
+        data: &RefundsRouterData<Execute>,
+        event_builder: Option<&mut ConnectorEvent>,
+        res: Response,
+    ) -> CustomResult<RefundsRouterData<Execute>, errors::ConnectorError> {
+        let response: flutterwave::FlutterwaveRefundResponse = res
+            .response
+            .parse_struct("Flutterwave RefundExecuteResponse")
+            .change_context(errors::ConnectorError::ResponseDeserializationFailed)?;
+        event_builder.map(|i| i.set_response_body(&response));
+        router_env::logger::info!(connector_response=?response);
+        RouterData::try_from(ResponseRouterData {
+            response,
+            data: data.clone(),
+            http_code: res.status_code,
+        })
+        .change_context(errors::ConnectorError::ResponseHandlingFailed)
+    }
+
+    fn get_error_response(
+        &self,
+        res: Response,
+        event_builder: Option<&mut ConnectorEvent>,
+    ) -> CustomResult<ErrorResponse, errors::ConnectorError> {
+        self.build_error_response(res, event_builder)
     }
 }
 
+// GET /v3/refunds/{id} — a clean field-for-field handoff from Execute's
+// own `connector_refund_id` (see transformers.rs's own note on why this
+// one, unlike Execute's transaction-id lookup, has no metadata-threading
+// gap to begin with).
 impl ConnectorIntegration<RSync, RefundsData, RefundsResponseData> for Flutterwave {
+    fn get_headers(
+        &self,
+        req: &RefundsRouterData<RSync>,
+        connectors: &Connectors,
+    ) -> CustomResult<Vec<(String, Maskable<String>)>, errors::ConnectorError> {
+        self.build_headers(req, connectors)
+    }
+
+    fn get_content_type(&self) -> &'static str {
+        self.common_get_content_type()
+    }
+
+    fn get_url(
+        &self,
+        req: &RefundsRouterData<RSync>,
+        connectors: &Connectors,
+    ) -> CustomResult<String, errors::ConnectorError> {
+        let refund_id = req.request.connector_refund_id.clone().ok_or(
+            errors::ConnectorError::MissingRequiredField {
+                field_name: "connector_refund_id",
+            },
+        )?;
+        Ok(format!("{}/refunds/{}", self.base_url(connectors), refund_id))
+    }
+
     fn build_request(
         &self,
-        _req: &RefundsRouterData<RSync>,
-        _connectors: &Connectors,
+        req: &RefundsRouterData<RSync>,
+        connectors: &Connectors,
     ) -> CustomResult<Option<Request>, errors::ConnectorError> {
-        Err(errors::ConnectorError::NotImplemented(
-            "Refund sync flow for Flutterwave".to_string(),
-        )
-        .into())
+        Ok(Some(
+            RequestBuilder::new()
+                .method(Method::Get)
+                .url(&RefundSyncType::get_url(self, req, connectors)?)
+                .attach_default_headers()
+                .headers(RefundSyncType::get_headers(self, req, connectors)?)
+                .build(),
+        ))
+    }
+
+    fn handle_response(
+        &self,
+        data: &RefundsRouterData<RSync>,
+        event_builder: Option<&mut ConnectorEvent>,
+        res: Response,
+    ) -> CustomResult<RefundsRouterData<RSync>, errors::ConnectorError> {
+        let response: flutterwave::FlutterwaveRefundResponse = res
+            .response
+            .parse_struct("Flutterwave RefundSyncResponse")
+            .change_context(errors::ConnectorError::ResponseDeserializationFailed)?;
+        event_builder.map(|i| i.set_response_body(&response));
+        router_env::logger::info!(connector_response=?response);
+        RouterData::try_from(ResponseRouterData {
+            response,
+            data: data.clone(),
+            http_code: res.status_code,
+        })
+        .change_context(errors::ConnectorError::ResponseHandlingFailed)
+    }
+
+    fn get_error_response(
+        &self,
+        res: Response,
+        event_builder: Option<&mut ConnectorEvent>,
+    ) -> CustomResult<ErrorResponse, errors::ConnectorError> {
+        self.build_error_response(res, event_builder)
     }
 }
 

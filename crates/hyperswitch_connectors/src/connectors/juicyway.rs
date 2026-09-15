@@ -36,6 +36,8 @@ use hyperswitch_domain_models::{
     router_flow_types::{PoFulfill, PoRecipient, PoSync},
     types::{PayoutsData, PayoutsResponseData, PayoutsRouterData},
 };
+#[cfg(feature = "payouts")]
+use hyperswitch_interfaces::types::{PayoutFulfillType, PayoutRecipientType, PayoutSyncType};
 use hyperswitch_interfaces::{
     api::{
         self, ConnectorCommon, ConnectorCommonExt, ConnectorIntegration, ConnectorSpecifications,
@@ -47,8 +49,6 @@ use hyperswitch_interfaces::{
     types::{PaymentsAuthorizeType, PaymentsSyncType, Response},
     webhooks,
 };
-#[cfg(feature = "payouts")]
-use hyperswitch_interfaces::types::{PayoutFulfillType, PayoutRecipientType, PayoutSyncType};
 use hyperswitch_masking::{ExposeInterface, Mask, Maskable};
 use transformers as juicyway;
 
@@ -191,7 +191,9 @@ impl ConnectorCommon for Juicyway {
         let message = response.get_message();
         Ok(ErrorResponse {
             status_code: res.status_code,
-            code: response.get_code().unwrap_or(consts::NO_ERROR_CODE.to_string()),
+            code: response
+                .get_code()
+                .unwrap_or(consts::NO_ERROR_CODE.to_string()),
             message: message.clone(),
             reason: Some(message),
             attempt_status: None,
@@ -237,10 +239,10 @@ impl ConnectorIntegration<SetupMandate, SetupMandateRequestData, PaymentsRespons
         // No mandate/recurring-charge API observed anywhere in
         // legacy-node/providers/juicyway.js — not wired rather than
         // guessed, same discipline as Korapay's own SetupMandate gap.
-        Err(errors::ConnectorError::NotImplemented(
-            "Setup Mandate flow for JuicyWay".to_string(),
+        Err(
+            errors::ConnectorError::NotImplemented("Setup Mandate flow for JuicyWay".to_string())
+                .into(),
         )
-        .into())
     }
 }
 
@@ -468,10 +470,7 @@ impl ConnectorIntegration<Execute, RefundsData, RefundsResponseData> for Juicywa
         _req: &RefundsRouterData<Execute>,
         _connectors: &Connectors,
     ) -> CustomResult<Option<Request>, errors::ConnectorError> {
-        Err(errors::ConnectorError::NotImplemented(
-            "Refund flow for Juicyway".to_string(),
-        )
-        .into())
+        Err(errors::ConnectorError::NotImplemented("Refund flow for Juicyway".to_string()).into())
     }
 }
 
@@ -481,10 +480,7 @@ impl ConnectorIntegration<RSync, RefundsData, RefundsResponseData> for Juicyway 
         _req: &RefundsRouterData<RSync>,
         _connectors: &Connectors,
     ) -> CustomResult<Option<Request>, errors::ConnectorError> {
-        Err(errors::ConnectorError::NotImplemented(
-            "Refund flow for Juicyway".to_string(),
-        )
-        .into())
+        Err(errors::ConnectorError::NotImplemented("Refund flow for Juicyway".to_string()).into())
     }
 }
 
@@ -635,9 +631,7 @@ impl ConnectorIntegration<PoFulfill, PayoutsData, PayoutsResponseData> for Juicy
                 .url(&PayoutFulfillType::get_url(self, req, connectors)?)
                 .attach_default_headers()
                 .headers(PayoutFulfillType::get_headers(self, req, connectors)?)
-                .set_body(PayoutFulfillType::get_request_body(
-                    self, req, connectors,
-                )?)
+                .set_body(PayoutFulfillType::get_request_body(self, req, connectors)?)
                 .build(),
         ))
     }
@@ -800,24 +794,25 @@ impl webhooks::IncomingWebhook for Juicyway {
     }
 }
 
-static JUICYWAY_SUPPORTED_PAYMENT_METHODS: LazyLock<SupportedPaymentMethods> = LazyLock::new(|| {
-    let supported_capture_methods = vec![enums::CaptureMethod::Automatic];
+static JUICYWAY_SUPPORTED_PAYMENT_METHODS: LazyLock<SupportedPaymentMethods> =
+    LazyLock::new(|| {
+        let supported_capture_methods = vec![enums::CaptureMethod::Automatic];
 
-    let mut juicyway_supported_payment_methods = SupportedPaymentMethods::new();
+        let mut juicyway_supported_payment_methods = SupportedPaymentMethods::new();
 
-    juicyway_supported_payment_methods.add(
-        enums::PaymentMethod::Card,
-        enums::PaymentMethodType::Credit,
-        PaymentMethodDetails {
-            mandates: enums::FeatureStatus::NotSupported,
-            refunds: enums::FeatureStatus::NotSupported,
-            supported_capture_methods,
-            specific_features: None,
-        },
-    );
+        juicyway_supported_payment_methods.add(
+            enums::PaymentMethod::Card,
+            enums::PaymentMethodType::Credit,
+            PaymentMethodDetails {
+                mandates: enums::FeatureStatus::NotSupported,
+                refunds: enums::FeatureStatus::NotSupported,
+                supported_capture_methods,
+                specific_features: None,
+            },
+        );
 
-    juicyway_supported_payment_methods
-});
+        juicyway_supported_payment_methods
+    });
 
 static JUICYWAY_CONNECTOR_INFO: ConnectorInfo = ConnectorInfo {
     display_name: "Juicyway",

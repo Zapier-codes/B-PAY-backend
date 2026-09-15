@@ -1,10 +1,12 @@
 #[cfg(feature = "payouts")]
 use api_models::payouts::{BankTransfer, PayoutMethodData};
-use common_enums::{enums, AttemptStatus, RefundStatus};
 #[cfg(feature = "payouts")]
 use common_enums::PayoutStatus;
+use common_enums::{enums, AttemptStatus, RefundStatus};
 use common_utils::{ext_traits::Encode, pii::Email, types::FloatMajorUnit};
 use error_stack::ResultExt;
+#[cfg(feature = "payouts")]
+use hyperswitch_domain_models::types::{PayoutsResponseData, PayoutsRouterData};
 use hyperswitch_domain_models::{
     payment_method_data::PaymentMethodData,
     router_data::{ConnectorAuthType, RouterData},
@@ -13,12 +15,10 @@ use hyperswitch_domain_models::{
     router_response_types::{PaymentsResponseData, RedirectForm, RefundsResponseData},
     types::{PaymentsAuthorizeRouterData, RefundsRouterData},
 };
-#[cfg(feature = "payouts")]
-use hyperswitch_domain_models::types::{PayoutsResponseData, PayoutsRouterData};
 use hyperswitch_interfaces::errors;
-use hyperswitch_masking::Secret;
 #[cfg(feature = "payouts")]
 use hyperswitch_masking::ExposeInterface;
+use hyperswitch_masking::Secret;
 use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "payouts")]
@@ -136,9 +136,7 @@ impl TryFrom<&FlutterwaveRouterData<&PaymentsAuthorizeRouterData>> for Flutterwa
 
         let email: Email = item.router_data.request.get_email()?;
         let name = item.router_data.get_optional_billing_full_name();
-        let phonenumber = item
-            .router_data
-            .get_optional_billing_phone_number();
+        let phonenumber = item.router_data.get_optional_billing_phone_number();
 
         Ok(Self {
             tx_ref: item.router_data.connector_request_reference_id.clone(),
@@ -225,7 +223,9 @@ impl<F, T> TryFrom<ResponseRouterData<F, FlutterwavePaymentsResponse, T, Payment
             // customer, real status comes later via PSync/webhook".
             status: AttemptStatus::AuthenticationPending,
             response: Ok(PaymentsResponseData::TransactionResponse {
-                resource_id: ResponseId::ConnectorTransactionId(item.data.connector_request_reference_id.clone()),
+                resource_id: ResponseId::ConnectorTransactionId(
+                    item.data.connector_request_reference_id.clone(),
+                ),
                 redirection_data: Box::new(redirection_data),
                 mandate_reference: Box::new(None),
                 connector_metadata: None,
@@ -576,9 +576,7 @@ fn get_flutterwave_payout_bank_account<F>(
 #[cfg(feature = "payouts")]
 impl<F> TryFrom<&FlutterwaveRouterData<&PayoutsRouterData<F>>> for FlutterwavePayoutFulfillRequest {
     type Error = error_stack::Report<errors::ConnectorError>;
-    fn try_from(
-        item: &FlutterwaveRouterData<&PayoutsRouterData<F>>,
-    ) -> Result<Self, Self::Error> {
+    fn try_from(item: &FlutterwaveRouterData<&PayoutsRouterData<F>>) -> Result<Self, Self::Error> {
         let router_data = item.router_data;
         let (account_bank, account_number) = get_flutterwave_payout_bank_account(router_data)?;
 

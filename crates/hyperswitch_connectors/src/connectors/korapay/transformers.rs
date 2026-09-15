@@ -1,9 +1,11 @@
 #[cfg(feature = "payouts")]
 use api_models::payouts::{BankTransfer, PayoutMethodData};
-use common_enums::{enums, AttemptStatus};
 #[cfg(feature = "payouts")]
 use common_enums::PayoutStatus;
+use common_enums::{enums, AttemptStatus};
 use common_utils::{pii::Email, types::FloatMajorUnit};
+#[cfg(feature = "payouts")]
+use hyperswitch_domain_models::types::{PayoutsResponseData, PayoutsRouterData};
 use hyperswitch_domain_models::{
     payment_method_data::PaymentMethodData,
     router_data::{ConnectorAuthType, RouterData},
@@ -11,12 +13,10 @@ use hyperswitch_domain_models::{
     router_response_types::{PaymentsResponseData, RedirectForm},
     types::PaymentsAuthorizeRouterData,
 };
-#[cfg(feature = "payouts")]
-use hyperswitch_domain_models::types::{PayoutsResponseData, PayoutsRouterData};
 use hyperswitch_interfaces::errors;
-use hyperswitch_masking::Secret;
 #[cfg(feature = "payouts")]
 use hyperswitch_masking::ExposeInterface;
+use hyperswitch_masking::Secret;
 use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "payouts")]
@@ -231,13 +231,16 @@ impl<F, T> TryFrom<ResponseRouterData<F, KorapayPaymentsResponse, T, PaymentsRes
             return Err(errors::ConnectorError::ResponseHandlingFailed.into());
         }
 
-        let redirection_data = item.response.data.checkout_url.clone().map(|url| {
-            RedirectForm::Form {
-                endpoint: url,
-                method: common_utils::request::Method::Get,
-                form_fields: std::collections::HashMap::new(),
-            }
-        });
+        let redirection_data =
+            item.response
+                .data
+                .checkout_url
+                .clone()
+                .map(|url| RedirectForm::Form {
+                    endpoint: url,
+                    method: common_utils::request::Method::Get,
+                    form_fields: std::collections::HashMap::new(),
+                });
 
         Ok(Self {
             status: AttemptStatus::from(item.response.data.status.clone()),
@@ -440,11 +443,7 @@ impl<F> TryFrom<&KorapayRouterData<&PayoutsRouterData<F>>> for KorapayPayoutFulf
                 // guessing at a field this request type doesn't have.
                 narration: "Payout via Korapay".to_string(),
                 bank_account,
-                customer: KorapayPayoutCustomer {
-                    email,
-                    name,
-                    phone,
-                },
+                customer: KorapayPayoutCustomer { email, name, phone },
             },
         })
     }

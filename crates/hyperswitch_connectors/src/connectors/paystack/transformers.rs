@@ -1,10 +1,12 @@
 #[cfg(feature = "payouts")]
 use api_models::payouts::{BankTransfer, PayoutMethodData};
-use common_enums::{enums, Currency};
 #[cfg(feature = "payouts")]
 use common_enums::PayoutStatus;
+use common_enums::{enums, Currency};
 use common_utils::{pii::Email, request::Method, types::MinorUnit};
 use error_stack::ResultExt;
+#[cfg(feature = "payouts")]
+use hyperswitch_domain_models::types::{PayoutsResponseData, PayoutsRouterData};
 use hyperswitch_domain_models::{
     payment_method_data::{BankRedirectData, PaymentMethodData},
     router_data::{ConnectorAuthType, ErrorResponse, RouterData},
@@ -13,8 +15,6 @@ use hyperswitch_domain_models::{
     router_response_types::{PaymentsResponseData, RedirectForm, RefundsResponseData},
     types::{PaymentsAuthorizeRouterData, RefundsRouterData},
 };
-#[cfg(feature = "payouts")]
-use hyperswitch_domain_models::types::{PayoutsResponseData, PayoutsRouterData};
 use hyperswitch_interfaces::errors;
 use hyperswitch_masking::Secret;
 use serde::{Deserialize, Serialize};
@@ -641,9 +641,7 @@ pub struct PaystackRecipientResponse {
 }
 
 #[cfg(feature = "payouts")]
-impl<F> TryFrom<PayoutsResponseRouterData<F, PaystackRecipientResponse>>
-    for PayoutsRouterData<F>
-{
+impl<F> TryFrom<PayoutsResponseRouterData<F, PaystackRecipientResponse>> for PayoutsRouterData<F> {
     type Error = error_stack::Report<errors::ConnectorError>;
     fn try_from(
         item: PayoutsResponseRouterData<F, PaystackRecipientResponse>,
@@ -701,8 +699,7 @@ impl<F> TryFrom<&PaystackRouterData<&PayoutsRouterData<F>>> for PaystackPayoutFu
         // Paystack an empty `recipient`.
         let recipient = router_data.request.connector_payout_id.clone().ok_or(
             errors::ConnectorError::MissingRequiredField {
-                field_name: "connector_payout_id (Paystack recipient_code from PoRecipient)"
-                    .into(),
+                field_name: "connector_payout_id (Paystack recipient_code from PoRecipient)".into(),
             },
         )?;
 

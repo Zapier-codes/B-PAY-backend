@@ -37,6 +37,8 @@ use hyperswitch_domain_models::{
     router_flow_types::{PoFulfill, PoSync},
     types::{PayoutsData, PayoutsResponseData, PayoutsRouterData},
 };
+#[cfg(feature = "payouts")]
+use hyperswitch_interfaces::types::{PayoutFulfillType, PayoutSyncType};
 use hyperswitch_interfaces::{
     api::{
         self, ConnectorCommon, ConnectorCommonExt, ConnectorIntegration, ConnectorSpecifications,
@@ -48,8 +50,6 @@ use hyperswitch_interfaces::{
     types::{PaymentsAuthorizeType, PaymentsSyncType, RefundExecuteType, RefundSyncType, Response},
     webhooks,
 };
-#[cfg(feature = "payouts")]
-use hyperswitch_interfaces::types::{PayoutFulfillType, PayoutSyncType};
 use hyperswitch_masking::{ExposeInterface, Mask, Maskable};
 use transformers as flutterwave;
 
@@ -436,10 +436,7 @@ impl ConnectorIntegration<Void, PaymentsCancelData, PaymentsResponseData> for Fl
         _req: &RouterData<Void, PaymentsCancelData, PaymentsResponseData>,
         _connectors: &Connectors,
     ) -> CustomResult<Option<Request>, errors::ConnectorError> {
-        Err(
-            errors::ConnectorError::NotImplemented("Void flow for Flutterwave".to_string())
-                .into(),
-        )
+        Err(errors::ConnectorError::NotImplemented("Void flow for Flutterwave".to_string()).into())
     }
 }
 
@@ -703,9 +700,7 @@ impl ConnectorIntegration<PoFulfill, PayoutsData, PayoutsResponseData> for Flutt
                 .url(&PayoutFulfillType::get_url(self, req, connectors)?)
                 .attach_default_headers()
                 .headers(PayoutFulfillType::get_headers(self, req, connectors)?)
-                .set_body(PayoutFulfillType::get_request_body(
-                    self, req, connectors,
-                )?)
+                .set_body(PayoutFulfillType::get_request_body(self, req, connectors)?)
                 .build(),
         ))
     }
@@ -892,9 +887,7 @@ impl webhooks::IncomingWebhook for Flutterwave {
                     .parse_struct("FlutterwaveChargeWebhookEvent")
                     .change_context(errors::ConnectorError::WebhookReferenceIdNotFound)?;
                 Ok(api_models::webhooks::ObjectReferenceId::PaymentId(
-                    api_models::payments::PaymentIdType::ConnectorTransactionId(
-                        event.data.tx_ref,
-                    ),
+                    api_models::payments::PaymentIdType::ConnectorTransactionId(event.data.tx_ref),
                 ))
             }
             #[cfg(feature = "payouts")]
@@ -954,7 +947,13 @@ impl webhooks::IncomingWebhook for Flutterwave {
                     .body
                     .parse_struct("FlutterwaveTransferWebhookEvent")
                     .change_context(errors::ConnectorError::WebhookEventTypeNotFound)?;
-                match event.data.status.as_deref().map(str::to_uppercase).as_deref() {
+                match event
+                    .data
+                    .status
+                    .as_deref()
+                    .map(str::to_uppercase)
+                    .as_deref()
+                {
                     Some("SUCCESSFUL") => api_models::webhooks::IncomingWebhookEvent::PayoutSuccess,
                     Some("FAILED") => api_models::webhooks::IncomingWebhookEvent::PayoutFailure,
                     // Covers "NEW" (Flutterwave's own confirmed

@@ -36,6 +36,8 @@ use hyperswitch_domain_models::{
     router_flow_types::{PoFulfill, PoSync},
     types::{PayoutsData, PayoutsResponseData, PayoutsRouterData},
 };
+#[cfg(feature = "payouts")]
+use hyperswitch_interfaces::types::{PayoutFulfillType, PayoutSyncType};
 use hyperswitch_interfaces::{
     api::{
         self, ConnectorCommon, ConnectorCommonExt, ConnectorIntegration, ConnectorSpecifications,
@@ -47,8 +49,6 @@ use hyperswitch_interfaces::{
     types::{PaymentsAuthorizeType, PaymentsSyncType, Response},
     webhooks,
 };
-#[cfg(feature = "payouts")]
-use hyperswitch_interfaces::types::{PayoutFulfillType, PayoutSyncType};
 use hyperswitch_masking::{ExposeInterface, Mask, Maskable};
 use transformers as korapay;
 
@@ -207,9 +207,7 @@ impl ConnectorIntegration<Session, PaymentsSessionData, PaymentsResponseData> fo
 
 impl ConnectorIntegration<AccessTokenAuth, AccessTokenRequestData, AccessToken> for Korapay {}
 
-impl ConnectorIntegration<SetupMandate, SetupMandateRequestData, PaymentsResponseData>
-    for Korapay
-{
+impl ConnectorIntegration<SetupMandate, SetupMandateRequestData, PaymentsResponseData> for Korapay {
     fn build_request(
         &self,
         _req: &RouterData<SetupMandate, SetupMandateRequestData, PaymentsResponseData>,
@@ -217,10 +215,10 @@ impl ConnectorIntegration<SetupMandate, SetupMandateRequestData, PaymentsRespons
     ) -> CustomResult<Option<Request>, errors::ConnectorError> {
         // No mandate/recurring-charge API observed anywhere in
         // legacy-node/providers/korapay.js — not wired rather than guessed.
-        Err(errors::ConnectorError::NotImplemented(
-            "Setup Mandate flow for Korapay".to_string(),
+        Err(
+            errors::ConnectorError::NotImplemented("Setup Mandate flow for Korapay".to_string())
+                .into(),
         )
-        .into())
     }
 }
 
@@ -441,10 +439,7 @@ impl ConnectorIntegration<Execute, RefundsData, RefundsResponseData> for Korapay
         _req: &RefundsRouterData<Execute>,
         _connectors: &Connectors,
     ) -> CustomResult<Option<Request>, errors::ConnectorError> {
-        Err(errors::ConnectorError::NotImplemented(
-            "Refund flow for Korapay".to_string(),
-        )
-        .into())
+        Err(errors::ConnectorError::NotImplemented("Refund flow for Korapay".to_string()).into())
     }
 }
 
@@ -454,10 +449,7 @@ impl ConnectorIntegration<RSync, RefundsData, RefundsResponseData> for Korapay {
         _req: &RefundsRouterData<RSync>,
         _connectors: &Connectors,
     ) -> CustomResult<Option<Request>, errors::ConnectorError> {
-        Err(errors::ConnectorError::NotImplemented(
-            "Refund flow for Korapay".to_string(),
-        )
-        .into())
+        Err(errors::ConnectorError::NotImplemented("Refund flow for Korapay".to_string()).into())
     }
 }
 
@@ -509,8 +501,7 @@ impl ConnectorIntegration<PoFulfill, PayoutsData, PayoutsResponseData> for Korap
         )?;
 
         let connector_router_data = korapay::KorapayRouterData::from((amount, req));
-        let connector_req =
-            korapay::KorapayPayoutFulfillRequest::try_from(&connector_router_data)?;
+        let connector_req = korapay::KorapayPayoutFulfillRequest::try_from(&connector_router_data)?;
         Ok(RequestContent::Json(Box::new(connector_req)))
     }
 
@@ -525,9 +516,7 @@ impl ConnectorIntegration<PoFulfill, PayoutsData, PayoutsResponseData> for Korap
                 .url(&PayoutFulfillType::get_url(self, req, connectors)?)
                 .attach_default_headers()
                 .headers(PayoutFulfillType::get_headers(self, req, connectors)?)
-                .set_body(PayoutFulfillType::get_request_body(
-                    self, req, connectors,
-                )?)
+                .set_body(PayoutFulfillType::get_request_body(self, req, connectors)?)
                 .build(),
         ))
     }

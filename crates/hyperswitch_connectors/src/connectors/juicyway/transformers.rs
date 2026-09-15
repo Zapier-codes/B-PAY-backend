@@ -1,10 +1,12 @@
 use api_models::payments::OrderDetailsWithAmount;
 #[cfg(feature = "payouts")]
 use api_models::payouts::{BankTransfer, PayoutMethodData};
-use common_enums::{enums, AttemptStatus};
 #[cfg(feature = "payouts")]
 use common_enums::PayoutStatus;
+use common_enums::{enums, AttemptStatus};
 use common_utils::{pii::Email, types::MinorUnit};
+#[cfg(feature = "payouts")]
+use hyperswitch_domain_models::types::{PayoutsResponseData, PayoutsRouterData};
 use hyperswitch_domain_models::{
     payment_method_data::PaymentMethodData,
     router_data::{ConnectorAuthType, RouterData},
@@ -12,20 +14,18 @@ use hyperswitch_domain_models::{
     router_response_types::PaymentsResponseData,
     types::PaymentsAuthorizeRouterData,
 };
-#[cfg(feature = "payouts")]
-use hyperswitch_domain_models::types::{PayoutsResponseData, PayoutsRouterData};
 use hyperswitch_interfaces::errors;
-use hyperswitch_masking::Secret;
 #[cfg(feature = "payouts")]
 use hyperswitch_masking::ExposeInterface;
+use hyperswitch_masking::Secret;
 use serde::{Deserialize, Serialize};
 
+#[cfg(feature = "payouts")]
+use crate::types::PayoutsResponseRouterData;
 use crate::{
     types::ResponseRouterData,
     utils::{PaymentsAuthorizeRequestData, RouterData as OtherRouterData},
 };
-#[cfg(feature = "payouts")]
-use crate::types::PayoutsResponseRouterData;
 
 // JuicyWay's `/payment-sessions` endpoint takes amount in minor units
 // (subunit, ×100) across every supported currency, stablecoins included --
@@ -214,16 +214,15 @@ impl TryFrom<&JuicywayRouterData<&PaymentsAuthorizeRouterData>> for JuicywayPaym
             },
         )?;
 
-        let billing_address =
-            router_data
-                .get_optional_billing()
-                .map(|_| JuicywayBillingAddress {
-                    line1: router_data.get_optional_billing_line1(),
-                    city: router_data.get_optional_billing_city(),
-                    state: router_data.get_optional_billing_state(),
-                    zip_code: router_data.get_optional_billing_zip(),
-                    country: router_data.get_optional_billing_country(),
-                });
+        let billing_address = router_data
+            .get_optional_billing()
+            .map(|_| JuicywayBillingAddress {
+                line1: router_data.get_optional_billing_line1(),
+                city: router_data.get_optional_billing_city(),
+                state: router_data.get_optional_billing_state(),
+                zip_code: router_data.get_optional_billing_zip(),
+                country: router_data.get_optional_billing_country(),
+            });
 
         let items = match router_data.request.order_details.as_ref() {
             Some(order_details) if !order_details.is_empty() => order_details
@@ -664,13 +663,14 @@ fn get_juicyway_payout_bank_account<F>(
                 .and_then(|customer| customer.name.clone())
                 .or_else(|| ach.account_holder_name.clone())
                 .unwrap_or_else(|| ach.bank_account_number.clone());
-            let bank_name = ach.bank_name.clone().ok_or(
-                errors::ConnectorError::MissingRequiredField {
-                    field_name: "bank_name (required by Juicyway's confirmed \
+            let bank_name =
+                ach.bank_name
+                    .clone()
+                    .ok_or(errors::ConnectorError::MissingRequiredField {
+                        field_name: "bank_name (required by Juicyway's confirmed \
                         Create-NGN-Bank-Account-Beneficiary shape; not optional \
                         despite AchBankTransfer.bank_name being Option<String>)",
-                },
-            )?;
+                    })?;
             Ok(JuicywayBeneficiaryRequest::BankAccount {
                 currency: router_data.request.destination_currency,
                 account_number: ach.bank_account_number,
@@ -824,8 +824,7 @@ impl<F> TryFrom<&JuicywayRouterData<&PayoutsRouterData<F>>> for JuicywayPayoutFu
         // send JuicyWay an empty beneficiary reference.
         let beneficiary_id = router_data.request.connector_payout_id.clone().ok_or(
             errors::ConnectorError::MissingRequiredField {
-                field_name: "connector_payout_id (Juicyway beneficiary id from PoRecipient)"
-                    .into(),
+                field_name: "connector_payout_id (Juicyway beneficiary id from PoRecipient)".into(),
             },
         )?;
 

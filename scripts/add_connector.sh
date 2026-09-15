@@ -11,7 +11,7 @@ function find_prev_connector() {
 
     IFS=$'\n' sorted=($(sort <<<"${connectors[*]}")); unset IFS
     res="$(echo ${sorted[@]})"
-    sed -i'' -e "s/^    connectors=.*/    connectors=($res \"\$1\")/" $self.tmp
+    sed -i -e "s/^    connectors=.*/    connectors=($res \"\$1\")/" $self.tmp
     for i in "${!sorted[@]}"; do
     if [ "${sorted[$i]}" = "$1" ] && [ $i != "0" ]; then
         # Find and return the connector name where this new connector should be added next to it
@@ -53,16 +53,16 @@ git checkout $conn.rs $src/types/api/connector_mapping.rs $src/configs/settings.
 previous_connector=''
 find_prev_connector $payment_gateway previous_connector
 previous_connector_camelcase="$(tr '[:lower:]' '[:upper:]' <<< ${previous_connector:0:1})${previous_connector:1}"
-sed -i'' -e "s|pub mod $previous_connector;|pub mod $previous_connector;\npub mod ${payment_gateway};|" $conn.rs
-sed -i'' -e "s/};/ ${payment_gateway}::${payment_gateway_camelcase},\n};/" $conn.rs
-sed -i'' -e "/pub use hyperswitch_connectors::connectors::{/ s/{/{\n    ${payment_gateway}, ${payment_gateway}::${payment_gateway_camelcase},/" $src/connector.rs
-sed -i'' -e "s|$previous_connector_camelcase \(.*\)|$previous_connector_camelcase \1\n\t\t\tRoutableConnectors::${payment_gateway_camelcase} => euclid_enums::Connector::${payment_gateway_camelcase},|" crates/api_models/src/routing.rs
-sed -i'' -e "s/pub $previous_connector: \(.*\)/pub $previous_connector: \1\n\tpub ${payment_gateway}: ConnectorParams,/" crates/hyperswitch_interfaces/src/configs.rs
-sed -i'' -e "s|$previous_connector.base_url \(.*\)|$previous_connector.base_url \1\n${payment_gateway}.base_url = \"$base_url\"|" config/development.toml config/docker_compose.toml config/config.example.toml loadtest/config/development.toml config/deployments/integration_test.toml config/deployments/production.toml config/deployments/sandbox.toml
-sed -i '' -e "s/\(pub enum Connector {\)/\1\n\t${payment_gateway_camelcase},/" crates/api_models/src/connector_enums.rs
-sed -i '' -e "/\/\/ Add Separate authentication support for connectors/{N;s/\(.*\)\n/\1\n\t\t\t| Self::${payment_gateway_camelcase}\n/;}" crates/api_models/src/connector_enums.rs
-sed -i '' -e "s/\(match connector_name {\)/\1\n\t\tapi_enums::Connector::${payment_gateway_camelcase} => {${payment_gateway}::transformers::${payment_gateway_camelcase}AuthType::try_from(val)?;Ok(())}/" $src/core/admin.rs
-sed -i '' -e "s/\(pub enum Connector {\)/\1\n\t${payment_gateway_camelcase},/" crates/euclid/src/enums.rs
+sed -i -e "s|pub mod $previous_connector;|pub mod $previous_connector;\npub mod ${payment_gateway};|" $conn.rs
+sed -i -e "s/};/ ${payment_gateway}::${payment_gateway_camelcase},\n};/" $conn.rs
+sed -i -e "/pub use hyperswitch_connectors::connectors::{/ s/{/{\n    ${payment_gateway}, ${payment_gateway}::${payment_gateway_camelcase},/" $src/connector.rs
+sed -i -e "s|$previous_connector_camelcase \(.*\)|$previous_connector_camelcase \1\n\t\t\tRoutableConnectors::${payment_gateway_camelcase} => euclid_enums::Connector::${payment_gateway_camelcase},|" crates/api_models/src/routing.rs
+sed -i -e "s/pub $previous_connector: \(.*\)/pub $previous_connector: \1\n\tpub ${payment_gateway}: ConnectorParams,/" crates/hyperswitch_interfaces/src/configs.rs
+sed -i -e "s|$previous_connector.base_url \(.*\)|$previous_connector.base_url \1\n${payment_gateway}.base_url = \"$base_url\"|" config/development.toml config/docker_compose.toml config/config.example.toml loadtest/config/development.toml config/deployments/integration_test.toml config/deployments/production.toml config/deployments/sandbox.toml
+sed -i -e "s/\(pub enum Connector {\)/\1\n\t${payment_gateway_camelcase},/" crates/api_models/src/connector_enums.rs
+sed -i -e "/\/\/ Add Separate authentication support for connectors/{N;s/\(.*\)\n/\1\n\t\t\t| Self::${payment_gateway_camelcase}\n/;}" crates/api_models/src/connector_enums.rs
+sed -i -e "s/\(match connector_name {\)/\1\n\t\tapi_enums::Connector::${payment_gateway_camelcase} => {${payment_gateway}::transformers::${payment_gateway_camelcase}AuthType::try_from(val)?;Ok(())}/" $src/core/admin.rs
+sed -i -e "s/\(pub enum Connector {\)/\1\n\t${payment_gateway_camelcase},/" crates/euclid/src/enums.rs
 
 default_impl_files=(
   "crates/hyperswitch_connectors/src/default_implementations.rs"
@@ -146,37 +146,53 @@ for file in "${default_impl_files[@]}"; do
 done
 
 
-sed -i '' -e "\$a\\
+sed -i -e "\$a\\
 \\
 [${payment_gateway}]\\
 [${payment_gateway}.connector_auth.HeaderKey]\\
 api_key = \\\"API Key\\\"" crates/connector_configs/toml/sandbox.toml
 
-sed -i '' -e "\$a\\
+sed -i -e "\$a\\
 \\
 [${payment_gateway}]\\
 [${payment_gateway}.connector_auth.HeaderKey]\\
 api_key = \\\"API Key\\\"" crates/connector_configs/toml/development.toml
 
-sed -i '' -e "\$a\\
+sed -i -e "\$a\\
 \\
 [${payment_gateway}]\\
 [${payment_gateway}.connector_auth.HeaderKey]\\
 api_key = \\\"API Key\\\"" crates/connector_configs/toml/production.toml
 
-sed -i'' -e "s/^default_imp_for_connector_request_id!(/default_imp_for_connector_request_id!(\n    connectors::${payment_gateway_camelcase},/" $src/core/payments/flows.rs
-sed -i'' -e "s/^default_imp_for_fraud_check!(/default_imp_for_fraud_check!(\n    connectors::${payment_gateway_camelcase},/" $src/core/payments/flows.rs
-sed -i'' -e "s/^default_imp_for_connector_authentication!(/default_imp_for_connector_authentication!(\n    connectors::${payment_gateway_camelcase},/" $src/core/payments/flows.rs
-sed -i'' -e "/pub ${previous_connector}: Option<ConnectorTomlConfig>,/a\\
+sed -i -e "s/^default_imp_for_connector_request_id!(/default_imp_for_connector_request_id!(\n    connectors::${payment_gateway_camelcase},/" $src/core/payments/flows.rs
+sed -i -e "s/^default_imp_for_fraud_check!(/default_imp_for_fraud_check!(\n    connectors::${payment_gateway_camelcase},/" $src/core/payments/flows.rs
+sed -i -e "s/^default_imp_for_connector_authentication!(/default_imp_for_connector_authentication!(\n    connectors::${payment_gateway_camelcase},/" $src/core/payments/flows.rs
+sed -i -e "/pub ${previous_connector}: Option<ConnectorTomlConfig>,/a\\
     pub ${payment_gateway}: Option<ConnectorTomlConfig>,
 " crates/connector_configs/src/connector.rs
 
-sed -i'' -e "/mod utils;/ s/mod utils;/mod ${payment_gateway};\nmod utils;/" crates/router/tests/connectors/main.rs
-sed -i'' -e "s/^default_imp_for_new_connector_integration_payouts!(/default_imp_for_new_connector_integration_payouts!(\n    connector::${payment_gateway_camelcase},/" crates/router/src/core/payments/connector_integration_v2_impls.rs
-sed -i'' -e "s/^default_imp_for_new_connector_integration_frm!(/default_imp_for_new_connector_integration_frm!(\n    connector::${payment_gateway_camelcase},/" crates/router/src/core/payments/connector_integration_v2_impls.rs
-sed -i'' -e "s/^default_imp_for_new_connector_integration_connector_authentication!(/default_imp_for_new_connector_integration_connector_authentication!(\n    connector::${payment_gateway_camelcase},/" crates/router/src/core/payments/connector_integration_v2_impls.rs
+sed -i -e "/mod utils;/ s/mod utils;/mod ${payment_gateway};\nmod utils;/" crates/router/tests/connectors/main.rs
+# SKIPPED, not fixed: crates/router/src/core/payments/connector_integration_v2_impls.rs
+# does not exist anywhere in this fork (`grep -rl default_imp_for_new_connector_integration_payouts!`
+# returns nothing repo-wide) -- this script has drifted from the current codebase,
+# independent of the sed-portability fix above. The v2 default-impl registrations this
+# block used to write now appear to live in default_implementations.rs / _v2.rs instead
+# (already handled by the connectors.rs / default_implementations*.rs edits above), but
+# that's read-by-inspection, not compiler-confirmed -- no working rustc/cargo this session
+# either. Flagging here instead of guessing at a new sed target for a file that isn't there.
+#
+# KNOWN, ALSO NOT FIXED: the pub enum Connector { insertion a few lines above this block
+# targets crates/api_models/src/connector_enums.rs. In this fork that file does not
+# contain the Connector enum at all -- it actually lives in
+# crates/common_enums/src/connector_enums.rs (verified: Korapay/Paystack/Juicyway/
+# Flutterwave are all registered there, not in api_models). Even retargeting the sed calls
+# at the correct file is not enough by itself: a direct test run against the corrected
+# file still left it unmodified, meaning the anchor-text pattern (keyed off
+# `previous_connector`) no longer matches this fork's current formatting either. Needs a
+# session with a working rustc to iterate against real compiler errors, not another blind
+# sed patch -- left as a documented, open gap rather than force-fixed without verification.
 
-sed -i'' -e "/pub ${previous_connector}: ConnectorParams,/a\\
+sed -i -e "/pub ${previous_connector}: ConnectorParams,/a\\
     pub ${payment_gateway}: ConnectorParams,
 " crates/hyperswitch_domain_models/src/connector_endpoints.rs
 
@@ -200,8 +216,8 @@ mv "$payment_gateway/test.rs" ../../../router/tests/connectors/$payment_gateway.
 git checkout ${tests}/main.rs ${test_utils}/connector_auth.rs ${tests}/sample_auth.toml
 
 # Add enum for this connector in test folder
-sed -i'' -e "s/mod utils;/mod ${payment_gateway};\nmod utils;/" ${tests}/main.rs
-sed -i'' -e "s/    pub $previous_connector: \(.*\)/\tpub $previous_connector: \1\n\tpub ${payment_gateway}: Option<HeaderKey>,/" ${test_utils}/connector_auth.rs
+sed -i -e "s/mod utils;/mod ${payment_gateway};\nmod utils;/" ${tests}/main.rs
+sed -i -e "s/    pub $previous_connector: \(.*\)/\tpub $previous_connector: \1\n\tpub ${payment_gateway}: Option<HeaderKey>,/" ${test_utils}/connector_auth.rs
 echo "\n\n[${payment_gateway}]\napi_key=\"API Key\"" >> ${tests}/sample_auth.toml
 
 # Remove temporary files created in above step

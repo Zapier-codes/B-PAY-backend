@@ -375,6 +375,7 @@ impl Connector {
             | Self::Fiservemea
             | Self::Fiuu
             | Self::Flexiti
+            | Self::Flutterwave
             | Self::Forte
             | Self::Getnet
             | Self::Gigadat
@@ -391,9 +392,11 @@ impl Connector {
 			| Self::Inespay
             | Self::Itaubank
             | Self::Jpmorgan
+            | Self::Juicyway
             | Self::Juspay
             | Self::Juspaythreedsserver
             | Self::Klarna
+            | Self::Korapay
             | Self::Loonio
             | Self::Mifinity
             | Self::Mollie

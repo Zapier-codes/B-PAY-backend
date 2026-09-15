@@ -865,62 +865,142 @@ impl webhooks::IncomingWebhook for Flutterwave {
     // `if (!configuredHash) { ...reject... }` check took.
     //
     // `get_webhook_object_reference_id` / `get_webhook_event_type` /
-    // `get_webhook_resource_object` below remain `WebhooksNotImplemented` —
-    // parsing Flutterwave's webhook payload into this framework's own
-    // domain types is a genuinely separate leaf, same explicit deferral
-    // Korapay's own connector already uses. This leaf closes only the
-    // signature-verification gap named as still-open in handover.md.
-    fn get_webhook_source_verification_algorithm(
-        &self,
-        _request: &webhooks::IncomingWebhookRequestDetails<'_>,
-    ) -> CustomResult<Box<dyn crypto::VerifySignature + Send>, errors::ConnectorError> {
-        Ok(Box::new(crypto::ConstantTimeEquals))
-    }
-
-    fn get_webhook_source_verification_signature(
-        &self,
-        request: &webhooks::IncomingWebhookRequestDetails<'_>,
-        _connector_webhook_secrets: &api_models::webhooks::ConnectorWebhookSecrets,
-    ) -> CustomResult<Vec<u8>, errors::ConnectorError> {
-        let header_value = request
-            .headers
-            .get("verif-hash")
-            .ok_or(errors::ConnectorError::WebhookSignatureNotFound)?;
-
-        Ok(header_value
-            .to_str()
-            .change_context(errors::ConnectorError::WebhookSignatureNotFound)?
-            .as_bytes()
-            .to_vec())
-    }
-
+    // `get_webhook_resource_object` below close the payload-parsing gap
+    // deliberately left open when signature verification was wired —
+    // Korapay's own connector still defers this same split, but
+    // Flutterwave's own docs gave this session real, worked-example
+    // coverage for the two events this connector's own flows actually
+    // produce (`charge.completed`, `transfer.completed`), so it's
+    // implemented here rather than deferred again for its own sake. See
+    // `transformers.rs`'s own "Incoming webhooks" section for the full
+    // envelope citations and what's deliberately NOT modeled
+    // (subscription/pending-transition events — no worked example of
+    // their event *name* was found this session).
     fn get_webhook_object_reference_id(
         &self,
-        _request: &webhooks::IncomingWebhookRequestDetails<'_>,
+        request: &webhooks::IncomingWebhookRequestDetails<'_>,
     ) -> CustomResult<api_models::webhooks::ObjectReferenceId, errors::ConnectorError> {
-        Err(error_stack::report!(
-            errors::ConnectorError::WebhooksNotImplemented
-        ))
+        let event_type: flutterwave::FlutterwaveWebhookEventTypeBody = request
+            .body
+            .parse_struct("FlutterwaveWebhookEventTypeBody")
+            .change_context(errors::ConnectorError::WebhookReferenceIdNotFound)?;
+
+        match event_type.event {
+            flutterwave::FlutterwaveWebhookEventType::ChargeCompleted => {
+                let event: flutterwave::FlutterwaveChargeWebhookEvent = request
+                    .body
+                    .parse_struct("FlutterwaveChargeWebhookEvent")
+                    .change_context(errors::ConnectorError::WebhookReferenceIdNotFound)?;
+                Ok(api_models::webhooks::ObjectReferenceId::PaymentId(
+                    api_models::payments::PaymentIdType::ConnectorTransactionId(
+                        event.data.tx_ref,
+                    ),
+                ))
+            }
+            #[cfg(feature = "payouts")]
+            flutterwave::FlutterwaveWebhookEventType::TransferCompleted => {
+                let event: flutterwave::FlutterwaveTransferWebhookEvent = request
+                    .body
+                    .parse_struct("FlutterwaveTransferWebhookEvent")
+                    .change_context(errors::ConnectorError::WebhookReferenceIdNotFound)?;
+                Ok(api_models::webhooks::ObjectReferenceId::PayoutId(
+                    api_models::webhooks::PayoutIdType::ConnectorPayoutId(
+                        event.data.id.to_string(),
+                    ),
+                ))
+            }
+            flutterwave::FlutterwaveWebhookEventType::Unknown => Err(error_stack::report!(
+                errors::ConnectorError::WebhookReferenceIdNotFound
+            )),
+        }
     }
 
     fn get_webhook_event_type(
         &self,
-        _request: &webhooks::IncomingWebhookRequestDetails<'_>,
+        request: &webhooks::IncomingWebhookRequestDetails<'_>,
         _context: Option<&webhooks::WebhookContext>,
     ) -> CustomResult<api_models::webhooks::IncomingWebhookEvent, errors::ConnectorError> {
-        Err(error_stack::report!(
-            errors::ConnectorError::WebhooksNotImplemented
-        ))
+        let event_type: flutterwave::FlutterwaveWebhookEventTypeBody = request
+            .body
+            .parse_struct("FlutterwaveWebhookEventTypeBody")
+            .change_context(errors::ConnectorError::WebhookEventTypeNotFound)?;
+
+        Ok(match event_type.event {
+            flutterwave::FlutterwaveWebhookEventType::ChargeCompleted => {
+                let event: flutterwave::FlutterwaveChargeWebhookEvent = request
+                    .body
+                    .parse_struct("FlutterwaveChargeWebhookEvent")
+                    .change_context(errors::ConnectorError::WebhookEventTypeNotFound)?;
+                match event.data.status {
+                    flutterwave::FlutterwaveTransactionStatus::Successful => {
+                        api_models::webhooks::IncomingWebhookEvent::PaymentIntentSuccess
+                    }
+                    flutterwave::FlutterwaveTransactionStatus::Failed => {
+                        api_models::webhooks::IncomingWebhookEvent::PaymentIntentFailure
+                    }
+                    // Pending/Unknown both fold to Processing rather than
+                    // a guessed terminal state -- same fail-safe-to-
+                    // non-terminal posture FlutterwaveTransactionStatus's
+                    // own AttemptStatus mapping already takes above.
+                    flutterwave::FlutterwaveTransactionStatus::Pending
+                    | flutterwave::FlutterwaveTransactionStatus::Unknown => {
+                        api_models::webhooks::IncomingWebhookEvent::PaymentIntentProcessing
+                    }
+                }
+            }
+            #[cfg(feature = "payouts")]
+            flutterwave::FlutterwaveWebhookEventType::TransferCompleted => {
+                let event: flutterwave::FlutterwaveTransferWebhookEvent = request
+                    .body
+                    .parse_struct("FlutterwaveTransferWebhookEvent")
+                    .change_context(errors::ConnectorError::WebhookEventTypeNotFound)?;
+                match event.data.status.as_deref().map(str::to_uppercase).as_deref() {
+                    Some("SUCCESSFUL") => api_models::webhooks::IncomingWebhookEvent::PayoutSuccess,
+                    Some("FAILED") => api_models::webhooks::IncomingWebhookEvent::PayoutFailure,
+                    // Covers "NEW" (Flutterwave's own confirmed
+                    // non-terminal acknowledgement state -- see
+                    // flutterwave_payout_status_from_str's own comment in
+                    // transformers.rs) plus anything unrecognized, same
+                    // "don't guess a terminal state" posture as above.
+                    _ => api_models::webhooks::IncomingWebhookEvent::PayoutProcessing,
+                }
+            }
+            flutterwave::FlutterwaveWebhookEventType::Unknown => {
+                api_models::webhooks::IncomingWebhookEvent::EventNotSupported
+            }
+        })
     }
 
     fn get_webhook_resource_object(
         &self,
-        _request: &webhooks::IncomingWebhookRequestDetails<'_>,
+        request: &webhooks::IncomingWebhookRequestDetails<'_>,
     ) -> CustomResult<Box<dyn hyperswitch_masking::ErasedMaskSerialize>, errors::ConnectorError>
     {
-        Err(error_stack::report!(
-            errors::ConnectorError::WebhooksNotImplemented
-        ))
+        let event_type: flutterwave::FlutterwaveWebhookEventTypeBody = request
+            .body
+            .parse_struct("FlutterwaveWebhookEventTypeBody")
+            .change_context(errors::ConnectorError::WebhookResourceObjectNotFound)?;
+
+        match event_type.event {
+            flutterwave::FlutterwaveWebhookEventType::ChargeCompleted => {
+                let event: flutterwave::FlutterwaveChargeWebhookEvent = request
+                    .body
+                    .parse_struct("FlutterwaveChargeWebhookEvent")
+                    .change_context(errors::ConnectorError::WebhookResourceObjectNotFound)?;
+                Ok(Box::new(event))
+            }
+            #[cfg(feature = "payouts")]
+            flutterwave::FlutterwaveWebhookEventType::TransferCompleted => {
+                let event: flutterwave::FlutterwaveTransferWebhookEvent = request
+                    .body
+                    .parse_struct("FlutterwaveTransferWebhookEvent")
+                    .change_context(errors::ConnectorError::WebhookResourceObjectNotFound)?;
+                Ok(Box::new(event))
+            }
+            flutterwave::FlutterwaveWebhookEventType::Unknown => Err(error_stack::report!(
+                errors::ConnectorError::WebhookResourceObjectNotFound
+            )),
+        }
     }
 }
 

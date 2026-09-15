@@ -704,3 +704,94 @@ impl<F> TryFrom<PayoutsResponseRouterData<F, FlutterwavePayoutResponse>> for Pay
         })
     }
 }
+
+// ---------------------------------------------------------------------
+// Incoming webhooks
+// ---------------------------------------------------------------------
+//
+// Envelope confirmed against developer.flutterwave.com/docs/webhooks
+// (v3) and developer.flutterwave.com/docs/integration-guides/webhooks,
+// both fetched this session, plus a real worked `transfer.completed`
+// example from developer.flutterwave.com/v3.0/docs/introduction-6: v3
+// payloads are a flat `{ "event": "...", "data": {...} }` envelope —
+// NOT v4's separate `type`/`webhook_id`/`timestamp` envelope (v4 is
+// still a distinct, not-yet-switched surface per Task 52/d-2c; this
+// connector only calls v3 endpoints, so only v3's own webhook shape is
+// modeled here — same "don't half-support a surface this connector
+// doesn't call" posture the Refund section above already takes with
+// v4's own refund endpoint).
+//
+// Only the two events this session found real, worked examples for —
+// `charge.completed` and (payouts-gated) `transfer.completed` — are
+// mapped below; anything else resolves to `EventNotSupported` rather
+// than a guess. Flutterwave's own docs mention subscription charges
+// and pending-to-successful transitions as real webhook triggers, but
+// this session found no worked example of the event *name* either
+// arrives under (both may simply also be `charge.completed` with a
+// different `data.payment_type` — genuinely unconfirmed either way).
+// Flag before assuming subscription/pending-transition webhooks are
+// silently unhandled by accident rather than by a documented gap.
+
+#[derive(Debug, Clone, Deserialize)]
+pub enum FlutterwaveWebhookEventType {
+    #[serde(rename = "charge.completed")]
+    ChargeCompleted,
+    #[cfg(feature = "payouts")]
+    #[serde(rename = "transfer.completed")]
+    TransferCompleted,
+    #[serde(other)]
+    Unknown,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct FlutterwaveWebhookEventTypeBody {
+    pub event: FlutterwaveWebhookEventType,
+}
+
+// `charge.completed`'s own `data` object — `id`/`tx_ref`/`status`
+// confirmed against the worked NGN-bank-transfer example
+// (developer.flutterwave.com/docs/ngn-bank-transfer). Same id/tx_ref/
+// status vocabulary already modeled for Authorize/PSync above
+// (`FlutterwaveTransactionStatus`), reused rather than duplicated —
+// `#[serde(deny_unknown_fields)]` deliberately NOT set, since the real
+// payload carries many more fields (`customer`, `card`, `amount`, ...)
+// this connector has no present use for; only what's needed for
+// routing/status is modeled, same "model what's used" posture as every
+// other response struct in this file.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FlutterwaveChargeWebhookData {
+    pub id: i64,
+    pub tx_ref: String,
+    pub status: FlutterwaveTransactionStatus,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FlutterwaveChargeWebhookEvent {
+    pub data: FlutterwaveChargeWebhookData,
+}
+
+// `transfer.completed`'s own `data` object — confirmed against the
+// worked example in developer.flutterwave.com/v3.0/docs/introduction-6
+// (`{"event":"transfer.completed","event.type":"Transfer","data":
+// {"id":8416497,"reference":"TX-refe123456-6-3-1","status":
+// "SUCCESSFUL",...}}`). Deliberately `reference`, not `tx_ref` —
+// transfers use a different field name than charges do, per that same
+// worked example, not assumed to match charges' own shape. `status` is
+// left a plain `String` and matched via the same
+// `flutterwave_payout_status_from_str` this file's own PoSync path
+// already uses, rather than a second status enum for the identical
+// vocabulary.
+#[cfg(feature = "payouts")]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FlutterwaveTransferWebhookData {
+    pub id: i64,
+    pub reference: String,
+    #[serde(default)]
+    pub status: Option<String>,
+}
+
+#[cfg(feature = "payouts")]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FlutterwaveTransferWebhookEvent {
+    pub data: FlutterwaveTransferWebhookData,
+}

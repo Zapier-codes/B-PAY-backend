@@ -106,7 +106,49 @@
 > task's own section. Nothing else in this file is required reading to
 > start work.**
 >
-> **🟠 NEWEST NEXT TASK (2026-09-15, session 11 — a correction to the
+> **🟡 NEWEST NEXT TASK (2026-09-15, session 12 — closes a gap
+> deliberately deferred in session 9, not an item from the 🟠 box's own
+> list just above):** Flutterwave webhook payload parsing
+> (`get_webhook_object_reference_id`/`get_webhook_event_type`/
+> `get_webhook_resource_object`) is now wired — search "Task 73
+> follow-up -- webhook payload parsing" below for the full entry. This
+> was the gap deliberately left open in session 9's own webhook
+> signature-verification work (see that session's own comment,
+> `crates/hyperswitch_connectors/src/connectors/flutterwave.rs`).
+>
+> **Done this session:** `charge.completed` and (payouts-gated)
+> `transfer.completed` — the two events this session found real,
+> worked examples for across developer.flutterwave.com/docs/webhooks,
+> .../docs/integration-guides/webhooks, and a worked transfer example
+> from .../v3.0/docs/introduction-6 — now resolve to a real
+> `ObjectReferenceId`/`IncomingWebhookEvent`/resource object instead of
+> `WebhooksNotImplemented`. Anything else resolves to
+> `EventNotSupported`, not a guess — Flutterwave's own docs mention
+> subscription-charge and pending-to-successful-transition webhooks as
+> real triggers, but this session found no worked example of the event
+> *name* either arrives under, so neither is modeled. Reused rather
+> than duplicated: `FlutterwaveTransactionStatus` (charges' own status
+> vocabulary, already used by Authorize/PSync) and
+> `flutterwave_payout_status_from_str` (transfers' own, already used by
+> PoSync) — no new status enums invented for the same two vocabularies.
+> Not compiled — no working `rustc`/`cargo` this session either, same
+> wall as every prior session; reviewed by reading against Stripe's own
+> `get_webhook_object_reference_id`/`_event_type`/`_resource_object` in
+> this same crate as the structural precedent, plus a brace/paren
+> balance check on both changed files.
+>
+> **Not done this session, genuinely still open:**
+> 1. Remita and the other five unscaffolded legacy providers (Task 77's
+>    own provider split) — see the 🟣 box further below for the full
+>    list.
+> 2. The 🟤 box's own PgKvStore/Finding #17 thread — untouched this
+>    session, a separate open thread, not a correction of it.
+> 3. Subscription-charge and pending-to-successful-transition webhook
+>    events — genuinely unconfirmed event names, flagged above rather
+>    than guessed at; worth a real docs/dashboard check before assuming
+>    they're silently unhandled by accident rather than by design.
+>
+> **🟠 PRIOR NEXT TASK (2026-09-15, session 11 — a correction to the
 > 🟢 box's own session-10 work below, not a new gap):** `RSync`'s
 > `get_url`, as landed by session 10, read
 > `req.request.connector_refund_id` to build `GET /v3/refunds/{id}`.
@@ -26010,6 +26052,104 @@ migrations/` changes.
 **Per this repo's own rule: not pushed to `main`, not merged** — work
 stays on this session's own branch, a patch was generated and handed to
 the product owner directly for their own `git am` + push.
+
+**Exact command(s) for the product owner:**
+```
+cd ~/B-PAY-backend
+git am ~/storage/downloads/<patch-file-name>
+git push
+```
+
+---
+
+## Task 73 follow-up — Flutterwave webhook payload parsing (2026-09-15, session 12)
+
+**Trigger:** session 9's own webhook signature-verification work
+(`84a928e8e`) deliberately left `get_webhook_object_reference_id` /
+`get_webhook_event_type` / `get_webhook_resource_object` as
+`WebhooksNotImplemented`, flagging payload parsing as a genuinely
+separate leaf — the same split Korapay's own connector still uses.
+Picked up directly this session as the next well-scoped item off the
+open list, after `git fetch origin` confirmed no new drift beyond this
+sandbox's own last applied patch (session 11's RSync fix, `bfb4559da`).
+
+**Real research done this session, not assumed:** Flutterwave's v3
+webhook envelope — confirmed across developer.flutterwave.com/docs/
+webhooks, .../docs/integration-guides/webhooks, and a worked
+`transfer.completed` example from .../v3.0/docs/introduction-6 — is a
+flat `{ "event": "...", "data": {...} }` shape, distinct from v4's
+separate `type`/`webhook_id`/`timestamp` envelope (a v4 `refund
+.completed` webhook example turned up during this research and was
+deliberately NOT modeled — v4 is still a distinct, not-yet-switched
+surface per Task 52/d-2c, and this connector doesn't call any v4
+endpoint, so there's no v4-shaped webhook this leaf could receive).
+Two events got real worked-example coverage this session:
+- `charge.completed` — `data.{id, tx_ref, status}` confirmed against
+  the worked NGN-bank-transfer example
+  (developer.flutterwave.com/docs/ngn-bank-transfer).
+- `transfer.completed` (payouts-gated) — `data.{id, reference,
+  status}` confirmed against a worked example in
+  developer.flutterwave.com/v3.0/docs/introduction-6. Deliberately
+  `reference`, not `tx_ref` — transfers use a different field name
+  than charges, per that same worked example, not assumed to match.
+
+Everything else resolves to `EventNotSupported`. Flutterwave's own
+docs mention subscription-charge and pending-to-successful-transition
+webhooks as real triggers, but this session found no worked example of
+the event *name* either arrives under — flagged as a real open
+question (possibly just `charge.completed` again with a different
+`data.payment_type`, genuinely unconfirmed), not silently swallowed.
+
+**What's built — `crates/hyperswitch_connectors/src/connectors/
+flutterwave.rs` + `flutterwave/transformers.rs`:**
+- `FlutterwaveWebhookEventType`/`FlutterwaveWebhookEventTypeBody` —
+  parses just the `event` field first, same two-pass "parse the type,
+  then re-parse against a typed shape" idiom Stripe's own
+  `WebhookEventTypeBody`/`WebhookEvent` split already uses in this
+  crate, not a new pattern invented for this connector.
+- `FlutterwaveChargeWebhookData`/`Event` and (payouts-gated)
+  `FlutterwaveTransferWebhookData`/`Event` — the typed per-event
+  shapes. Reused rather than duplicated: `FlutterwaveTransactionStatus`
+  (charges' own status vocabulary, already used by Authorize/PSync)
+  for the charge side, and `flutterwave_payout_status_from_str`
+  (transfers' own, already used by PoSync) for the transfer side — no
+  new status enums for either.
+- `get_webhook_object_reference_id` → `PaymentId(ConnectorTransactionId
+  (tx_ref))` for charges, `PayoutId(ConnectorPayoutId(id))` for
+  transfers (payouts-gated).
+- `get_webhook_event_type` → `PaymentIntentSuccess`/`Failure` for
+  charges (`Pending`/`Unknown` both fold to `PaymentIntentProcessing`,
+  not a guessed terminal state); `PayoutSuccess`/`Failure` for
+  transfers, `PayoutProcessing` for `NEW` and anything unrecognized
+  (payouts-gated).
+- `get_webhook_resource_object` → returns the parsed typed event struct
+  boxed as `Box<dyn ErasedMaskSerialize>`, the same "typed struct, not
+  raw `serde_json::Value`" shape every actually-implemented example
+  this session found uses (Stripe's own `WebhookEventObjectData`,
+  Authorizedotnet's `AuthorizedotnetSyncResponse`) — a raw-`Value`
+  field exists elsewhere in Stripe's own transformers.rs
+  (`WebhookEventDataResource.object: Value`) but isn't actually wired
+  into any working `get_webhook_resource_object` this session could
+  find as a confirmed-compiling precedent, so it wasn't risked here
+  without a compiler to check it against.
+
+**Verification:** no working `rustc`/`cargo` this session either (same
+wall as every session in this file's history) — reviewed by reading
+against Stripe's own three-method `IncomingWebhook` implementation in
+this same crate as the structural precedent, plus a brace/paren
+balance check on both changed files (`flutterwave.rs`: 154/154 braces,
+388/388 parens; `transformers.rs`: 109/109 braces, 222/222 parens).
+
+**Per the Patch Handoff Convention, rule 8: drift-checked before
+starting** — `git fetch origin` at the top of this session confirmed
+`origin/main` at `bfb4559da` (this sandbox's own last applied patch),
+no drift beyond that; local `main` was already there. **Per rule 7,
+only the Patch Handoff block is owed this time** — no `db/migrations/`
+changes.
+
+**Per this repo's own rule: not pushed to `main`, not merged** — work
+stays on this session's own branch, a patch was generated and handed
+to the product owner directly for their own `git am` + push.
 
 **Exact command(s) for the product owner:**
 ```

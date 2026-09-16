@@ -194,6 +194,9 @@ impl FeatureMatrixConnectorData {
                 enums::Connector::Flexiti => {
                     Ok(ConnectorEnum::Old(Box::new(connector::Flexiti::new())))
                 }
+                enums::Connector::Flutterwave => {
+                    Ok(ConnectorEnum::Old(Box::new(connector::Flutterwave::new())))
+                }
                 enums::Connector::Getnet => {
                     Ok(ConnectorEnum::Old(Box::new(connector::Getnet::new())))
                 }
@@ -248,8 +251,14 @@ impl FeatureMatrixConnectorData {
                 enums::Connector::Juspaythreedsserver => Ok(ConnectorEnum::Old(Box::new(
                     connector::Juspaythreedsserver::new(),
                 ))),
+                enums::Connector::Juicyway => {
+                    Ok(ConnectorEnum::Old(Box::new(connector::Juicyway::new())))
+                }
                 enums::Connector::Klarna => {
                     Ok(ConnectorEnum::Old(Box::new(connector::Klarna::new())))
+                }
+                enums::Connector::Korapay => {
+                    Ok(ConnectorEnum::Old(Box::new(connector::Korapay::new())))
                 }
                 enums::Connector::Loonio => {
                     Ok(ConnectorEnum::Old(Box::new(connector::Loonio::new())))

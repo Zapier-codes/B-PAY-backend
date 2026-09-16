@@ -99,6 +99,7 @@ impl ForeignTryFrom<api_enums::Connector> for euclid::enums::RoutableConnectors 
             api_enums::Connector::Interpayments => Self::Interpayments,
             api_enums::Connector::Itaubank => Self::Itaubank,
             api_enums::Connector::Jpmorgan => Self::Jpmorgan,
+            api_enums::Connector::Juicyway => Self::Juicyway,
             api_enums::Connector::Juspay => {
                 Err(common_utils::errors::ValidationError::InvalidValue {
                     message: "juspay is not a routable connector".to_string(),
@@ -110,6 +111,7 @@ impl ForeignTryFrom<api_enums::Connector> for euclid::enums::RoutableConnectors 
                 })?
             }
             api_enums::Connector::Klarna => Self::Klarna,
+            api_enums::Connector::Korapay => Self::Korapay,
             api_enums::Connector::Loonio => Self::Loonio,
             api_enums::Connector::Mifinity => Self::Mifinity,
             api_enums::Connector::Mollie => Self::Mollie,

@@ -273,6 +273,10 @@ impl ConnectorAuthTypeAndMetadataValidation<'_> {
                 flexiti::transformers::FlexitiAuthType::try_from(self.auth_type)?;
                 Ok(())
             }
+            api_enums::Connector::Flutterwave => {
+                flutterwave::transformers::FlutterwaveAuthType::try_from(self.auth_type)?;
+                Ok(())
+            }
             api_enums::Connector::Forte => {
                 forte::transformers::ForteAuthType::try_from(self.auth_type)?;
                 Ok(())
@@ -362,11 +366,19 @@ impl ConnectorAuthTypeAndMetadataValidation<'_> {
                 Ok(())
             }
             api_enums::Connector::Juspay | api_enums::Connector::Juspaythreedsserver => Ok(()),
+            api_enums::Connector::Juicyway => {
+                juicyway::transformers::JuicywayAuthType::try_from(self.auth_type)?;
+                Ok(())
+            }
             api_enums::Connector::Klarna => {
                 klarna::transformers::KlarnaAuthType::try_from(self.auth_type)?;
                 klarna::transformers::KlarnaConnectorMetadataObject::try_from(
                     self.connector_meta_data,
                 )?;
+                Ok(())
+            }
+            api_enums::Connector::Korapay => {
+                korapay::transformers::KorapayAuthType::try_from(self.auth_type)?;
                 Ok(())
             }
             api_enums::Connector::Loonio => {

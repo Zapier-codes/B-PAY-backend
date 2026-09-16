@@ -337,11 +337,17 @@ impl ConnectorData {
                 enums::Connector::Jpmorgan => {
                     Ok(ConnectorEnum::Old(Box::new(connector::Jpmorgan::new())))
                 }
+                enums::Connector::Juicyway => {
+                    Ok(ConnectorEnum::Old(Box::new(connector::Juicyway::new())))
+                }
                 enums::Connector::Juspaythreedsserver => Ok(ConnectorEnum::Old(Box::new(
                     connector::Juspaythreedsserver::new(),
                 ))),
                 enums::Connector::Klarna => {
                     Ok(ConnectorEnum::Old(Box::new(connector::Klarna::new())))
+                }
+                enums::Connector::Korapay => {
+                    Ok(ConnectorEnum::Old(Box::new(connector::Korapay::new())))
                 }
                 enums::Connector::Loonio => {
                     Ok(ConnectorEnum::Old(Box::new(connector::Loonio::new())))

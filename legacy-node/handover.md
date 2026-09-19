@@ -106,6 +106,22 @@
 > task's own section. Nothing else in this file is required reading to
 > start work.**
 >
+> **🟣 NEWEST NEXT TASK (2026-09-19, session 15 — `Build and push image`
+> workflow, `docker-publish.yml`, run at `85ad2ce66`; 1 confirmed root
+> cause fixed, downstream compile status genuinely unknown):** Search
+> "CI triage — Docker build missing a Redis backend feature" below for
+> the full entry. Short version: the Dockerfile's `cargo build
+> --no-default-features --features release --features v1` never enabled
+> `redis-rs` (or `fred`), so `redis_interface` hit its own
+> `compile_error!` ("Either feature fred or redis-rs must be enabled")
+> and cargo stopped there. Fixed by adding a
+> `REDIS_BACKEND` build arg (default `redis-rs`) and passing it as
+> `--features ${REDIS_BACKEND}`. **Not compiled here** (same
+> no-`rustc` wall as every session) — and cargo stopped at
+> `redis_interface`, the first crate to fail, so `router` and anything
+> downstream of it never got compiled in that log. Check the next real
+> run's result before assuming this is the only Docker-build blocker.
+>
 > **🔴 NEWEST NEXT TASK (2026-09-15, session 14 — real CI triage, 2
 > confirmed root causes fixed, 1 genuinely open question for whoever
 > pushes next):** Search "CI triage — `ring::deprecated_constant_time`
@@ -26350,5 +26366,80 @@ to the product owner directly for their own `git am` + push.
 ```
 cd ~/B-PAY-backend
 git am ~/storage/downloads/<patch-file-name>
+git push
+```
+
+
+---
+
+## CI triage — Docker build missing a Redis backend feature (2026-09-19, session 15)
+
+**Trigger:** the product owner ran the `Build and push image` job
+(`.github/workflows/docker-publish.yml`, push to `main` at `85ad2ce66`,
+"ci: build and publish router image to GHCR, trigger Render deploy
+hook") and pasted back the failed-step log as
+`ci-errors-build-and-push.txt`. The job's only real failure is step 5/6
+of the Dockerfile's builder stage (`cargo build`, exit code 101); the
+`Node 20 is being deprecated` notice and the two Dockerfile lint
+warnings (`FromAsCasing`, `JSONArgsRecommended`) in the same log are
+non-fatal and were deliberately left alone.
+
+**Root cause — `Dockerfile`, not any `.rs` file:** the builder stage
+runs `cargo build --profile ${CARGO_BUILD_PROFILE} --no-default-features
+--features release --features ${VERSION_FEATURE_SET} ${EXTRA_FEATURES}`.
+`--no-default-features` drops the `default = ["redis-rs"]` that
+`redis_interface`, `storage_impl`, `scheduler`, `drainer` and `router`
+each declare, and router's `release` feature list does not re-enable
+either backend. `crates/redis_interface/src/lib.rs` deliberately
+refuses to compile with neither `fred` nor `redis-rs` on, so the crate
+failed with its own `compile_error!` plus two follow-on
+`E0425: cannot find type RedisConnectionPool` errors in `types.rs`
+(both just consequences of the same missing feature, not separate
+bugs). `v1` was fine: router's `v1` feature pulls in `common_default`
+(oltp/olap/payouts/etc.), so only the Redis backend was actually
+missing among the dropped defaults. This is the same requirement
+`.github/workflows/ci.yml`'s own `--no-default-features --features
+"release,v2,redis-rs"` / `...,fred"` check steps already meet — the
+Dockerfile was simply the one place that never got updated when the
+`redis-rs`/`fred` split landed.
+
+**Fix:** `ARG REDIS_BACKEND="redis-rs"` (with a comment explaining why)
+and one extra `--features ${REDIS_BACKEND}` line in the builder-stage
+`cargo build`. `redis-rs` chosen as the default because it is the
+workspace's own default backend (`redis_interface`'s and `router`'s
+`default` lists) and the one CI treats as primary. Overridable with
+`--build-arg REDIS_BACKEND=fred` for anyone who wants the other
+backend; `docker-publish.yml` needs no change (it doesn't set
+`EXTRA_FEATURES`, and the new arg has a default).
+
+**Verification:** no working `rustc`/`cargo` this session either (same
+wall as every session in this file's history) — root-caused from the
+pasted log text plus reading `redis_interface`'s `lib.rs`/`Cargo.toml`,
+router's `Cargo.toml` feature graph, and the Dockerfile itself. Not
+compiled and not `docker build`-tested.
+
+**Genuinely open — flagged, not resolved:** cargo stops at the first
+failing crate. `redis_interface` failed at ~683s into a build that had
+otherwise been compiling dependencies fine, and `router` (which depends
+on it) never got compiled in this log at all. So whether the full
+Docker build now goes green depends on whether anything *downstream* of
+`redis_interface` also fails — real uncertainty, not a guess either way.
+`docs/building_docker_images.md` also still describes the old
+`cargo build --release --features release` command and says
+`--no-default-features` isn't passed; that page was already stale
+before this session and was not touched here.
+
+**Per the Patch Handoff Convention:** `git fetch origin` run
+immediately before generating the patch (`origin/main` still at
+`85ad2ce66`, no drift), patch test-applied with `git am` against a
+fresh clone of `origin/main` before handing over (rule 8). Work stayed
+on branch `fix/docker-redis-backend-feature`, not merged, not pushed by
+this session. **Per rule 7, only the Patch Handoff block is owed** — no
+`db/migrations/` or `migrations/` changes.
+
+**Exact command(s) for the product owner:**
+```
+cd ~/B-PAY-backend
+git am ~/storage/downloads/b-pay-backend-docker-redis-backend-feature.patch
 git push
 ```

@@ -3,6 +3,16 @@ FROM public.ecr.aws/docker/library/rust:trixie as builder
 ARG EXTRA_FEATURES=""
 ARG VERSION_FEATURE_SET="v1"
 
+# Redis client backend compiled into the binaries: `redis-rs` (default) or
+# `fred`. The build below passes `--no-default-features`, which drops the
+# `default = ["redis-rs"]` that `router`/`storage_impl`/`scheduler`/`drainer`/
+# `redis_interface` each declare, and `release` does not re-enable either
+# backend. `redis_interface` refuses to compile with neither (or both) enabled,
+# so exactly one must be named explicitly here -- same as the `redis-rs` /
+# `fred` variants of `cargo check --no-default-features --features "release,..."`
+# in `.github/workflows/ci.yml`.
+ARG REDIS_BACKEND="redis-rs"
+
 # Which cargo profile compiles the binaries: `release` (default, production),
 # `release-fast` (optimized, no LTO, for development cycles) or `dev`
 # (unoptimized). Features are untouched by this choice.
@@ -41,6 +51,7 @@ RUN cargo build \
     --no-default-features \
     --features release \
     --features ${VERSION_FEATURE_SET} \
+    --features ${REDIS_BACKEND} \
     ${EXTRA_FEATURES}
 
 # Stage the binary at a profile-independent path for the runtime stage

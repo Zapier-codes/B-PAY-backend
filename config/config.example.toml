@@ -105,6 +105,10 @@ max_lifetime = 1800       # Maximum lifetime in seconds before a connection is r
 [redis]
 host = "127.0.0.1"
 port = 6379
+# Only for builds with `--features postgres` (the Docker image default): the Postgres/Supabase
+# connection that replaces Redis. Prefer the env var ROUTER__REDIS__POSTGRES_URL over a file value
+# (it contains the password). Use a session-mode/direct connection (port 5432), not the 6543 pooler.
+# postgres_url = "postgresql://user:password@host:5432/postgres?sslmode=require"
 pool_size = 5                     # Number of connections to keep open
 reconnect_max_attempts = 5        # Maximum number of reconnection attempts to make before failing. Set to 0 to retry forever.
 reconnect_delay = 5               # Delay between reconnection attempts, in milliseconds

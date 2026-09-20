@@ -22,6 +22,8 @@ v2 = ["api_models/v2", "diesel_models/v2", "hyperswitch_domain_models/v2", "comm
 tokenization_v2 = ["diesel_models/tokenization_v2", "api_models/tokenization_v2", "hyperswitch_domain_models/tokenization_v2"]
 fred     = ["redis_interface/fred"]
 redis-rs = ["redis_interface/redis-rs"]
+# Postgres (Supabase) instead of Redis, see crates/redis_interface `postgres` feature
+postgres = ["redis_interface/postgres"]
 
 [dependencies]
 # First Party dependencies

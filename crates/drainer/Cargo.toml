@@ -15,6 +15,7 @@ v1 = ["diesel_models/v1", "external_services/v1", "hyperswitch_interfaces/v1", "
 v2 = ["diesel_models/v2", "external_services/v2", "hyperswitch_interfaces/v2", "common_utils/v2", "storage_impl/v2"]
 fred     = ["redis_interface/fred",     "redis_interface/metrics", "storage_impl/fred"]
 redis-rs = ["redis_interface/redis-rs", "redis_interface/metrics", "storage_impl/redis-rs"]
+postgres = ["redis_interface/postgres", "storage_impl/postgres"]
 
 [dependencies]
 actix-web = "4.11.0"

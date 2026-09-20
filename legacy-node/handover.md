@@ -106,7 +106,24 @@
 > task's own section. Nothing else in this file is required reading to
 > start work.**
 >
-> **🟣 NEWEST NEXT TASK (2026-09-19, session 15 — `Build and push image`
+> **🟣 NEWEST NEXT TASK (2026-09-19, session 15 — Redis fully replaced by
+> Postgres/Supabase at the `redis_interface` layer; image build fixed):**
+> Search "Session 15 — Postgres backend for redis_interface" at the end of
+> this file. Short version: the `Build and push image` job failed because the
+> Dockerfile's `--no-default-features` build enabled no Redis backend. Instead
+> of just re-adding `redis-rs`, the product owner directed "wire all completely
+> to postgres/supabase, no Redis" — done as a **third `redis_interface`
+> backend (`--features postgres`)** with the identical public API, so none of
+> the 63 audited call sites change. Dockerfile now builds it by default
+> (`KV_BACKEND=postgres`). **Two things the product owner must do before the
+> new image can boot:** run the pg_kv migrations on Supabase (DB-Ops block in
+> the entry) and set `ROUTER__REDIS__POSTGRES_URL` on Render. **Not done:**
+> Redis streams/consumer groups (KV drainer, scheduler queue, `RedisKv`
+> merchants) — they return a clear error. **Also new:** a working Rust
+> toolchain exists in this sandbox after all (see the entry) — this
+> supersedes the New-Clone Checklist's "no rustc" claim.
+>
+> **⚪ SUPERSEDED by the newer 🟣 box above (same session): originally — `Build and push image`
 > workflow, `docker-publish.yml`, run at `85ad2ce66`; 1 confirmed root
 > cause fixed, downstream compile status genuinely unknown):** Search
 > "CI triage — Docker build missing a Redis backend feature" below for
@@ -26441,5 +26458,153 @@ this session. **Per rule 7, only the Patch Handoff block is owed** — no
 ```
 cd ~/B-PAY-backend
 git am ~/storage/downloads/b-pay-backend-docker-redis-backend-feature.patch
+git push
+```
+
+
+---
+
+## Session 15 — Postgres backend for redis_interface (2026-09-19)
+
+**Trigger.** The product owner pasted the failed `Build and push image` log
+(`docker-publish.yml`, push to `main` at `85ad2ce66`). Root cause: the
+Dockerfile builds with `cargo build --no-default-features --features release
+--features v1`; `--no-default-features` drops the `redis-rs` default declared
+by `redis_interface`/`storage_impl`/`scheduler`/`drainer`/`router`, and
+`redis_interface` has a `compile_error!` when no backend is enabled (plus two
+follow-on `E0425 RedisConnectionPool` errors that are the same problem). The
+non-fatal log lines (Node 20 deprecation, `FromAsCasing`/`JSONArgsRecommended`
+lint warnings) were left alone.
+
+**Direction change.** First answer was "add `redis-rs` to the Dockerfile". The
+product owner then said Redis had been switched to Supabase and, on checking,
+that was only true of the `pg_kv_store.rs`/`pg_lock.rs`/`pg_pub_sub.rs`
+modules — unwired except for the UCS kill-switch (63 router files / 145
+`get_redis_conn` calls still on Redis, `RedisStore::new` connecting at boot).
+The instruction was then: "wire all completely to postgres supabase, no
+Redis, so the workflow image works."
+
+**Design decision — adapter at the lowest layer, not a 63-file rewrite.**
+`crates/redis_interface` gets a third, mutually exclusive backend
+(`--no-default-features --features postgres`, Cargo feature forwarded through
+`storage_impl`, `scheduler`, `drainer`, `router`). It exports the *same*
+public API as `redis-rs`/`fred` (`RedisConnectionPool`,
+`RedisConnectionWithContext`, `SubscriberClient`, `PublisherClient`,
+`PubSubMessage`, `RedisConfig`, ...), so nothing that depends on it changes.
+Why not the audit's call-site plan: it would edit ~63 files in `router` that
+this sandbox cannot compile, and change every call's API; the adapter changes
+one crate that *can* be compiled and tested, and keeps every signature
+identical. The `redis` crate stays only as a **codec** (`ToRedisArgs` /
+`FromRedisValue` are what every call site is written against): values are
+encoded to bytes for the `BYTEA` column and decoded back through the same
+traits, `Nil` for a missing key — so `get_key::<Vec<u8>>` on a missing key is
+empty, `get_key::<String>` fails, `get_key::<()>` (health check) succeeds,
+exactly as before. No Redis connection is ever opened.
+
+**Files.** `module/pg.rs` (pool, subscriber, publisher, `on_error` health
+loop), `module/pg/store.rs` (all SQL, `diesel::sql_query` over
+`async-bb8-diesel`, plain `PgConnection` — its own small pool sized by
+`redis.pool_size`), `module/pg/commands.rs` (the command surface),
+`test_pg.rs`. Shared: `types.rs` (`RedisValue` cfg, new `postgres_url`
+setting — a redacting `PostgresUrl` newtype, never printed by `Debug`;
+`validate()` requires it under this backend), `lib.rs` (three-way guard),
+`constant.rs`, `redis_rs/types.rs` reused via `#[path]`. Tables are the
+existing ones from `migrations/2026-09-11-120000_add_postgres_kv_replacement`
+(`pg_kv_cache`, `pg_pubsub_payload`) — no new migration.
+
+**Semantics.** Expiry is lazy (expired rows invisible to reads and treated as
+absent by SETNX/HSETNX; `sweep_pg_kv_cache()` from migration `...130000...`
+reclaims space). SETNX/HSETNX/HINCRBY are single atomic statements; HSET+EXPIRE
+is one statement so a hash's fields always share one expiry. Pub/sub is a
+polled log (`~250 ms`) rather than LISTEN/NOTIFY, deliberately: it works
+through Supabase poolers and needs no dedicated connection. `hscan` supports
+`*`/`?` globs (converted to LIKE), `count` is ignored. Implemented: 44 of the
+51 redis-rs commands — every one the workspace calls. Not implemented (zero
+callers, verified by grep): list commands, `scan`, Lua scripting,
+`set_multiple_keys_if_not_exist`. **Streams and consumer groups are stubbed to
+return their usual `RedisError` with an explanatory message** — they back the
+KV drainer, the scheduler task queue and the per-merchant `RedisKv` storage
+scheme; the router request path only touches them for `RedisKv` merchants
+(default is `PostgresOnly`). The drainer and scheduler binaries therefore
+*compile* under this feature but will not work until streams get a Postgres
+design (queue table + `SKIP LOCKED` is the obvious shape) — that is the next
+Task-73 slice if those binaries are ever deployed.
+
+**Verification — what was actually run, what was not.**
+- **Toolchain (new).** The New-Clone Checklist's "no rustc >= 1.85" is wrong:
+  `apt-get install rustc-1.85 cargo-1.85` (also `rustc-1.91`, `cargo-1.91`,
+  `rustfmt-1.91`) work on the sandbox's Ubuntu 24.04; the earlier probe only
+  tried the unversioned `rustc` (1.75). Recipe: use **cargo 1.91** (1.85's
+  libgit2 fails on git dependencies with `invalid version 0 on
+  git_proxy_options`) with `[net] git-fetch-with-cli = true` in
+  `~/.cargo/config.toml`; no `clippy` package is available.
+- **Limit.** The sandbox has 4 GB RAM / 1 core; anything depending on
+  `common_enums`/`diesel_models` (diesel with `128-column-tables`) needs > 6 GB
+  to compile, so `router`, `storage_impl`, `scheduler`, `drainer` and even
+  `redis_interface` *in the workspace* cannot be built here.
+- **What was done instead.** A throw-away crate (`/tmp/pgprobe`, not in the
+  repo) that symlinks the real `crates/redis_interface/src` and stubs only the
+  handful of `common_utils` items it imports (trait/type shapes copied from the
+  real crate). Against it: `cargo check` for `postgres` and `redis-rs` — **zero
+  warnings**; `cargo test --no-default-features --features postgres` against a
+  **local PostgreSQL 16 with the real `up.sql` applied — 56 passed, 3 runs in a
+  row, 0 failed** (roundtrip, Nil decoding, lazy expiry, TTL codes, SETNX
+  incl. expired rows and 16-way contention with exactly one winner, atomic
+  HINCRBY under 20 concurrent tasks, hashes/hscan/hsetnx, sadd, tenant-prefix
+  isolation, pub/sub incl. cross-instance delivery and unsubscribe, streams fail
+  loudly, config errors, URL redaction). A script compared all 44 method
+  signatures (generics, bounds, returns) against `redis_rs/commands.rs`: 0
+  mismatches. `rustfmt` clean.
+- **NOT verified:** the real workspace build with `--features postgres`
+  (`redis_interface` against the real `common_utils`, and every downstream
+  crate). Risk is low because signatures are mechanically identical, but it is
+  unproven — hence a new CI step (`cargo check --no-default-features --features
+  "release,v1,postgres"`, the exact feature set the image uses). Also unproven:
+  TLS to Supabase (libpq handles `sslmode=require`; local server had no SSL),
+  and behaviour behind Supabase's *transaction* pooler (port 6543) — unsupported
+  by design (prepared statements); use the session pooler, port 5432, as the
+  existing DB-Ops connection already does.
+
+**Other changes.** `Dockerfile`: `ARG KV_BACKEND="postgres"` +
+`--features ${KV_BACKEND}` (override with `--build-arg KV_BACKEND=redis-rs`).
+`justfile`: the `clippy*` recipes build the feature list from
+`cargo metadata --all-features` and would have enabled `postgres` next to
+`redis-rs` (compile error) — `postgres` added to their exclusion lists.
+`.github/workflows/ci.yml`: the check step above. `Cargo.lock`: updated (also
+absorbs a pre-existing stale `subtle`/`router_env` edge). `README` of
+`redis_interface`: backend documentation.
+
+**What the product owner must do (none of it is in the patch).**
+1. Run the migrations that create the tables on the live Supabase project — if
+   they were never applied (check first, `\dt pg_kv_cache pg_pubsub_payload`):
+   ```
+   proot-distro login ubuntu
+   cd ~/B-Pay-backend
+   git pull
+   psql "host=aws-1-eu-west-1.pooler.supabase.com port=5432 dbname=postgres user=postgres.mfekzzwsoiezqkovabmp sslmode=require" -f migrations/2026-09-11-120000_add_postgres_kv_replacement/up.sql
+   ```
+   Optional afterwards (enable the `pg_cron` extension in the Supabase dashboard
+   first): `... -f migrations/2026-09-11-130000_add_pg_kv_cache_pubsub_sweep_jobs/up.sql`
+   — only reclaims space, nothing works differently without it.
+2. On Render set `ROUTER__REDIS__POSTGRES_URL` to
+   `postgresql://postgres.mfekzzwsoiezqkovabmp:<password>@aws-1-eu-west-1.pooler.supabase.com:5432/postgres?sslmode=require`
+   (password from the Supabase dashboard, never in git or chat). Old `REDIS_*`
+   variables are ignored.
+3. Push, watch the next `Build and push image` run. The first real compile of
+   `router` under this feature happens there; if it fails, paste the log.
+
+**Per the Patch Handoff Convention:** the earlier session-15 patch (Dockerfile-only,
+`REDIS_BACKEND`, the entry above) was applied and pushed by the product owner as
+`c31be2e13`; this patch is built on top of that (`git fetch origin` run immediately
+before generating it — that is how the new base was noticed), so it *supersedes*
+that entry's choice: the Dockerfile arg is now `KV_BACKEND` (default `postgres`),
+not `REDIS_BACKEND` (default `redis-rs`). Test-applied with `git am` on a fresh
+clone of `origin/main`. The older entry is left as written — it is the record of
+the first diagnosis.
+
+**Exact command(s):**
+```
+cd ~/B-PAY-backend
+git am ~/storage/downloads/b-pay-backend-postgres-kv-backend.patch
 git push
 ```

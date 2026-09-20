@@ -11,6 +11,13 @@ license.workspace = true
 default = ["redis-rs"]
 fred = ["dep:fred", "deja?/fred"]
 redis-rs = ["dep:redis", "deja?/redis-rs"]
+# Postgres (Supabase) backend: a drop-in replacement for the Redis backends that
+# keeps the exact same public API but stores everything in `pg_kv_cache` /
+# `pg_pubsub_payload` (migrations/2026-09-11-120000_add_postgres_kv_replacement).
+# `redis` is still pulled in, but only as a *codec*: its `ToRedisArgs` /
+# `FromRedisValue` traits are what every existing call site is written against,
+# so values are encoded/decoded through them and no Redis connection is ever made.
+postgres = ["dep:redis", "dep:diesel", "dep:bb8", "dep:async-bb8-diesel"]
 multitenancy_fallback = []
 deja = ["common_utils/deja", "dep:deja", "dep:serde_json"]
 metrics = ["dep:router_env"]
@@ -25,13 +32,18 @@ tokio = "1.48.0"
 tokio-stream = { version = "0.1.17", features = ["sync"] }
 tracing = { workspace = true }
 
-# Exactly one backend must be active at compile time
+# Exactly one backend (fred, redis-rs or postgres) must be active at compile time
 redis = { version = "1.2.0", optional = true, features = [
     "tokio-comp", "cluster-async", "streams", "script", "connection-manager"
 ]}
 fred = { version = "8.0.6", optional = true, features = [
     "metrics", "partial-tracing", "subscriber-client"
 ]}
+
+# Postgres backend only
+diesel = { version = "2.2.10", default-features = false, features = ["postgres"], optional = true }
+bb8 = { version = "0.8.6", optional = true }
+async-bb8-diesel = { version = "0.2.1", optional = true }
 
 # First party crates
 common_utils = { version = "0.1.0", path = "../common_utils", features = ["async_ext"] }

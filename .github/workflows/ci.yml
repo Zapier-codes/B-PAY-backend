@@ -485,6 +485,13 @@ jobs:
         shell: bash
         run: cargo check --no-default-features --features "release,v2,fred"
 
+      # The Docker image is built with exactly this feature set (Dockerfile:
+      # KV_BACKEND=postgres), so check it here instead of first finding out
+      # from the image build.
+      - name: Run cargo check enabling only the release and v1 features (postgres backend)
+        shell: bash
+        run: cargo check --no-default-features --features "release,v1,postgres"
+
   storage-impl:
     name: cargo check -p storage_impl (pinned 1.85.0)
     runs-on: ubuntu-latest

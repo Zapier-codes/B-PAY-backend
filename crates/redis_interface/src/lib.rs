@@ -1,6 +1,8 @@
 //! Redis interface — compile-time backend selection via Cargo feature.
 //!
-//! By default the `redis-rs` crate is used. Enable the `fred` feature to switch.
+//! By default the `redis-rs` crate is used. Enable the `fred` feature to switch, or
+//! the `postgres` feature to run the very same API on top of Postgres (Supabase)
+//! with no Redis server at all.
 //!
 //! # Examples
 //! ```ignore
@@ -16,14 +18,24 @@
 //! ```
 
 // Compile-time guards: exactly one backend must be active.
-#[cfg(not(any(feature = "fred", feature = "redis-rs")))]
-compile_error!("Either feature \"fred\" or \"redis-rs\" must be enabled for this crate.");
+#[cfg(not(any(feature = "fred", feature = "redis-rs", feature = "postgres")))]
+compile_error!(
+    "One of the features \"fred\", \"redis-rs\" or \"postgres\" must be enabled for this crate."
+);
 
-#[cfg(all(feature = "fred", feature = "redis-rs"))]
-compile_error!("Features \"fred\" and \"redis-rs\" are mutually exclusive — enable only one.");
+#[cfg(any(
+    all(feature = "fred", feature = "redis-rs"),
+    all(feature = "fred", feature = "postgres"),
+    all(feature = "redis-rs", feature = "postgres"),
+))]
+compile_error!(
+    "Features \"fred\", \"redis-rs\" and \"postgres\" are mutually exclusive — enable only one."
+);
 
 pub mod constant;
 pub mod errors;
+// Per-roundtrip Redis metrics/events; the Postgres backend has no Redis roundtrips.
+#[cfg(any(feature = "fred", feature = "redis-rs"))]
 pub(crate) mod metrics;
 pub mod types;
 
@@ -37,6 +49,11 @@ mod module {
     pub mod redis_rs;
 }
 
+#[cfg(feature = "postgres")]
+mod module {
+    pub mod pg;
+}
+
 // Re-export the active backend's public types under unified names.
 // All external code imports `redis_interface::RedisConnectionPool` etc.
 // and is never aware of which backend is active.
@@ -48,6 +65,11 @@ pub use module::fred::{
     PubSubMessage, RedisClient, RedisConfig, RedisConnectionPool, RedisConnectionWithContext,
     SubscriberClient,
 };
+#[cfg(feature = "postgres")]
+pub use module::pg::{
+    redis_value_to_option_string, PubSubMessage, PublisherClient, RedisConfig, RedisConnectionPool,
+    RedisConnectionWithContext, SubscriberClient,
+};
 #[cfg(feature = "redis-rs")]
 pub use module::redis_rs::{
     redis_value_to_option_string, PubSubMessage, PublisherClient, RedisConfig, RedisConn,
@@ -56,5 +78,11 @@ pub use module::redis_rs::{
 
 pub use self::types::*;
 
-#[cfg(test)]
+// The Redis test-suite talks to a live Redis server and exercises commands the
+// Postgres backend deliberately does not offer.
+#[cfg(all(test, not(feature = "postgres")))]
 mod test;
+
+// Postgres-backend tests; they need a database, see the module docs.
+#[cfg(all(test, feature = "postgres"))]
+mod test_pg;

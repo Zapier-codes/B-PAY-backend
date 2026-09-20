@@ -15,13 +15,14 @@ use crate::errors;
 
 #[derive(Clone, Debug)]
 pub struct RedisValue {
-    #[cfg(feature = "redis-rs")]
+    #[cfg(any(feature = "redis-rs", feature = "postgres"))]
     pub(crate) inner: redis::Value,
     #[cfg(feature = "fred")]
     pub(crate) inner: fred::types::RedisValue,
 }
 
-// Method impls are in module/redis_rs/types.rs and module/fred/types.rs.
+// Method impls are in module/redis_rs/types.rs (shared with the Postgres backend,
+// which only uses `redis::Value` as an in-memory codec) and module/fred/types.rs.
 
 // ─── Shared configuration types ─────────────────────────────────────────────
 
@@ -58,6 +59,41 @@ pub struct RedisSettings {
     pub broadcast_channel_capacity: usize,
     /// Maximum duration (in seconds) that Redis can be unreachable before the server shuts down.
     pub max_failure_threshold_seconds: u32,
+    /// Connection string of the Postgres (Supabase) database that backs the
+    /// `postgres` backend, e.g. `postgres://user:pass@host:5432/postgres?sslmode=require`.
+    /// Ignored by the Redis backends. Use a *session*-mode pooler / direct
+    /// connection: the backend uses prepared statements, which Supabase's
+    /// transaction-mode pooler (port 6543) does not support.
+    pub postgres_url: PostgresUrl,
+}
+
+/// A connection string that never shows up in `Debug` output (it embeds the password).
+#[derive(Clone, Default, serde::Deserialize)]
+#[serde(transparent)]
+pub struct PostgresUrl(String);
+
+impl PostgresUrl {
+    pub fn new(url: impl Into<String>) -> Self {
+        Self(url.into())
+    }
+
+    pub fn expose(&self) -> &str {
+        &self.0
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.trim().is_empty()
+    }
+}
+
+impl std::fmt::Debug for PostgresUrl {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(if self.is_empty() {
+            "PostgresUrl(<unset>)"
+        } else {
+            "PostgresUrl(<redacted>)"
+        })
+    }
 }
 
 impl RedisSettings {
@@ -96,6 +132,15 @@ impl RedisSettings {
             },
         )?;
 
+        #[cfg(feature = "postgres")]
+        when(self.postgres_url.is_empty(), || {
+            Err(errors::RedisError::InvalidConfiguration(
+                "`redis.postgres_url` must be specified when built with the `postgres` backend \
+                 (env: ROUTER__REDIS__POSTGRES_URL)"
+                    .into(),
+            ))
+        })?;
+
         Ok(())
     }
 }
@@ -123,6 +168,7 @@ impl Default for RedisSettings {
             unresponsive_check_interval: 2,
             broadcast_channel_capacity: 32,
             max_failure_threshold_seconds: 5,
+            postgres_url: PostgresUrl::default(),
         }
     }
 }
@@ -413,7 +459,12 @@ mod tests {
 
     #[test]
     fn test_redis_settings_validate_valid_defaults() {
-        let settings = RedisSettings::default();
+        let settings = RedisSettings {
+            // the Postgres backend additionally requires a database URL
+            #[cfg(feature = "postgres")]
+            postgres_url: PostgresUrl::new("postgres://user:pass@localhost:5432/db"),
+            ..RedisSettings::default()
+        };
         assert!(settings.validate().is_ok());
     }
 

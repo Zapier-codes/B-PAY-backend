@@ -14,6 +14,7 @@ v1 = ["diesel_models/v1", "hyperswitch_domain_models/v1", "storage_impl/v1", "co
 v2 = ["diesel_models/v2", "hyperswitch_domain_models/v2", "storage_impl/v2", "common_utils/v2", "common_types/v2"]
 fred     = ["redis_interface/fred",     "storage_impl/fred"]
 redis-rs = ["redis_interface/redis-rs", "storage_impl/redis-rs"]
+postgres = ["redis_interface/postgres", "storage_impl/postgres"]
 
 [dependencies]
 # Third party crates

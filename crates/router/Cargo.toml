@@ -180,6 +180,13 @@ redis-rs = [
     "storage_impl/redis-rs",
     "scheduler/redis-rs",
 ]
+# Run the router with no Redis at all: cache, locks, pub/sub, ... live in Postgres
+# (Supabase). Requires `redis.postgres_url` and migrations 2026-09-11-1200/1300.
+postgres = [
+    "redis_interface/postgres",
+    "storage_impl/postgres",
+    "scheduler/postgres",
+]
 
 [dependencies]
 actix-cors = "0.6.5"

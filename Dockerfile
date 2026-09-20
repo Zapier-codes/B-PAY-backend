@@ -86,6 +86,18 @@ COPY --from=builder /router/config/payment_required_fields_v2.toml ${CONFIG_DIR}
 # RUN_ENV decides the corresponding config file to be used
 ARG RUN_ENV=sandbox
 
+# PRIORITY 1 FIX (see /HANDOVER.md): in docker-compose, the app finds its
+# config at ${CONFIG_DIR}/${RUN_ENV}.toml via a volume mount of ./config.
+# A standalone container (e.g. a single Render web service, no compose
+# orchestration) has no such mount, and settings.rs loads the config file
+# with `.required(false)`, so a missing file fails *silently* - the server
+# boots with almost nothing configured instead of erroring out. Bake in
+# docker_compose.toml (the project's own known-working default set) at the
+# exact path RUN_ENV resolves to, so the binary always has a real base
+# config; deployment-specific secrets (DB creds, ROUTER__REDIS__POSTGRES_URL,
+# ROUTER__SECRETS__*, etc.) still come from env vars and override this.
+COPY --from=builder /router/config/docker_compose.toml ${CONFIG_DIR}/${RUN_ENV}.toml
+
 # args for deciding the executable to export. three binaries:
 # 1. BINARY=router - for main application
 # 2. BINARY=scheduler, SCHEDULER_FLOW=consumer - part of process tracker

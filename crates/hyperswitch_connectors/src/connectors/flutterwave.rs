@@ -4,7 +4,6 @@ use std::sync::LazyLock;
 
 use common_enums::enums;
 use common_utils::{
-    crypto,
     errors::CustomResult,
     ext_traits::{ByteSliceExt, BytesExt},
     request::{Method, Request, RequestBuilder, RequestContent},

@@ -26698,3 +26698,102 @@ cd ~/B-PAY-backend
 git am ~/storage/downloads/b-pay-backend-docker-release-fast.patch
 git push
 ```
+
+
+---
+
+## Session 15 (cont. 2) — image build still OOM with `release-fast`; Finding #17 closed (2026-09-20)
+
+**Result of the `release-fast` patch (`0a7e152af`, run `35496739344`):** the
+`Build and push image` step failed again with `ResourceExhausted: ... cannot
+allocate memory`, now after ~21 min (was ~25–30 min with `release`). So LTO was
+not the only memory hog. The failure is in the `cargo build` of the whole
+workspace on a hosted runner (public repo => 16 GB RAM / 4 vCPU by GitHub's
+published specs — not measured here). Peak demand is most likely several of the
+big crates (`hyperswitch_connectors`, `router`, ...) compiling in parallel.
+**Fix in this patch, two independent mitigations** (each attempt costs ~25 min
+of CI, so both at once): `BUILD_JOBS=2` build-arg -> Dockerfile passes
+`cargo build --jobs 2` (empty by default = old behaviour; the arg is
+deliberately *not* called `CARGO_BUILD_JOBS`, which cargo would read from the
+environment itself), and a best-effort 10 GB swapfile step on the runner
+(`continue-on-error`). **Not proven** to be enough; if it OOMs a third time the
+next levers are `--jobs 1`, building only `--bin ${BINARY}` (skips drainer /
+scheduler), or building outside GitHub-hosted runners.
+
+**Finding #17 (ephemeral-key multi-key atomic set) — closed as moot.** The
+premise (session 7) was that `serialize_and_set_multiple_hash_field_if_not_exist`
+is an atomic all-or-nothing check on Redis. It is not: the original `redis-rs`
+implementation is a plain sequential loop of single-key HSETNX calls, and the
+`postgres` backend (session 15) reproduces exactly that loop. Behaviour at the
+`redis_interface` layer is therefore identical to before; no regression. The
+whole "wire 63 call sites onto `PgKvStore`" plan of Task 73/a is superseded by
+the backend swap, except `kill_switch.rs`, which already used `PgKvStore`
+directly and still does. (If a genuinely atomic two-key create is wanted for
+ephemeral keys, that is a new hardening task, not a migration blocker.)
+
+**Still open, in order:** (1) red CI on `main` — "Run clippy (redis-rs backend)"
+and "Cargo hack (canonical push only)" fail identically before and after the
+Postgres patch; compiler output needs `gh run view 35494050611 ... --log-failed`
+(received — see cont. 3); (2) Task 77 Remita + five providers (no branch work exists;
+`task-77-a5-remita-scaffold` is identical to `main`) — deliberately *after* a
+green image build, because uncompiled connector code can break the deploy path;
+(3) Flutterwave webhook event-name confirmation.
+
+**Per the Patch Handoff Convention:** `git fetch origin` immediately before
+generating (`origin/main` = `0a7e152af`, no drift); test-applied with `git am`
+on a fresh clone. No migration in this diff.
+
+**Exact command(s):**
+```
+cd ~/B-PAY-backend
+git am ~/storage/downloads/b-pay-backend-ci-and-build-fixes.patch
+git push
+```
+
+
+---
+
+## Session 15 (cont. 3) — the CI log arrived: 4 lint errors + a cargo-hack script bug (2026-09-20)
+
+Log: product owner ran `gh run view <id> --log-failed` for the CI run at
+`0a7e152af`, saved as `ci-failed-clippy-hack.txt` (the first attempt's file
+never reached the session — Termux/`~/storage` issue on the device, not a repo
+problem). Two failing jobs, two different causes:
+
+**1. "Run clippy (redis-rs backend)" — 4 real `-D warnings` errors, all in
+connector code from earlier sessions (never compiled with clippy before), all
+in `hyperswitch_connectors`:** unused `hyperswitch_masking::ExposeInterface`
+(`flutterwave/transformers.rs`, a `#[cfg(feature = "payouts")]` import — nothing
+calls `.expose()`); unused `crypto` (`flutterwave.rs` — the webhook code now
+only mentions it in comments); unused `api_models::payments::OrderDetailsWithAmount`
+(`juicyway/transformers.rs`); unnecessary qualification `enums::Currency` ->
+`Currency` (`paystack/transformers.rs:557`; `Currency` is already imported and
+`enums` is still used elsewhere). All four fixed by deleting/shortening exactly
+those items. **Genuinely open:** clippy stops per crate at its first errors, so
+crates that depend on `hyperswitch_connectors` (`router`, ...) were never linted
+in that run — the next run may show more. `redis_interface` itself linted clean
+in that run under `-D warnings`.
+
+**2. "Cargo hack (canonical push only)" — caused by the Postgres patch (my
+earlier note that both failures pre-date it was wrong for this one; the job
+also failed at `c31be2e13`, but at a different, unknown place).**
+`scripts/ci-checks.sh` runs `cargo check --features "<each feature>,v1"` per
+crate and appends the `redis-rs` baseline for crates that have both `fred` and
+`redis-rs` features — so the new `postgres` feature was tested as
+`postgres,v1,redis-rs`, i.e. two mutually exclusive backends -> the
+`redis_interface` `compile_error!` (plus a duplicate-`module` E0428 that is a
+side effect). Fixed: the baseline is not appended when the feature under test
+is `postgres` either, and the `redis_interface` `cargo hack` line now says
+`--at-least-one-of` / `--mutually-exclusive-features fred,redis-rs,postgres`.
+Verified only by a dry run of the script (all 131 generated commands read
+through; none combines `postgres` with `redis-rs`/`fred`); the `cargo hack` run
+itself is unverified. That job runs commands in a fixed order and stopped at the
+first failure (`storage_impl`), so later commands — including the
+`redis_interface` `--each-feature` run — have never executed against the new
+feature; treat the next run as the first real test.
+
+**This patch is ONE combined patch** (build-memory fixes from cont. 2 + these
+fixes), file `b-pay-backend-ci-and-build-fixes.patch`; it replaces the
+`b-pay-backend-build-memory.patch` handed over earlier, which had not been
+pushed when this was generated (`origin/main` = `0a7e152af`). Test-applied with
+`git am` on a fresh clone.

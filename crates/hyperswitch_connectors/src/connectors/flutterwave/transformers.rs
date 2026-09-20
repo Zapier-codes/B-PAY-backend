@@ -16,8 +16,6 @@ use hyperswitch_domain_models::{
     types::{PaymentsAuthorizeRouterData, RefundsRouterData},
 };
 use hyperswitch_interfaces::errors;
-#[cfg(feature = "payouts")]
-use hyperswitch_masking::ExposeInterface;
 use hyperswitch_masking::Secret;
 use serde::{Deserialize, Serialize};
 

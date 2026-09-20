@@ -21,6 +21,13 @@ ARG KV_BACKEND="postgres"
 # (unoptimized). Features are untouched by this choice.
 ARG CARGO_BUILD_PROFILE=release
 
+# Maximum number of rustc processes cargo runs in parallel (`cargo build --jobs`).
+# Empty (default) = cargo's own default, one per CPU. The CI image build passes a
+# small number because this workspace's biggest crates (hyperswitch_connectors,
+# router, ...) each need several GB of RAM to compile and running four at once
+# exhausts a hosted runner ("ResourceExhausted: cannot allocate memory").
+ARG BUILD_JOBS=""
+
 RUN apt-get update \
     && apt-get install -y libpq-dev libssl-dev pkg-config protobuf-compiler
 
@@ -50,6 +57,7 @@ ENV RUST_BACKTRACE="short"
 
 COPY . .
 RUN cargo build \
+    ${BUILD_JOBS:+--jobs ${BUILD_JOBS}} \
     --profile ${CARGO_BUILD_PROFILE} \
     --no-default-features \
     --features release \

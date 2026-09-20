@@ -33,6 +33,20 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # The Rust build of this workspace needs more memory than the hosted runner's
+      # RAM at its peak (see the OOM note on the build step below). Swap turns a
+      # hard OOM kill into a slowdown. Best-effort: a failure here must not block.
+      - name: Add swap
+        continue-on-error: true
+        run: |
+          df -h /mnt
+          sudo swapoff -a || true
+          sudo fallocate -l 10G /mnt/swapfile
+          sudo chmod 600 /mnt/swapfile
+          sudo mkswap /mnt/swapfile
+          sudo swapon /mnt/swapfile
+          free -h
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -73,8 +87,11 @@ jobs:
           # and d07e38097). `release-fast` is this repo's own lower-memory profile
           # (no LTO, 16 codegen units, see Cargo.toml). Switch back to `release` on a
           # larger runner if LTO's smaller/faster binary is ever wanted.
+          # BUILD_JOBS=2: `release-fast` alone still ran out of memory at 0a7e152af
+          # (after ~21 min), so also cap the number of parallel rustc processes.
           build-args: |
             CARGO_BUILD_PROFILE=release-fast
+            BUILD_JOBS=2
             VERSION_FEATURE_SET=v1
 
       - name: Trigger Render deploy hook

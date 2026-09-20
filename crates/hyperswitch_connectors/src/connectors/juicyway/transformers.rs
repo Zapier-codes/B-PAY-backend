@@ -1,4 +1,3 @@
-use api_models::payments::OrderDetailsWithAmount;
 #[cfg(feature = "payouts")]
 use api_models::payouts::{BankTransfer, PayoutMethodData};
 #[cfg(feature = "payouts")]

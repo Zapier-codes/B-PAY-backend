@@ -554,7 +554,7 @@ pub struct PaystackRecipientCreateRequest {
     pub name: Secret<String>,
     pub account_number: Secret<String>,
     pub bank_code: Secret<String>,
-    pub currency: enums::Currency,
+    pub currency: Currency,
 }
 
 // ⚠️ Real, unresolved shape gap -- flagged, not guessed around, same

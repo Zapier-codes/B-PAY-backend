@@ -68,10 +68,10 @@ fi
 # List of cargo commands that will be executed
 all_commands=()
 
-# Crates that expose their own `fred`/`redis-rs` selector features (which just
-# forward to `redis_interface/fred` / `redis_interface/redis-rs`) have a hard
+# Crates that expose their own `fred`/`redis-rs`/`postgres` selector features
+# (which just forward to `redis_interface/<backend>`) have a hard
 # (non-optional) dependency on `redis_interface` with its own default features
-# turned off. `redis_interface` requires exactly one of `fred`/`redis-rs` to be
+# turned off. `redis_interface` requires exactly one of `fred`/`redis-rs`/`postgres` to be
 # active -- a real `compile_error!` in `redis_interface/src/lib.rs` otherwise --
 # so any *other* feature of these crates tested in isolation below still needs
 # one of the two as a baseline, the same way `v1` is already unconditionally
@@ -104,10 +104,12 @@ crates_with_v1_feature="$(
 )"
 while IFS=' ' read -r crate features && [[ -n "${crate}" && -n "${features}" ]]; do
   # See `crates_requiring_redis_backend` above: append the `redis-rs`
-  # baseline for crates that need one of `fred`/`redis-rs` active to
-  # compile at all, unless the feature under test already is one of them.
+  # baseline for crates that need one of `fred`/`redis-rs`/`postgres` active to
+  # compile at all, unless the feature under test already is one of them
+  # (adding `redis-rs` next to `postgres` would be a real `compile_error!`:
+  # the backends are mutually exclusive).
   if grep --fixed-strings --line-regexp --quiet "${crate}" <<< "${crates_requiring_redis_backend}" \
-    && [[ "${features}" != *"redis-rs"* && "${features}" != *"fred"* ]]; then
+    && [[ "${features}" != *"redis-rs"* && "${features}" != *"fred"* && "${features}" != *"postgres"* ]]; then
     features="${features},redis-rs"
   fi
   command="cargo check --all-targets --package \"${crate}\" --no-default-features --features \"${features}\""
@@ -139,7 +141,7 @@ while IFS= read -r crate && [[ -n "${crate}" ]]; do
   # fix rather than a blanket one.
   command="cargo hack check --all-targets --each-feature --exclude-no-default-features --package \"${crate}\""
   if [[ "${crate}" == "redis_interface" ]]; then
-    command="${command} --at-least-one-of fred,redis-rs --mutually-exclusive-features fred,redis-rs"
+    command="${command} --at-least-one-of fred,redis-rs,postgres --mutually-exclusive-features fred,redis-rs,postgres"
   fi
   all_commands+=("$command")
 done <<< "${crates_without_v1_feature}"

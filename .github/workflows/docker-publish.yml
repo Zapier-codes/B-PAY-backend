@@ -68,8 +68,13 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          # `release` (fat LTO, codegen-units=1) runs the hosted runner out of memory
+          # ("ResourceExhausted: cannot allocate memory" after ~30 min, at c31be2e13
+          # and d07e38097). `release-fast` is this repo's own lower-memory profile
+          # (no LTO, 16 codegen units, see Cargo.toml). Switch back to `release` on a
+          # larger runner if LTO's smaller/faster binary is ever wanted.
           build-args: |
-            CARGO_BUILD_PROFILE=release
+            CARGO_BUILD_PROFILE=release-fast
             VERSION_FEATURE_SET=v1
 
       - name: Trigger Render deploy hook

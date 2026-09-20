@@ -122,6 +122,12 @@
 > merchants) — they return a clear error. **Also new:** a working Rust
 > toolchain exists in this sandbox after all (see the entry) — this
 > supersedes the New-Clone Checklist's "no rustc" claim.
+> **UPDATE 2026-09-20 (same session, after the patch landed as `d07e38097`):**
+> the live Supabase DB was reset to the Hyperswitch schema (legacy Node tables
+> dropped, 529 migrations applied) and the real-workspace `cargo check
+> --features "release,v1,postgres"` passed in CI; the remaining image blocker
+> was the runner running out of memory in the `release` (fat-LTO) profile —
+> see "Session 15 (cont.)" at the end of this file.
 >
 > **⚪ SUPERSEDED by the newer 🟣 box above (same session): originally — `Build and push image`
 > workflow, `docker-publish.yml`, run at `85ad2ce66`; 1 confirmed root
@@ -26606,5 +26612,89 @@ the first diagnosis.
 ```
 cd ~/B-PAY-backend
 git am ~/storage/downloads/b-pay-backend-postgres-kv-backend.patch
+git push
+```
+\n
+
+---
+
+## Session 15 (cont.) — DB reset to the Hyperswitch schema; CI evidence; image OOM (2026-09-20)
+
+**Patch `d07e38097` landed on `main`** (the Postgres backend). Product-owner
+direction, stated in chat: the Hyperswitch schema **replaces** the legacy Node
+backend's tables in the existing Supabase project (not a separate project or
+schema). This is not written anywhere else in this file; recording it here.
+
+**DB-Ops actually performed by the product owner (proot Ubuntu, project ref
+`mfekzzwsoiezqkovabmp`), in this order:**
+1. Backed up the legacy tables with `\copy ... csv header` into
+   `~/legacy-backup/` (proot container). Row counts: `capabilities` 7,
+   `routing_config` 2, `routing_fallbacks` 8; `balance_transactions`,
+   `businesses`, `customers`, `idempotency_keys`, `payment_attempts`,
+   `payment_intents`, `transactions`, `webhook_events` 0. **`api_keys` was NOT
+   backed up or counted** (its `\copy` hit a transient auth failure and the loop
+   moved on) and was dropped in the next step; `businesses`, which it
+   references, was empty, so it was very probably empty too — unverified.
+2. `DROP TABLE ... CASCADE` of the 12 legacy tables and `DROP FUNCTION
+   set_updated_at()`. `pg_kv_cache` / `pg_pubsub_payload` (both already
+   present and confirmed to match the code's expected columns) were kept.
+3. Applied all Hyperswitch `migrations/*/up.sql` (529, oldest first, one
+   `psql` per migration, `-1` except the 20 `metadata.toml` CONCURRENTLY-index
+   ones), skipping the two `2026-09-11-1[23]0000` pg_kv migrations that were
+   already applied, and recorded every version in `__diesel_schema_migrations`
+   (created by hand; **529 rows**, verified). No migration failed. This is
+   the *manual psql loop*, not `diesel migration run`; the bookkeeping table
+   makes a later `diesel migration run` a no-op.
+4. `ENABLE ROW LEVEL SECURITY` on every `public` table and `REVOKE ALL ... FROM
+   anon, authenticated` (+ default privileges), because Supabase exposes
+   `public` through its REST API and the new tables — payment data, encrypted
+   merchant keys — would otherwise be readable with the public anon key. The
+   login role has `rolbypassrls = t` (verified), so the router is unaffected.
+   **Re-run step 4 after any future migration that adds tables.** 52 tables
+   afterwards; `merchant_account` present.
+The DB password was pasted into chat/terminal history during this session;
+the product owner said they will rotate it when everything works. Rotation must
+update: master + replica database variables and `ROUTER__REDIS__POSTGRES_URL`
+on Render.
+
+**CI evidence for the Postgres backend (real workspace, GitHub Actions run
+`35494050611`).** The step "Run cargo check enabling only the release and v1
+features (postgres backend)" — `cargo check --no-default-features --features
+"release,v1,postgres"`, the image's exact feature set — **passed**, as did the
+v2 `redis-rs`/`fred` checks and `cargo check -p storage_impl (pinned 1.85.0)`.
+This closes the main "not verified" item of the previous entry (real-workspace
+compile of `router`/`storage_impl`/`scheduler`/`drainer` with the new
+backend). Still unverified: TLS to Supabase, a running router against the real DB.
+**Two CI jobs fail, both identically at the previous commit `c31be2e13`
+(i.e. not caused by the Postgres patch), cause unknown — logs need auth and
+were not read:** "Run clippy (redis-rs backend)" and "Cargo hack (canonical
+push only)" (both exit 101).
+
+**Image build: out of memory, at both `c31be2e13` and `d07e38097`.** The
+`Build and push image` step dies after ~25–30 min with `ResourceExhausted:
+process "/bin/sh -c cargo build ..." did not complete successfully: cannot
+allocate memory` (GitHub API annotation; the redis_interface compile error of
+`85ad2ce66` is gone, so the build now gets far past it). The workflow built
+with `CARGO_BUILD_PROFILE=release` = `lto = true`, `codegen-units = 1` (fat
+LTO of the whole workspace). Fix in this patch: build with `release-fast`
+(the repo's own lower-memory profile: no LTO, 16 codegen units, symbols kept;
+the Dockerfile already supports it via the build arg). Trade-off: larger,
+somewhat slower binary. **Not proven** to fit in the runner's memory —
+untested until the next run; if it OOMs again the next options are lower
+parallelism (`CARGO_BUILD_JOBS`) or a larger GitHub runner. Render is still to
+be switched to an image-based service pointing at
+`ghcr.io/zapier-codes/b-pay-backend:latest` with the `RENDER_DEPLOY_HOOK_URL`
+secret set in this repo; Render env vars listed in the previous entry apply,
+now against the reset database.
+
+**Per the Patch Handoff Convention:** `git fetch origin` immediately before
+generating (`origin/main` = `d07e38097`, no drift); test-applied with `git am`
+on a fresh clone. Only the Patch Handoff block is owed (no migration in this
+diff).
+
+**Exact command(s):**
+```
+cd ~/B-PAY-backend
+git am ~/storage/downloads/b-pay-backend-docker-release-fast.patch
 git push
 ```

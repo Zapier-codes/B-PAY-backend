@@ -83,6 +83,17 @@ ARG BIN_DIR=/local/bin
 # Copy this required fields config file
 COPY --from=builder /router/config/payment_required_fields_v2.toml ${CONFIG_DIR}/payment_required_fields_v2.toml
 
+# PRIORITY 2 FIX (see /HANDOVER.md): superposition.backup_file_path in the
+# baked config is a relative path ("./config/superposition_seed.toml"),
+# but this file was never copied into the image, and the final WORKDIR
+# (${BIN_DIR}) isn't the repo root anyway, so the relative path can never
+# resolve. This left the Superposition client with no working fallback once
+# the primary HTTP endpoint (the old docker-compose "superposition" service,
+# unreachable from a standalone container) failed, causing a boot-time panic.
+# Bake the seed file in at an absolute, always-resolvable path; the env var
+# ROUTER__SUPERPOSITION__BACKUP_FILE_PATH must be set to this same path.
+COPY --from=builder /router/config/superposition_seed.toml ${CONFIG_DIR}/superposition_seed.toml
+
 # RUN_ENV decides the corresponding config file to be used
 ARG RUN_ENV=sandbox
 

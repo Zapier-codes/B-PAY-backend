@@ -53,6 +53,100 @@ pass) but be functionally unconfigured.
 
 ---
 
+## PRIORITY 2 — Apply this patch second (after Priority 1 and DB setup)
+
+**File:** `0002-priority2-superposition-and-pooler-warning.patch` (repo root,
+alongside this file)
+
+Found while actually standing up the first live Render deploy after Priority
+1 + a real Supabase Postgres were in place. Same `git am` convention:
+
+```bash
+git am 0002-priority2-superposition-and-pooler-warning.patch
+# or, if that fails due to line-ending/context drift:
+git am --3way 0002-priority2-superposition-and-pooler-warning.patch
+```
+
+### Correction to this file: Superposition is NOT optional at boot
+
+Priority 1's "Explicitly out of scope" list below states Superposition is
+"feature-flagged/optional, not required to boot the server." **That's
+wrong** — confirmed by an actual boot panic:
+
+```
+thread 'main' panicked at crates/router/src/routes/app.rs:536:18:
+Failed to initialize superposition client: Failed to initialize Superposition client
+╰─▶ Configuration error: Both primary and fallback config fetch failed.
+    Primary: Network error: Failed to fetch config: dispatch failure.
+    Fallback: Configuration error: Failed to read config file
+    "./config/superposition_seed.toml": No such file or directory (os error 2)
+```
+
+`app.rs` calls `.expect(...)` on the client init (line 536) — there is no
+disable flag in `SuperpositionClientConfig`, so this is unconditional on
+every boot, standalone container or not.
+
+Root cause, two layers:
+1. **Primary fetch fails** — baked config points `superposition.endpoint`
+   at `http://superposition:8080`, another docker-compose-only service name
+   with the same problem as the `pg` host issue Priority 1 fixed for the
+   database. No such service exists for a standalone Render deploy.
+2. **Fallback fails too** — `backup_file_path` in the baked config is the
+   *relative* path `"./config/superposition_seed.toml"`. The Dockerfile
+   never copies `superposition_seed.toml` into the image at all, and the
+   final `WORKDIR` (`${BIN_DIR}`) isn't the repo root, so even a correct
+   relative path couldn't resolve at runtime.
+
+**The fix:** bake `superposition_seed.toml` into the image at the same
+`${CONFIG_DIR}` used for the other baked config files (an absolute,
+always-resolvable path), immediately after the existing
+`payment_required_fields_v2.toml` COPY line. This makes the *fallback*
+path succeed once the (still-unreachable) primary HTTP fetch fails, so
+`provider.init()` returns Ok via the file data source instead of erroring
+out entirely.
+
+**Required env var** (add to the Render service, same pattern as the DB
+vars in Priority 1 point 4):
+- `ROUTER__SUPERPOSITION__BACKUP_FILE_PATH` = `/local/config/superposition_seed.toml`
+  (i.e. `${CONFIG_DIR}/superposition_seed.toml` with `CONFIG_DIR`'s actual
+  default value substituted in — confirm against the Dockerfile if
+  `CONFIG_DIR` is ever overridden at build time).
+
+### Open risk, NOT yet fixed — needs a decision next session
+
+While fixing the *previous* DB connection failure (`master_database` etc.
+pointed at Supabase's session-mode pooler on port 5432, which hard-caps at
+15 concurrent clients — `FATAL: max clients reached in session mode`), all
+four DB pools (`MASTER_DATABASE`, `REPLICA_DATABASE`, `ACCOUNTS_DATABASE`,
+`GLOBAL_DATABASE`) were switched to Supabase's **transaction-mode pooler on
+port 6543** to raise the connection ceiling.
+
+**This directly contradicts point 3 of this same handover file**, which
+already flagged that the 6543 transaction pooler "lacks prepared-statement
+support" — that warning was written for `ROUTER__REDIS__POSTGRES_URL`
+specifically, but the underlying constraint is a property of the pooler
+itself, not of which env var points at it. Diesel (used for all four DB
+pools, not just Redis's postgres backend) relies on server-side prepared
+statements. Moving `MASTER_DATABASE`/etc. to port 6543 got the app past the
+connection-cap panic, but has **not yet been verified** against real
+queries — the deploy may boot cleanly and then fail (or silently misbehave)
+on the first actual Diesel query that uses a prepared statement.
+
+Next session must resolve this properly. Options, not yet decided:
+- Keep the four DB pools on port 5432 (session mode) and instead lower each
+  `max_pool_size` so `4 × max_pool_size ≤ 15` (e.g. `max_pool_size = 3`),
+  leaving headroom for other clients (Termux scripts, Supabase dashboard).
+- Upgrade the Supabase project tier for a higher session-mode connection
+  cap, if switching isn't viable.
+- Confirm whether Diesel's Postgres backend on this stack actually breaks
+  under PgBouncer transaction mode in practice (it may degrade gracefully
+  depending on query patterns) before assuming point 1 above is mandatory.
+
+Do not treat the current port-6543 state as final — it unblocked the boot
+panic but traded it for an unverified, likely risk.
+
+---
+
 ## Context: why this investigation happened
 
 - `Zapier-codes/B-Pay-backend` is a **fork** of `Phoenix-Boss/B-PAY-backend`
@@ -155,6 +249,8 @@ in this sandbox — re-establish per new session if needed):
   the goal.
 - Do NOT wire up the ~500 optional lines of
   `config/deployments/env_specific.toml` (Apple Pay, Google Pay, Paze,
-  Kafka analytics, AWS SES, S3, OIDC, Superposition, gRPC
-  routing/recovery microservices, etc.) for a first working deploy — all
-  feature-flagged/optional, not required to boot the server.
+  Kafka analytics, AWS SES, S3, OIDC, gRPC routing/recovery microservices,
+  etc.) for a first working deploy — all feature-flagged/optional, not
+  required to boot the server. **Superposition is the one exception** —
+  see PRIORITY 2 above; it is not optional and will panic the app on boot
+  without the file-fallback fix.

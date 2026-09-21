@@ -213,8 +213,11 @@ pub async fn diesel_make_pg_pool(
         .max_lifetime(std::time::Duration::from_secs(database.max_lifetime))
         .idle_timeout(std::time::Duration::from_secs(database.idle_timeout));
 
-    if test_transaction {
-        pool = pool.connection_customizer(Box::new(TestTransaction));
+    if test_transaction || database.disable_prepared_statement_cache {
+        pool = pool.connection_customizer(Box::new(PoolConnectionCustomizer {
+            test_transaction,
+            disable_prepared_statement_cache: database.disable_prepared_statement_cache,
+        }));
     }
 
     let raw_pool = pool
@@ -257,17 +260,33 @@ pub async fn diesel_make_pg_pool(
     Ok(PgPool::new(raw_pool, event_emitter))
 }
 
+/// Runs once per newly-created pooled connection (bb8 calls `on_acquire` on
+/// creation, not on every checkout), so both settings below apply for the
+/// lifetime of that connection object.
 #[derive(Debug)]
-struct TestTransaction;
+struct PoolConnectionCustomizer {
+    test_transaction: bool,
+    /// See `Database::disable_prepared_statement_cache` for the full
+    /// rationale (transaction-mode pooler compatibility).
+    disable_prepared_statement_cache: bool,
+}
 
 #[async_trait::async_trait]
-impl CustomizeConnection<RawPgConnection, ConnectionError> for TestTransaction {
+impl CustomizeConnection<RawPgConnection, ConnectionError> for PoolConnectionCustomizer {
     #[allow(clippy::unwrap_used)]
     async fn on_acquire(&self, conn: &mut RawPgConnection) -> Result<(), ConnectionError> {
         use diesel::Connection;
 
-        conn.run(|conn| {
-            conn.begin_test_transaction().unwrap();
+        let test_transaction = self.test_transaction;
+        let disable_prepared_statement_cache = self.disable_prepared_statement_cache;
+
+        conn.run(move |conn| {
+            if disable_prepared_statement_cache {
+                conn.set_prepared_statement_cache_size(diesel::connection::CacheSize::Disabled);
+            }
+            if test_transaction {
+                conn.begin_test_transaction().unwrap();
+            }
             Ok(())
         })
         .await

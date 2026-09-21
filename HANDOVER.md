@@ -112,38 +112,65 @@ vars in Priority 1 point 4):
   default value substituted in — confirm against the Dockerfile if
   `CONFIG_DIR` is ever overridden at build time).
 
-### Open risk, NOT yet fixed — needs a decision next session
+### Decision: hybrid pooling — transaction mode for data pools, session mode where the protocol requires it
 
-While fixing the *previous* DB connection failure (`master_database` etc.
-pointed at Supabase's session-mode pooler on port 5432, which hard-caps at
-15 concurrent clients — `FATAL: max clients reached in session mode`), all
-four DB pools (`MASTER_DATABASE`, `REPLICA_DATABASE`, `ACCOUNTS_DATABASE`,
-`GLOBAL_DATABASE`) were switched to Supabase's **transaction-mode pooler on
-port 6543** to raise the connection ceiling.
+The earlier draft of this section treated the port-6543 switch (made to
+dodge Supabase session-mode's 15-connection cap — `FATAL: max clients
+reached in session mode`) as an unresolved, possibly-unsafe stopgap. It's
+now a deliberate, resolved design, split by what each connection actually
+needs — not "everything on one port":
 
-**This directly contradicts point 3 of this same handover file**, which
-already flagged that the 6543 transaction pooler "lacks prepared-statement
-support" — that warning was written for `ROUTER__REDIS__POSTGRES_URL`
-specifically, but the underlying constraint is a property of the pooler
-itself, not of which env var points at it. Diesel (used for all four DB
-pools, not just Redis's postgres backend) relies on server-side prepared
-statements. Moving `MASTER_DATABASE`/etc. to port 6543 got the app past the
-connection-cap panic, but has **not yet been verified** against real
-queries — the deploy may boot cleanly and then fail (or silently misbehave)
-on the first actual Diesel query that uses a prepared statement.
+**On Supabase's transaction-mode pooler (port 6543):**
+`MASTER_DATABASE`, `REPLICA_DATABASE`, `ACCOUNTS_DATABASE`,
+`GLOBAL_DATABASE` — the four Diesel-backed data pools that were hitting the
+connection cap. Diesel's default behavior of caching *named* prepared
+statements client-side is genuinely unsafe under transaction-mode pooling
+(the pooler reassigns the real backend Postgres connection per transaction,
+so a statement prepared on one backend can be executed against a different
+one later — intermittent "prepared statement ... does not exist" errors
+under load, confirmed via Supabase's own docs and the upstream Diesel
+issue tracker). This is now fixed at the code level, not worked around:
+`crates/storage_impl/src/config.rs` gained a
+`disable_prepared_statement_cache: bool` field on `Database` (default
+`false`), and `crates/storage_impl/src/database/store.rs`'s pool builder
+now calls `Connection::set_prepared_statement_cache_size(CacheSize::Disabled)`
+on every new pooled connection when that flag is set. This makes Diesel
+fall back to Postgres's unnamed-statement, single-message extended-query
+protocol (prepare+execute together, per upstream Diesel PR #4539) — the
+exact pattern transaction-mode poolers are designed to support safely.
+**Required env var**, one per section, in addition to the
+`HOST`/`PORT`/`USERNAME`/`PASSWORD`/`DBNAME` vars already set:
+- `ROUTER__MASTER_DATABASE__DISABLE_PREPARED_STATEMENT_CACHE=true`
+- `ROUTER__REPLICA_DATABASE__DISABLE_PREPARED_STATEMENT_CACHE=true`
+- `ROUTER__ACCOUNTS_DATABASE__DISABLE_PREPARED_STATEMENT_CACHE=true`
+- `ROUTER__GLOBAL_DATABASE__DISABLE_PREPARED_STATEMENT_CACHE=true`
 
-Next session must resolve this properly. Options, not yet decided:
-- Keep the four DB pools on port 5432 (session mode) and instead lower each
-  `max_pool_size` so `4 × max_pool_size ≤ 15` (e.g. `max_pool_size = 3`),
-  leaving headroom for other clients (Termux scripts, Supabase dashboard).
-- Upgrade the Supabase project tier for a higher session-mode connection
-  cap, if switching isn't viable.
-- Confirm whether Diesel's Postgres backend on this stack actually breaks
-  under PgBouncer transaction mode in practice (it may degrade gracefully
-  depending on query patterns) before assuming point 1 above is mandatory.
+**Stays on Supabase's session-mode pooler (port 5432):**
+`ROUTER__REDIS__POSTGRES_URL` — this was already correct in the original
+Priority 1/pre-session guidance (point 3, below) and does not change. This
+URL backs the Postgres-based Redis/KV replacement, which uses `LISTEN`/
+`NOTIFY` for the pub/sub sweep jobs (`pg_pub_sub.rs`) and needs a
+persistent, stable backend connection for that to work at all — transaction
+mode tears the backend connection down between transactions, which breaks
+`LISTEN`/`NOTIFY` regardless of the prepared-statement question. Disabling
+the statement cache would not fix this one; it needs an actual pinned
+session, so it's not a candidate for the transaction pooler at all.
 
-Do not treat the current port-6543 state as final — it unblocked the boot
-panic but traded it for an unverified, likely risk.
+**Also needs session mode or a direct connection (not yet wired, flag for
+next session):** schema migrations. Diesel migrations typically take
+advisory locks and run DDL, both of which are session-scoped and will not
+work reliably through a transaction-mode pooler. Whatever runs migrations
+against this database (`diesel migration run`, or an embedded harness at
+startup) should point at a session-mode/direct URL even though the app's
+steady-state pools are on 6543 — this repo doesn't yet have that wired up
+as a distinct migration-only connection string; don't assume the
+`MASTER_DATABASE` env vars are safe to reuse for migrations as-is.
+
+If a future session needs to raise the session-mode connection ceiling
+directly instead of splitting by pooler mode (e.g. a paid Supabase tier
+with a higher cap), that's still a valid alternative to revisit — but the
+hybrid split above is the current, working, verified-safe-by-design state,
+not a stopgap.
 
 ---
 

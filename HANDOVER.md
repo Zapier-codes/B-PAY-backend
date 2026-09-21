@@ -328,3 +328,17 @@ real and unmitigated. Two ways out:
    must implement the new trait method — the `juspay/deja` repo has a
    `bump-diesel-2.3` branch for this. Needs a `deja` rev change plus a full CI
    cycle; do not attempt it without a compiler.
+
+### Follow-up to the correction above (2026-09-21): router had its own `Database`
+
+Priority 3 added `disable_prepared_statement_cache` to `storage_impl::config::Database`
+only. **`router` has a separate `settings::Database` struct** (with its own `Default` in
+`configs/defaults.rs` and `impl From<Database> for storage_impl::config::Database`), which
+was not updated: the `From` initializer failed with `E0063` at
+`crates/router/src/configs/settings.rs:1229` — the next compile error after the
+`storage_impl` ones, and what still broke the image build and four CI jobs after the first
+fix. Now the field exists on router's struct, defaults to `false` and is forwarded, so
+`ROUTER__MASTER_DATABASE__DISABLE_PREPARED_STATEMENT_CACHE=true` (and the accounts/global/
+replica variants) really reaches `storage_impl` — where it currently only logs an error, see
+above. Before this fix the variable was silently ignored by serde. The drainer has its own
+`Database` (no such field, no conversion) and is unaffected.

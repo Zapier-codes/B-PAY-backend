@@ -1222,6 +1222,9 @@ pub struct Database {
     pub min_idle_pool_size: u32,
     pub max_lifetime: u64,
     pub idle_timeout: u64,
+    /// Forwarded to `storage_impl::config::Database::disable_prepared_statement_cache`
+    /// (currently NOT honoured there: needs diesel >= 2.3.0, see that field's docs).
+    pub disable_prepared_statement_cache: bool,
 }
 
 impl From<Database> for storage_impl::config::Database {
@@ -1238,6 +1241,7 @@ impl From<Database> for storage_impl::config::Database {
             min_idle_pool_size: val.min_idle_pool_size,
             max_lifetime: val.max_lifetime,
             idle_timeout: val.idle_timeout,
+            disable_prepared_statement_cache: val.disable_prepared_statement_cache,
         }
     }
 }

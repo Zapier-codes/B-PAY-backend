@@ -12,7 +12,12 @@
 //! Without the variable every test returns early (so `cargo test` stays green on
 //! machines with no database). Each test namespaces its keys with a unique tenant
 //! prefix, so the tests can share one database and run in parallel.
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    unused_qualifications
+)]
 
 use std::{collections::HashMap, sync::Arc, time::Duration};
 

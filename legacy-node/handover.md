@@ -26888,3 +26888,48 @@ git pull
 git am ~/storage/downloads/b-pay-backend-typos-render-ids.patch
 git push
 ```
+
+
+---
+
+## Session 15 (cont. 6) — second and third failures after the diesel fix (2026-09-21)
+
+Logs received for five failed jobs of the run at `aab0fec22` (image build + four CI jobs;
+saved with `gh run view --job <id> --log-failed`). Two distinct causes:
+
+**1. `E0063` in `router` — image build and V2 / storage_impl-pinned / clippy jobs.**
+`crates/router/src/configs/settings.rs:1229`: `impl From<Database> for
+storage_impl::config::Database` lacked `disable_prepared_statement_cache`. `router` has its
+own `Database` settings struct, which Priority 3 (`1f9d6e8be`) never updated. Progress marker:
+the image build now compiled everything up to `router` (~26 min) before failing, so `storage_impl`
+and all connector crates are fine. Fixed by adding the field to router's struct
+(`settings.rs`), its `Default` (`defaults.rs`) and the `From`. (Side effect, intended: the
+env var now reaches `storage_impl`, where it only logs an error — diesel 2.2.10 cannot do it.)
+
+**2. "Cargo hack" — my own code.** `cargo check --all-targets --package storage_impl
+--no-default-features --features postgres,v1` (the first time this command ever ran — the
+script fix in cont. 3 got it that far) failed with **11 x `unnecessary qualification`
+(`-D unused-qualifications` under `-D warnings`) in `redis_interface/src/module/pg/store.rs`**,
+one per field of the `QueryableByName` row structs (1+2+2+1+1+1+3 = 11). It did not show up in
+my local builds (rustc 1.91, warn-level) — CI's stable is newer. The lint fires inside the
+derive's generated impls, so a `#[allow]` on the struct would not reach it: fixed with a
+module-level `#![allow(unused_qualifications)]` in `store.rs` (and the same for the test
+module `test_pg.rs`, whose `--all-targets` compile is the next thing that job reaches).
+Re-verified locally: `RUSTFLAGS="-D warnings" cargo check --all-targets` for `postgres` and
+`redis-rs` (both clean), and the 56 Postgres-backend tests against PostgreSQL 16 (pass).
+**Unverified:** CI's newer rustc itself — I cannot reproduce that lint here — and anything
+`cargo hack` reaches after this point (the run order is fixed and it stops at the first
+failure; later feature combinations have still never run).
+
+**Meta-lesson for whoever continues:** this is the third round of "uncompiled code lands,
+CI/image build reports one error at a time". The image build costs ~25 min per attempt;
+fields added to a shared config struct must be grepped for *every* initializer in the
+workspace (`grep -rn "StructName {"` plus `From`/`Default` impls) before pushing.
+
+**Exact command(s):**
+```
+cd ~/B-PAY-backend
+git pull
+git am ~/storage/downloads/b-pay-backend-router-db-field-and-pg-lint.patch
+git push
+```

@@ -48,6 +48,7 @@ impl Default for super::settings::Database {
             min_idle_pool_size: 2,
             max_lifetime: 1800,
             idle_timeout: 300,
+            disable_prepared_statement_cache: false,
         }
     }
 }

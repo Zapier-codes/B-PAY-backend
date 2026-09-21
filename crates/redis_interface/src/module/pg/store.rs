@@ -16,6 +16,12 @@
 //! All timestamps are computed by the database (`now() AT TIME ZONE 'utc'`, the
 //! same convention as the table defaults) so instances with skewed clocks agree.
 
+// Newer stable rustc reports `unused_qualifications` on the code that diesel's
+// `QueryableByName` derive generates for the row structs below (once per field), and CI
+// runs with `-D warnings`. The lint fires inside the derive's own impl blocks, so it has to
+// be allowed for the module; there is no hand-written qualified path to fix.
+#![allow(unused_qualifications)]
+
 use std::{collections::HashMap, time::Duration};
 
 use async_bb8_diesel::{AsyncRunQueryDsl, ConnectionManager};

@@ -3,6 +3,12 @@ check-filename = true
 extend-ignore-identifiers-re = [
     "UE_[0-9]{3,4}", # Unified error codes
 ]
+# Render resource IDs quoted in HANDOVER.md (e.g. `srv-...`); random strings whose
+# chunks ("ot", ...) trip the spell checker.
+extend-ignore-re = [
+    "srv-[a-z0-9]{10,}",
+    "tea-[a-z0-9]{10,}",
+]
 
 [default.extend-identifiers]
 # Would have to break the api contract for fixing this. Not worth the fix.

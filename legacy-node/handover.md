@@ -26843,3 +26843,48 @@ git pull
 git am ~/storage/downloads/b-pay-backend-fix-diesel-cachesize.patch
 git push
 ```
+
+
+---
+
+## Session 15 (cont. 5) — spell-check job fixed; state of the runs after the diesel fix (2026-09-21)
+
+Run `35576500675` (CI at `3a9fff784`): **"Spell check" failed** — reproduced locally with
+`typos-cli 1.48.0` (the version of the sibling job; the failing job uses
+`crate-ci/typos@master`): `HANDOVER.md:198` and `:217`, `` `ot` should be `to`, ... ``. The
+"`ot`" is a chunk of a Render service id (`srv-d6cv1ssr85hc73bh0ot0`) quoted in the root
+`HANDOVER.md` by another session — not from the diesel fix. Fixed with
+`extend-ignore-re` for `srv-...` / `tea-...` ids in `.typos.toml`; whole-tree `typos` now
+exits 0. (Building `typos` here takes ~6 min: `cargo install typos-cli --version 1.48.0
+--locked`; without `--locked` it needs a newer rustc than the sandbox's.)
+
+**Also failed in that run, cause NOT yet known (log not seen):** "Check compilation for
+V2 features", at the step `cargo check --no-default-features --features
+"release,v2,redis-rs"`. It passed at `d07e38097`; the only code changes to `storage_impl`
+since are the diesel-fix and `1f9d6e8be`. The image build for the same commit was still
+running when this was written.
+
+**Image-vs-repo question — checked, resolved (no problem):** the workflow is built for a
+*baked image* (build the Dockerfile, push `ghcr.io/zapier-codes/b-pay-backend`, call the
+Render deploy hook) and the Dockerfile bakes the config (`docker_compose.toml` ->
+`${CONFIG_DIR}/${RUN_ENV}.toml`, plus `superposition_seed.toml`). The root `HANDOVER.md`
+step 5 describes creating the Render service with `"env": "docker"` and a `repo` (a
+build-from-git service) — a possible mismatch. Checked with the Render API (`GET
+/v1/services`, operator's `RENDER_API_KEY_NEW`): service `b-pay-backend-new`
+(`srv-daoal7btqb8s73eiu2qg`, `https://b-pay-backend-new.onrender.com`) is **image-backed**
+— `repo: null`, `runtime: image`, `imagePath: ghcr.io/zapier-codes/b-pay-backend:latest` —
+i.e. exactly what this pipeline delivers; a second service `control-center-new`
+(`ghcr.io/zapier-codes/control-center:latest`) is also image-backed. So step 5 of the root
+file was not what was actually used; it has been corrected there. **Still unverified:** that
+`RENDER_DEPLOY_HOOK_URL` is set as a GitHub secret — without it the workflow step is
+*skipped* (by design, see `bc3a53464`) and Render never pulls the new `latest` image on its
+own. Manual trigger (Termux, needs `RENDER_API_KEY_NEW`): `POST
+https://api.render.com/v1/services/srv-daoal7btqb8s73eiu2qg/deploys`.
+
+**Exact command(s):**
+```
+cd ~/B-PAY-backend
+git pull
+git am ~/storage/downloads/b-pay-backend-typos-render-ids.patch
+git push
+```

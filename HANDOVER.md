@@ -258,12 +258,17 @@ in this sandbox — re-establish per new session if needed):
    These override the baked-in `docker_compose.toml` defaults from Priority
    1 fix #2; everything else in that file (locker mock, CORS, scheduler,
    connector filters, etc.) is usable as-is for a first working deploy.
-5. **Create the Render service** via `POST /v1/services` with
-   `"env": "docker"` (NOT `"env": "node"` — the earlier draft command in
-   this session's chat history used `node` by mistake, copying the
-   upstream/legacy service's config; ignore that draft), `ownerId:
-   "tea-danrh6rm8hqs73ca4s5g"`, `repo:
-   "https://github.com/Zapier-codes/B-Pay-backend"`, `branch: "main"`.
+5. **Create the Render service as an *image-backed* service, not a git-backed
+   one.** (Corrected 2026-09-21 — this step used to say `"env": "docker"` with a
+   `repo` and `branch`, which makes Render build the Rust workspace itself; the
+   pipeline in this repo builds the image on GitHub and pushes it to GHCR
+   instead.) The service that actually exists, `b-pay-backend-new`
+   (`srv-daoal7btqb8s73eiu2qg`, owner `tea-danrh6rm8hqs73ca4s5g`), was verified
+   through the Render API to be image-backed: `repo: null`, `runtime: image`,
+   `imagePath: ghcr.io/zapier-codes/b-pay-backend:latest`. To create another one,
+   use the dashboard's "Existing Image" flow with that image path and a GHCR
+   registry credential (a GitHub token with `read:packages`), or the API
+   equivalent — not `repo`/`branch`.
 6. **Once created**, grab its deploy hook URL from the Render dashboard
    (or `GET /v1/services/{id}/deploy-hook` if available on the API) and add
    it as the `RENDER_DEPLOY_HOOK_URL` secret on `Zapier-codes/B-Pay-backend`

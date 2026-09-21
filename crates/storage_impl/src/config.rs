@@ -21,6 +21,13 @@ pub struct Database {
     pub max_lifetime: u64,
     #[serde(default = "default_idle_timeout")]
     pub idle_timeout: u64,
+    /// **Currently accepted but NOT honoured**: it needs diesel >= 2.3.0
+    /// (`Connection::set_prepared_statement_cache_size`), and the workspace is
+    /// locked to diesel 2.2.10. Setting it makes the pool builder log an error
+    /// (see `database::store::diesel_make_pg_pool`); behind a transaction-mode
+    /// pooler use a session-mode pooler or a direct connection instead. The
+    /// intended behaviour, once diesel is bumped, is described below.
+    ///
     /// Set when this database's `host`/`port` point at a transaction-mode
     /// pooler (e.g. Supabase Supavisor on port 6543, or PgBouncer in
     /// transaction mode). Such poolers reassign the real backend Postgres
@@ -104,6 +111,7 @@ impl Default for Database {
             min_idle_pool_size: default_min_idle_pool_size(),
             max_lifetime: default_max_lifetime(),
             idle_timeout: default_idle_timeout(),
+            disable_prepared_statement_cache: false,
         }
     }
 }

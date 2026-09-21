@@ -281,3 +281,45 @@ in this sandbox — re-establish per new session if needed):
   required to boot the server. **Superposition is the one exception** —
   see PRIORITY 2 above; it is not optional and will panic the app on boot
   without the file-fallback fix.
+
+---
+
+## CORRECTION to PRIORITY 2/3 — `disable_prepared_statement_cache` does not work on the pinned diesel (2026-09-21)
+
+The hybrid-pooling section above says the transaction-pooler problem "is now fixed
+at the code level" by `Connection::set_prepared_statement_cache_size(CacheSize::Disabled)`.
+**That call does not exist in the diesel this workspace is locked to.** It was added
+in diesel **2.3.0** (checked against the published 2.3.0 source: `enum CacheSize`
+and `fn set_prepared_statement_cache_size` are present; the locked 2.2.10 has
+neither). The Priority 3 commit (`1f9d6e8be`) was never compiled, and it broke
+`main`: the `Build and Publish Docker Image` job and the CI "Cargo hack" job both
+failed with three errors in `storage_impl` — `E0433 cannot find CacheSize in
+connection` and `E0599 no method named set_prepared_statement_cache_size`
+(`database/store.rs:285`), plus `E0063 missing field
+disable_prepared_statement_cache` (`config.rs:95`, the `Default for Database`
+initializer). (The image build itself got that far — i.e. compiled everything up
+to `storage_impl` without running out of memory — which is what the earlier
+`BUILD_JOBS`/swap change was for.)
+
+**What was changed to make `main` build again:** the `disable_prepared_statement_cache`
+field is kept (so `ROUTER__*_DATABASE__DISABLE_PREPARED_STATEMENT_CACHE=true` is
+still accepted and nothing crashes) and given its missing default (`false`); the
+pool builder no longer calls the non-existent API and instead logs an **error** at
+startup whenever the flag is set. **The flag therefore has no effect.**
+
+**Consequence for the current design:** with the four Diesel pools on the 6543
+transaction pooler, named prepared statements are still cached client-side, so the
+intermittent `prepared statement "..." does not exist` risk described above is
+real and unmitigated. Two ways out:
+1. *Config only, works today:* put the Diesel pools back on the session pooler
+   (port 5432) and stay under Supabase's 15-client cap with small pools, e.g.
+   `MASTER_DATABASE__MAX_POOL_SIZE=4`, `REPLICA_DATABASE__MAX_POOL_SIZE=3`,
+   `ACCOUNTS_DATABASE__MAX_POOL_SIZE=2`, `GLOBAL_DATABASE__MAX_POOL_SIZE=2`,
+   `REDIS__POOL_SIZE=2` (13 total; add `..._MIN_IDLE_POOL_SIZE=1` per pool).
+   These numbers are an estimate against the reported 15 cap — not measured.
+2. *Code, a separate task:* make the flag real by bumping diesel to >= 2.3.0. The
+   manifests already allow it (`^2.2.10`); the blocker is `deja`'s
+   `DejaLoadConnection`, pinned by git rev, which wraps diesel's `Connection` and
+   must implement the new trait method — the `juspay/deja` repo has a
+   `bump-diesel-2.3` branch for this. Needs a `deja` rev change plus a full CI
+   cycle; do not attempt it without a compiler.

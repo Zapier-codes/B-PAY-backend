@@ -26797,3 +26797,49 @@ fixes), file `b-pay-backend-ci-and-build-fixes.patch`; it replaces the
 `b-pay-backend-build-memory.patch` handed over earlier, which had not been
 pushed when this was generated (`origin/main` = `0a7e152af`). Test-applied with
 `git am` on a fresh clone.
+
+
+---
+
+## Session 15 (cont. 4) — parallel sessions exist; `main` broken by an uncompiled diesel API (2026-09-21)
+
+**Read this first:** other sessions have been pushing to `main` in parallel (authors
+"Claude Sandbox" / "Claude (infra session)") and a second handover file now exists at
+the repo root, **`HANDOVER.md`** (Render/config/pooling work: superposition seed
+file, baked `docker_compose.toml`, hybrid pooler design, live-deploy findings). It is
+the canonical record for that work; this file remains the record for Task 73 / the
+Postgres KV backend / CI. Check `git log origin/main` before generating any patch —
+a patch built on a stale base will conflict at the end of both handover files.
+
+**Confirmed since the last entry:** the `BUILD_JOBS=2` + swap change worked — the
+image build no longer runs out of memory, and the "Cargo hack" CI job now gets past
+the `postgres` feature handling fixed in cont. 3 (it failed later, at `storage_impl`).
+
+**Both current CI failures have one cause, not in code from this thread:** commit
+`1f9d6e8be` ("hybrid pooling", other session) calls
+`diesel::Connection::set_prepared_statement_cache_size` / `diesel::connection::CacheSize`,
+which exist only from diesel 2.3.0; the lockfile pins 2.2.10. Errors: E0433, E0599 at
+`crates/storage_impl/src/database/store.rs:285` and E0063 at `config.rs:95` (missing
+field in `Default for Database`). Both the Docker build (run `35565911856`) and the
+CI "Check compilation on MSRV toolchain"/cargo-hack job (run `35565911822`) hit it.
+
+**Fix in this patch:** minimal and deliberately conservative — `store.rs` is restored
+to exactly its pre-`1f9d6e8be` shape plus one startup `error!` log when the flag is
+set; `config.rs` keeps the new field, its doc comment (now saying "not honoured") and
+gets the missing `Default` entry. Not compiled here (storage_impl cannot be built in
+this sandbox), but the diff against the last-known-good code is only the log block.
+Full explanation, the two real options (session pooler with small pools now, or a
+diesel >= 2.3 + `deja` bump later) and a correction of the false claim in `HANDOVER.md`
+are in the "CORRECTION to PRIORITY 2/3" section of `HANDOVER.md`.
+
+**Still open:** clippy `-D warnings` on the crates downstream of
+`hyperswitch_connectors` (never reached yet); a first green image build with the
+`postgres` KV backend; the Render/env work tracked in `HANDOVER.md`; Task 77.
+
+**Exact command(s):**
+```
+cd ~/B-PAY-backend
+git pull
+git am ~/storage/downloads/b-pay-backend-fix-diesel-cachesize.patch
+git push
+```

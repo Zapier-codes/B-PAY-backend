@@ -7,6 +7,127 @@ will save you from re-doing the same discovery.
 
 ---
 
+## Product Vision — full picture (read this first)
+
+Added 2026-09-22, consolidating scattered context from this and prior
+sessions into one place. Two categories below: **live today** (verified
+against the actual Render/GitHub/Supabase state) and **documented, not yet
+built** (a real plan, spot-checked against this codebase so it's grounded
+in what actually exists here — but zero lines of it are written yet).
+Don't assume anything in the second category is implemented just because
+it's written down.
+
+### The foundation (live today)
+
+Two independently-forked, independently-running instances of the same
+Hyperswitch-based payment orchestration engine. `Phoenix-Boss/B-PAY-backend`
+(upstream) keeps its own legacy Node.js service running untouched (see
+`legacy-node/` and the "Context" section below). This fork,
+`Zapier-codes/B-Pay-backend`, replaced that with the full Rust/Hyperswitch
+codebase and runs as its own separate product on its own infrastructure —
+nothing shared with upstream except git history.
+
+**Deployment pipeline** (same pattern for every service): GitHub Actions
+builds a Docker image with `type=gha`/`mode=max` layer caching, pushes to
+GHCR, and Render pulls that prebuilt image — **image-backed, not
+Render-building-from-source** (see the correction under "What's actually
+needed before creating the new Render service," point 5, below). A deploy
+hook fires on every push to `main`. Two services run this way today:
+`b-pay-backend-new` (this API) and `control-center-new` (Hyperswitch's
+open-source merchant dashboard), wired to the backend via its API URL —
+see "`control-center` deployment specifics" below for the exact config.
+Both confirmed live, passing `/health`, as of the 2026-09-22 session update
+further down this file.
+
+**Database:** a single Supabase Postgres instance serves all four internal
+data roles (master/replica/accounts/global) and doubles as the KV/cache
+backend via the app's built-in Postgres-KV mode (`KV_BACKEND=postgres`,
+see point 3 under "What's actually needed..." below) — no separate Redis
+server.
+
+### Removing AWS entirely (documented, not yet built)
+
+Each AWS-backed subsystem has a specific, code-checked replacement —
+"code-checked" meaning spot-verified to exist as an extension point in
+this codebase, not that any of it is implemented:
+
+- **Novu** for all email. `crates/external_services/src/email.rs` defines
+  a real `EmailClient` trait with `ses.rs`/`smtp.rs`/`no_email.rs`
+  implementations already; a Novu backend would be a fourth
+  implementation of that same trait. Nothing Novu-specific exists in the
+  codebase yet — confirmed via a repo-wide grep, zero matches.
+- **Cloudflare R2** for file storage.
+  `crates/external_services/src/file_storage/aws_s3.rs` is a real,
+  existing S3 client. Since R2 is S3-API-compatible, this is extending
+  that client with a custom endpoint, not a rewrite — and no egress fees.
+- **ClickHouse Cloud (free tier)** for analytics. `crates/analytics/src/`
+  already has a real `clickhouse.rs` plus per-domain modules
+  (`refunds/core.rs`, `disputes/core.rs`, etc.) built specifically for
+  ClickHouse — this is provisioning a real instance, not new code.
+
+### The front door: a Stripe-caliber landing page (documented, not yet built)
+
+An original-content, original-design marketing site matching that tier of
+polish — animated hero, scroll-triggered sections, an interactive API
+showcase — deployed as a third sibling service using the exact same
+CI/CD pattern as the other two. Direct signup, not gated behind a
+"contact us" form: "Get Started" lands straight on Control Center's own
+registration. **See "NEW TASK — Industry landing page" near the end of
+this file for the full 7-subtask breakdown** — that section is the
+authoritative, detailed version of this item; this paragraph is only the
+summary pointer.
+
+### Onboarding: gamified, Google-first, progressive (documented, not yet built)
+
+Users sign up with **Google**, via the app's existing generic OIDC
+framework configured for Google specifically — a real OIDC subsystem
+exists (`crates/api_models/src/oidc.rs`,
+`crates/router/src/types/domain/user/oidc.rs`,
+`crates/router/src/consts/oidc.rs`), but it is not currently wired to a
+Google provider or to any gamified-checklist UI. No business paperwork
+required to start. The account would land in a visible, gamified state — a
+progress checklist in Control Center ("Activate your account — 2/5
+complete") rather than a hard wall, nudged along by Novu emails (see AWS
+removal, above) when someone stalls partway. None of this checklist/nudge
+logic exists yet.
+
+### Trust and risk: the tiered KYC/KYB model (documented, not yet built — no code exists for this at all)
+
+Grounded in how Paystack and other real processors actually operate
+(checked against their own docs and a real Financial Ombudsman ruling
+validating the pattern), not yet checked against anything in *this*
+codebase because there is nothing here to check — a repo-wide search for
+suspension/threshold logic returns zero matches, and existing
+`kyc`/`kyb` string matches are narrow, connector-specific fields
+(`facilitapay`, `nomupay`) unrelated to a platform-wide model. The
+proposed design: any user, any country, verified or not, can send and
+receive live payments immediately — full normal experience, no visible
+restriction. A threshold (amount, over a period) applies silently
+underneath, visible only to admins, never exposed to the merchant.
+Crossing it triggers automatic suspension plus a Novu email explaining
+that verification is now required. Submitting KYC (individual identity)
+or full KYB (business registration, beneficial ownership) lifts the
+suspension and raises or removes the threshold, mirroring Paystack's own
+Starter→Registered progression. Payouts to a *new* bank destination would
+get their own separate verification checkpoint, independent of the
+collection threshold, matching how Paystack gates money actually leaving
+the platform. Whoever picks this up next needs to design and build all of
+it from scratch — treat this paragraph as a spec, not a status report.
+
+### Feature and country gating: driven by Superposition (partially live — Superposition itself is integrated; the gating rules described here are not)
+
+Superposition — the dynamic config service already integrated into the
+app (see PRIORITY 2 above: it's a required, non-optional boot dependency,
+not feature-flagged) — is real and running. What's proposed, not yet
+built: routing every tier/country/verification-level distinction (which
+payment methods, currencies, and dashboard features a given merchant
+sees) through Superposition, keyed off `merchant_business_country`
+(confirmed real field, see `crates/connector_configs/toml/development.toml`)
+and a verification tier that does not yet exist (see the KYC/KYB section
+above) — rather than scattering that logic across the codebase.
+
+---
+
 ## PRIORITY 1 — Apply this patch first
 
 **File:** `0001-priority1-render-fix.patch` (repo root, alongside this file)

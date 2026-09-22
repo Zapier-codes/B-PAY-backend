@@ -1,0 +1,24 @@
+[package]
+name = "boe_instrument"
+description = "Bill of Exchange instrument generation: alphanumeric-to-cryptographic-signal identifiers, session/device fingerprinting, tamper-evidence hashing, and a decentralized (jurisdiction-agnostic, smart-contract-anchorable) instrument mode alongside the national-law templates."
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+sha2 = "0.10"
+hmac = "0.12"
+hkdf = "0.12"
+hex = "0.4"
+data-encoding = "2.6"
+serde = { version = "1.0.219", features = ["derive"] }
+serde_json = "1"
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+ed25519-dalek = { version = "2", features = ["rand_core", "serde"] }
+rand = "0.8"
+thiserror = "1.0.69"
+
+[lints]
+workspace = true

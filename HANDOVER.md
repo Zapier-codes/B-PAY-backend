@@ -689,3 +689,91 @@ same as an active one — no special-casing for dormancy. Store the
 creation timestamp already implicit in the account record; no new field
 needed beyond whatever the account-creation flow already timestamps.
 
+---
+
+## NEW TASK — Bill of Exchange (BoE) instrument crate, decentralized mode
+
+Added 2026-09-22. New crate `crates/boe_instrument/` (picked up automatically
+by the workspace's `members = ["crates/*"]` glob — no root `Cargo.toml`
+change needed). Covers `hashing`, `crypto_signal`, `model`, and `template`
+modules. Verified in a sandbox session (older apt-provided rustc 1.75, not
+this repo's pinned 1.85.0 — see "Verification status" below) rather than
+against this repo's actual CI; run `cargo test -p boe_instrument` for real
+confirmation once this lands.
+
+### What it does
+
+Generates Bill of Exchange instruments — an unconditional order to pay a
+sum, from a drawer to a drawee, in favor of a payee — as structured records,
+with:
+
+1. **Alphanumeric instrument ID** (`hashing::generate_instrument_id`) — a
+   short, deterministic, HMAC-derived reference like `BOE-9F3K2N8QZR1A`.
+   Human-facing; safe to expose to users and counterparties.
+2. **Cryptographic signal** (`crypto_signal::derive_crypto_signal`) — the
+   alphanumeric ID converted into a deterministic Ed25519 keypair via
+   HKDF-SHA256 (keyed on the same server HMAC secret). The **public** half
+   is the actual on-chain/smart-contract anchor — something a contract or
+   third party can verify without trusting a central server, unlike the
+   plain alphanumeric string. This crate does not talk to any chain; it
+   only produces the signal. Anchoring it (event log, contract call, Merkle
+   leaf, whatever the chosen chain uses) is a separate, not-yet-built layer.
+3. **Session/device fingerprint** (`hashing::hash_session_signals`) —
+   internal fraud/dedup signal only. Never rendered on the instrument,
+   never used as a substitute for the drawer/drawee/payee's real identity.
+4. **Tamper-evidence hash** (`hashing::content_hash`) — HMAC over the
+   finalized legal fields, computed once at execution and never recomputed
+   to "match" a later edit.
+5. **Jurisdiction as a runtime enum**, including a `Decentralized` variant:
+   no national legal system claimed; verified via the cryptographic signal
+   and whatever smart-contract/platform terms the counterparties agreed to,
+   instead of a court-recognized legal form. The other variants
+   (`International`/UK/US/Nigeria/India) render their own legal wording and
+   still get a `crypto_signal` attached for reference, but it isn't
+   load-bearing for their enforceability the way it is for `Decentralized`.
+
+### Two things worth being precise about before building on this
+
+- **"No jurisdiction" ≠ "enforceable everywhere."** Decentralizing the
+  verification mechanism doesn't grant a legal system's backing — it means
+  enforceability rests entirely on the counterparties' contract/platform
+  terms, which is narrower than what a national instrument gets from that
+  country's courts. If cross-border *legal* recognition of an electronic
+  instrument is the actual goal, the real mechanism is jurisdictions
+  adopting the UNCITRAL Model Law on Electronic Transferable Records
+  (MLETR) — e.g. the UK's Electronic Trade Documents Act 2023 — which is
+  orthogonal to and combinable with the decentralized/signal-based
+  verification built here, not a substitute for it.
+- **Consent is a hard gate regardless of jurisdiction.** `execute_instrument`
+  refuses to run unless `BillOfExchange.consent` is populated from a real
+  user action (OTP confirmation, e-signature, etc.) — passive session/device
+  tracking data is fraud-signal only and cannot authorize an instrument on
+  its own. This applies identically in `Decentralized` mode; decentralizing
+  who verifies the instrument doesn't change whether the drawer actually
+  authorized it. Do not remove this gate.
+
+### Verification status
+
+`cargo test` run against `hashing.rs`, `model.rs`, `template.rs`, and the
+HKDF-derivation logic in `crypto_signal.rs` — all passed, including
+determinism checks (same instrument ID + key → same signal, every time) and
+output-length checks (32-byte / 64-hex-char Ed25519 public keys). The
+Ed25519 keypair construction itself (`SigningKey::from_bytes`,
+`VerifyingKey`) and the signing/verification round-trip in `lib.rs` use the
+correct ed25519-dalek 2.x API but were **not** runnable in this sandbox —
+its apt-installed rustc 1.75 can't satisfy a transitive `edition2024`
+requirement that ed25519-dalek 2.x's dependency tree pulls in, while this
+repo's pinned `rust-version = "1.85.0"` should have no such problem. Run
+`cargo test -p boe_instrument` here before merging to confirm the full
+crate, not just the HKDF/hashing subset.
+
+### Suggested next steps
+
+- The smart-contract/anchoring layer itself (which chain, how
+  `crypto_signal.public_key_hex` gets published/referenced on it) is
+  intentionally out of scope for this crate and not yet designed.
+- Add PDF rendering on top of `template::render_text` if a signable
+  document (not just a stored record) is needed.
+- Decide where `hmac_key` / any KMS-held signing key for the national-law
+  path lives in this repo's existing secrets management, and reuse that
+  rather than adding a new one.

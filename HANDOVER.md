@@ -777,3 +777,108 @@ crate, not just the HKDF/hashing subset.
 - Decide where `hmac_key` / any KMS-held signing key for the national-law
   path lives in this repo's existing secrets management, and reuse that
   rather than adding a new one.
+
+---
+
+## NEW TASK — Tokenize BoE instruments via ERC-3643 (T-REX), mapped to `crates/boe_instrument`
+
+Added 2026-09-22, as the direct follow-on to the BoE instrument task above.
+**Read that section first.** Documented, not yet built — no Solidity exists
+in this repo yet, and nothing here has been deployed or tested on any chain.
+This section is a spec for whoever picks it up, not a status report.
+
+### Why ERC-3643 specifically, not plain ERC-20
+
+A tokenized bill of exchange is a transferable claim to payment — in most
+jurisdictions that makes it a regulated security/debt instrument regardless
+of the chain it's on, and a plain ERC-20 has no way to stop it from being
+transferred to a wallet that was never KYC'd or that's in a
+sanctioned/excluded jurisdiction. ERC-3643 (reference implementation:
+Tokeny's T-REX protocol, `github.com/TokenySolutions/T-REX`, GPLv3, also
+mirrored at `github.com/ERC-3643/ERC-3643`) exists specifically to add that
+check at the protocol level: every transfer is gated on the receiving
+wallet's on-chain identity holding the right claims, not left to an
+off-chain terms-of-service promise nobody enforces.
+
+### The mapping from `boe_instrument` to T-REX's components
+
+T-REX's own architecture (from its README): **ONCHAINID** (per-user identity
+contract holding keys/claims), a **Trusted Issuers Registry**, a **Claim
+Topics Registry**, an **Identity Registry** (wallet → verified identity),
+a **Compliance** contract (checks each transfer against the rules), and the
+**Security Token** contract itself.
+
+- **`model::Party` → Identity Registry entry.** Each `Party` with a wallet
+  (drawer, drawee, payee) gets its own ONCHAINID deployed and registered.
+  `Party.full_name`/`address` stay off-chain-authoritative (in this crate's
+  own record) — ONCHAINID doesn't need to duplicate them, only needs claims
+  proving *this wallet* belongs to a KYC'd identity permitted to hold the
+  token (jurisdiction/accreditation claims, issued by whichever Trusted
+  Issuer this platform designates).
+- **`crypto_signal.public_key_hex` → a custom claim, not a management/action
+  key.** This needs to be said explicitly because it's the one place a naive
+  mapping breaks: ERC-734 (which ONCHAINID is built on) keys are typed as
+  ECDSA (secp256k1) for anything that can actually sign Ethereum
+  transactions, and our `crypto_signal` is Ed25519 — it is **not**
+  transaction-signing-compatible with an ONCHAINID management/action key as-
+  is. The correct mapping is to register it as a **claim** (a new claim
+  topic, e.g. `BOE_INSTRUMENT_SIGNAL`, whose data payload is the
+  `public_key_hex`), signed by a Trusted Issuer, and verified via the Claim
+  Topics/Trusted Issuers Registries like any other claim. This preserves the
+  off-chain tamper-evidence binding (`content_hash` ↔ `crypto_signal`)
+  without pretending the Ed25519 key is something it isn't on an EVM chain.
+  If a future session wants the signal to double as an actual EVM signing
+  key, that requires re-deriving it as a secp256k1 keypair instead
+  (`k256`/`secp256k1` crate) — a different function from
+  `crypto_signal::derive_crypto_signal`, not a reinterpretation of its
+  current output.
+- **`instrument_id` → the on-chain reference for a specific Security Token
+  deployment (or a per-instrument mint), matching the human-facing label to
+  its on-chain identifier.** Whether each BoE gets its own token contract or
+  all BoEs share one contract with `instrument_id` as per-token metadata is
+  an open design choice — not resolved here.
+- **`content_hash` → emitted at mint time** (an event on the Security Token
+  contract, or a claim on the instrument's own issuer identity) so the
+  on-chain record and the off-chain `BillOfExchange` struct can be
+  cross-checked independently later.
+- **The consent gate carries through unchanged.** `execute_instrument`'s
+  refusal to run without `ConsentRecord` stays the actual authorization
+  check; minting only happens *after* `InstrumentStatus::Executed`, so
+  nothing gets tokenized from an unconsented draft. This is a hard
+  prerequisite, not a nice-to-have — do not wire minting to any earlier
+  status.
+
+### Implementation paths, not yet chosen between
+
+1. **Vendor T-REX directly** (`git clone` it into a new top-level
+   contracts/ directory, or as a git submodule) and write the mapping layer
+   above as new contracts/scripts calling into it.
+2. **AI-assisted scaffolding**: a tool called `forge-rwa` (PyPI:
+   `forge-rwa`) takes a natural-language asset description and generates a
+   deployment-ready ERC-3643 contract set. Could plausibly take this crate's
+   `BillOfExchange` fields as its asset description input — unverified,
+   nobody has tried this against `forge-rwa` yet.
+
+### Licensing flag — resolve before vendoring anything
+
+T-REX is dual-licensed: GPLv3, or a proprietary license available from
+Tokeny. This repo's own crates are Apache-2.0
+(`package.license = "Apache-2.0"` in the workspace `Cargo.toml`). Solidity
+contracts calling into a GPLv3 dependency are a separate deployable
+artifact from the Rust binary, not linked into it, so this is not the same
+copyleft question as it would be for a Rust dependency — but it's still a
+real licensing decision (what gets open-sourced, under what terms, if this
+contracts layer is ever published) that whoever picks this up should
+resolve deliberately, not by default.
+
+### What's needed before any of this compiles or deploys
+
+- A chain/testnet decision (which EVM chain this targets) — not made here.
+- The actual Solidity contracts implementing the mapping above — none exist
+  yet in this repo.
+- A decision on per-instrument vs. shared token contract (see `instrument_id`
+  mapping above).
+- Legal sign-off on which jurisdictions' claims the Trusted Issuers Registry
+  will actually recognize — this is the compliance decision the whole
+  ERC-3643 structure exists to enforce, and it is a legal/business call, not
+  a code default.

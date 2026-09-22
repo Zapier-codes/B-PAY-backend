@@ -113,6 +113,11 @@ get their own separate verification checkpoint, independent of the
 collection threshold, matching how Paystack gates money actually leaving
 the platform. Whoever picks this up next needs to design and build all of
 it from scratch — treat this paragraph as a spec, not a status report.
+**One specific, more generous special case within this model has its own
+dedicated task below: "NEW TASK — Unregistered business: 1-year full-
+access grace period."** Read that section before implementing the general
+threshold model, since it changes what "the threshold" means for this
+particular segment of users.
 
 ### Feature and country gating: driven by Superposition (partially live — Superposition itself is integrated; the gating rules described here are not)
 
@@ -622,4 +627,65 @@ repo specifically.
 Real copy describing this product's actual features, connectors, and
 value proposition — written fresh, not adapted from Stripe's or any other
 company's existing marketing copy.
+
+---
+
+## NEW TASK — Unregistered business: 1-year full-access grace period
+
+Requested 2026-09-22, as a specific refinement of the general tiered
+KYC/KYB threshold model described in the Product Vision section above.
+**Read that section first** — this task changes what "the threshold"
+means for one particular segment of users; it does not replace the
+general model for everyone else. Not started, no code exists for this.
+
+### The rule, precisely
+A business with **no business registration on file at all** (no
+CAC/Ltd/LLC-equivalent registration submitted — the unregistered end of
+the spectrum, distinct from an individual who has done baseline KYC) gets
+**the full system, fully, for exactly one year from account creation** —
+sending and receiving live payments with no amount cap, no restricted
+features, the complete normal experience of a fully verified account.
+This is more generous than the general amount-based threshold described
+in the Product Vision section, which still applies to other
+tiers/segments — this is a distinct, time-boxed rule specific to this
+segment, not a description of the general model.
+
+### The deadline must be genuinely invisible, not just unstated
+This is the important, easy-to-get-wrong part: the user must have **no
+way to perceive** that a countdown exists — no visible expiry date
+anywhere in Control Center, no "X days remaining" indicator, no early
+warning email hinting at an upcoming change, nothing in any API response
+that reveals the cutoff. The experience should be indistinguishable from
+a permanently fully-verified account, right up until the exact moment of
+suspension. This is a stronger requirement than the general threshold
+model's "admin-only visibility" — there, at least the *existence* of a
+threshold concept could reasonably leak without breaking the design;
+here, even that should not be inferable. Build/test this deliberately —
+e.g. no debug logging, no admin-facing UI element, that a user could ever
+glimpse (shared browser, screenshot, support ticket, etc.).
+
+### At exactly 1 year: suspend, notify, explain
+Same suspension + Novu-email mechanism as the general model (same
+`UserStatus` extension work, same suspended-state design — do not build
+a second, parallel suspension mechanism for this case). The email at this
+specific moment should clearly explain *why* — this account has been
+operating on an initial grace period, and KYB is now required to
+continue — since, unlike the general model's amount-triggered
+suspension, this one wasn't preceded by any visible signal at all, so the
+explanation carries more of the burden of feeling reasonable rather than
+sudden.
+
+### Completing KYB lifts it, same as the general model
+Submitting full KYB (business registration, beneficial ownership — see
+the KYC/KYB document-storage design task for where/how this data itself
+gets stored) removes the restriction entirely, same mechanism as the
+general model's KYB tier.
+
+### Clock start: resolved — account creation
+Confirmed by the product owner (2026-09-22): the 1-year clock starts at
+**account creation**, not first live transaction. A dormant account
+(created but never transacted) still gets suspended at the 1-year mark
+same as an active one — no special-casing for dormancy. Store the
+creation timestamp already implicit in the account record; no new field
+needed beyond whatever the account-creation flow already timestamps.
 

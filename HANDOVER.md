@@ -428,3 +428,77 @@ runnable by hand later if ever wanted (at which point `AUTO_RELEASE_PAT`
 would need to be added as a secret too — not done, out of scope for this
 fix).
 
+---
+
+## NEW TASK — Industry landing page (Stripe-style), not yet started
+
+Requested 2026-09-22. Goal: a polished, animated marketing/landing page for
+this product, matching the **quality bar and UX conventions** of Stripe's
+own landing page — generous whitespace, confident large typography, a
+hero section with subtle ambient motion (gradient/mesh animation or
+similar), scroll-triggered reveals, and an interactive code-snippet
+showcase demonstrating the API. **Important scope boundary, worth
+restating to whichever session picks this up:** this means matching the
+*genre* and *polish level* of that style of fintech landing page — original
+copy, original visual assets, this product's own branding and feature set.
+It does not mean scraping or reproducing Stripe's actual page content,
+layout code, copy text, or trademarked assets — that's not something to
+attempt regardless of how the task is phrased in a future prompt.
+
+Not scoped or started yet beyond this breakdown. Split into subtasks so a
+session can pick up one at a time rather than needing to do all of this in
+one pass:
+
+### 1. Decide where this lives (repo + hosting) — do this first
+This product now has two existing services on the same Render account
+(`b-pay-backend-new`, `control-center-new`), each with its own GitHub repo
+and `docker-publish.yml` → GHCR → Render-image-pull pipeline (see Priority 1
+and the Control Center section above for the exact pattern to replicate).
+Decide: a third sibling repo/service (e.g. `Zapier-codes/landing-page`),
+or a static bundle folder inside an existing repo? A dedicated repo
+matching the established pattern is probably right, for consistency, but
+confirm with the product owner before scaffolding it — not assumed here.
+
+### 2. Pick the stack
+Recommend a static-output framework (e.g. Next.js static export, Astro, or
+plain Vite + React) rather than anything needing a Rust/backend runtime —
+this is a marketing page, it doesn't need to talk to the router API for
+anything beyond maybe a "get started"/signup link. Keep it a genuinely
+static build so the Docker image is small and the deploy is fast (same
+"aggressive caching, near-zero rebuild for small changes" goal already
+established for the other two services applies here too).
+
+### 3. Design system: original, not copied
+Establish this product's own type scale, color tokens, and spacing system
+before writing any page content — matching Stripe's *caliber* of design
+system (consistent scale, restrained palette, purposeful motion) without
+reusing their actual tokens/palette/logo. If this session's environment has
+access to a design-system/Artifact tool or an established brand kit for
+this product already, use that; otherwise establish one from scratch as
+part of this subtask.
+
+### 4. Hero section + ambient animation
+The signature Stripe-landing-page element: a hero with subtle, continuous
+background motion (gradient mesh, particle/wave effect, or similar) behind
+the headline and CTA. Keep performance in mind — this should be
+GPU-cheap (CSS-only or a lightweight canvas/WebGL effect), not something
+that tanks mobile Lighthouse scores.
+
+### 5. Scroll-triggered content sections
+Feature highlights, connector/integration showcase, and an interactive
+code-snippet block (e.g. tabbed request/response examples hitting this
+product's actual API shape) that reveal/animate in as the user scrolls.
+
+### 6. CI/CD wiring
+Once a repo exists (subtask 1), replicate the established pattern exactly:
+`docker-publish.yml` with `type=gha`/`mode=max` layer caching → GHCR →
+Render service created as **image-backed** (`PATCH .../services/{id}` with
+an `image` field — not `repo`/`dockerfilePath`, per the correction
+documented above) → deploy hook → `RENDER_DEPLOY_HOOK_URL` secret on that
+repo specifically.
+
+### 7. Content/copy pass
+Real copy describing this product's actual features, connectors, and
+value proposition — written fresh, not adapted from Stripe's or any other
+company's existing marketing copy.
+

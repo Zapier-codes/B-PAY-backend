@@ -1,3 +1,4 @@
+pub mod canton_bridge;
 pub mod crypto_signal;
 pub mod hashing;
 pub mod model;

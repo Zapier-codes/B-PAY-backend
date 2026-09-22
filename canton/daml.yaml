@@ -1,0 +1,22 @@
+# SDK version pinned to match daml-finance's own pin (github.com/digital-asset/daml-finance,
+# Apache-2.0), so that wiring the data-dependencies below (once fetched) doesn't hit a version
+# mismatch. If daml-finance bumps its own sdk-version, bump this to match.
+sdk-version: 2.10.0
+name: bpay-boe-canton
+source: daml
+version: 0.1.0
+dependencies:
+  - daml-prim
+  - daml-stdlib
+
+# Not wired in yet: implementing Daml.Finance.Interface.Instrument.Base.V4.Instrument
+# (so BillOfExchangeInstrument plugs into Daml Finance's Holding/Account/lifecycle
+# machinery, the way its ZeroCoupon/FixedRate bond instruments do) needs the
+# daml-finance interface DARs as data-dependencies, e.g.:
+#
+# data-dependencies:
+#   - .lib/daml-finance-interface-instrument-base-1.6.1.dar
+#   - .lib/daml-finance-interface-util-1.6.1.dar
+#
+# Fetching/pinning the right DAR versions is separate follow-up work -- see
+# canton/README.md.

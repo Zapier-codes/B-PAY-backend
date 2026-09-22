@@ -1,0 +1,112 @@
+-- Bill of Exchange instrument, Canton-side representation.
+--
+-- Mirrors `crates/boe_instrument::model::BillOfExchange` from the Rust
+-- crate this bridges from (see `crates/boe_instrument/src/canton_bridge.rs`
+-- for the Rust->Canton data mapping). This template is created only after
+-- the Rust crate's `execute_instrument` has produced a `content_hash` and
+-- `crypto_signal` for the instrument -- the same consent gate that governs
+-- the Rust side governs this: nothing here should ever be created from a
+-- draft/pending-consent instrument.
+--
+-- NOT YET VERIFIED: this sandbox cannot install the Daml SDK (its
+-- distribution isn't reachable from here), so this file has not been run
+-- through `daml build`. Treat the type-level shape as the intended design,
+-- but double-check compilation, and the controller/observer authorization
+-- reasoning in `VerifyDisclosure` in particular, once the toolchain baked
+-- into `canton/Dockerfile` is actually available to build with.
+--
+-- NOT YET WIRED to Daml Finance: this is a standalone template, not yet an
+-- implementation of `Daml.Finance.Interface.Instrument.Base.V4.Instrument`
+-- (which would let it plug into Daml Finance's Holding/Account/lifecycle
+-- machinery, the way its ZeroCoupon/FixedRate bond instruments do). Doing
+-- that needs the daml-finance DAR wired in as a data-dependency (see
+-- `canton/daml.yaml`) and implementing that interface's `getKey`/`GetView`
+-- plus `Disclosure.I` -- left as a follow-up rather than guessed at here.
+
+module BillOfExchange.Instrument where
+
+-- | Mirrors `model::Jurisdiction`. `Decentralized` carries no special
+-- on-ledger meaning here beyond being a value to disclose -- it's the Rust
+-- crate's execution path (Ed25519 signal signs the content hash instead of
+-- a platform KMS key) that actually differs by jurisdiction, not anything
+-- Canton-side.
+data Jurisdiction
+  = International
+  | UnitedKingdom
+  | UnitedStates
+  | Nigeria
+  | India
+  | Decentralized
+  deriving (Eq, Show)
+
+-- | Mirrors `model::Tenor`.
+data Tenor
+  = OnDemand
+  | FixedDate with dueDate : Date
+  | DaysAfterSight with days : Int
+  | DaysAfterDate with days : Int
+  deriving (Eq, Show)
+
+-- | Canton-side record of an executed Bill of Exchange. `issuer` (the
+-- platform) is the sole signatory: the instrument's legal execution and
+-- consent capture already happened off-ledger in the Rust crate before
+-- this contract is ever created, so creation here is a disclosure/
+-- anchoring act, not a fresh multi-party negotiation. `drawer`/`drawee`/
+-- `payee` are observers so each can see and independently verify the
+-- instrument without being required to co-sign its creation.
+template BillOfExchangeInstrument
+  with
+    issuer : Party
+      -- ^ The platform party that creates and discloses this instrument.
+      --   Analogous to Daml Finance's issuer/depository convention.
+    drawer : Party
+    drawee : Party
+    payee : Party
+    instrumentId : Text
+      -- ^ The human-facing alphanumeric id, e.g. "BOE-9F3K2N8QZR1A" (see
+      --   `hashing::generate_instrument_id` in the Rust crate).
+    cryptoSignalHex : Text
+      -- ^ Ed25519 public key (hex) derived from `instrumentId` (see
+      --   `crypto_signal::derive_crypto_signal`). Disclosed here for
+      --   cross-checking only -- NOT a Canton-transaction-signing key.
+      --   Ed25519 isn't Canton's own key type, same reasoning as it not
+      --   being usable as an ERC-734 management key in the ERC-3643
+      --   design this replaced (see HANDOVER.md).
+    contentHash : Text
+      -- ^ HMAC content hash over the instrument's finalized legal fields
+      --   (`hashing::content_hash`), computed once at execution and never
+      --   recomputed to "match" a later edit.
+    jurisdiction : Jurisdiction
+    amountMinorUnits : Int
+    currency : Text
+    tenor : Tenor
+    dateOfIssue : Date
+    placeOfIssue : Text
+  where
+    signatory issuer
+    observer drawer, drawee, payee
+
+    ensure
+      amountMinorUnits > 0
+      && cryptoSignalHex /= ""
+      && contentHash /= ""
+      && instrumentId /= ""
+
+    key (issuer, instrumentId) : (Party, Text)
+    maintainer key._1
+
+    -- | Lets any of the three named parties confirm the on-ledger
+    -- `contentHash` matches a value they recomputed themselves off-ledger
+    -- (e.g. from their own copy of the executed `BillOfExchange`).
+    -- Recomputation itself stays off-ledger, in the Rust crate -- this
+    -- choice only compares, it does not recompute.
+    nonconsuming choice VerifyDisclosure : Bool
+      with
+        expectedContentHash : Text
+        verifier : Party
+      controller verifier
+      do
+        assertMsg
+          "verifier must be one of drawer, drawee or payee"
+          (verifier == drawer || verifier == drawee || verifier == payee)
+        pure (contentHash == expectedContentHash)

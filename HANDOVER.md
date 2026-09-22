@@ -882,3 +882,113 @@ resolve deliberately, not by default.
   will actually recognize — this is the compliance decision the whole
   ERC-3643 structure exists to enforce, and it is a legal/business call, not
   a code default.
+
+---
+
+## CORRECTION / direction change (2026-09-22, same day): chain choice resolved as Canton/Daml, not an EVM chain — ERC-3643/T-REX section above is superseded for the "which chain" question
+
+The "vendor T-REX directly" path from the section above was reconsidered
+before any Solidity was written, because it silently defaults the
+GPLv3-vs-Apache-2.0 licensing question the section itself said not to
+default: T-REX's only actively-maintained reference implementation
+(`TokenySolutions/T-REX`, mirrored at `ERC-3643/ERC-3643`) is GPLv3 (or a
+paid proprietary license from Tokeny), and this repo's workspace is
+Apache-2.0. No permissively-licensed full ERC-3643 implementation was found
+to substitute in its place.
+
+**Decision: build on the Canton Network (Daml) instead of an EVM chain.**
+This isn't just picking a different chain for the same ERC-3643 design — it
+removes the ERC-3643/Solidity/T-REX question entirely, licensing concern
+included:
+
+- **Daml and Daml Finance are both Apache-2.0** (confirmed against
+  `github.com/digital-asset/daml-finance`'s `LICENSE` file directly) — no
+  copyleft mismatch with this workspace, unlike every ERC-3643
+  implementation found.
+- **Daml has no Solidity/EVM-style bolted-on compliance registry to
+  reimplement.** Where ERC-3643 needs a separate Identity Registry +
+  Trusted Issuers Registry + Compliance contract checked on every transfer
+  because plain ERC-20 has no native concept of "who's allowed to hold
+  this," Daml's authorization model (signatories/observers/controllers on
+  the contract itself, enforced by the ledger) plus the
+  issuer/custodian/account relationship in Daml Finance's `Holding`/
+  `Account` model is where that eligibility check naturally lives instead —
+  it's a different, native mechanism, not a gap to fill with a ported
+  registry contract.
+- **Daml Finance already ships bond-like instrument templates**
+  (`Daml.Finance.Interface.Instrument.Bond.V3.{ZeroCoupon,FixedRate,
+  FloatingRate,Callable}.Instrument`, each an `interface Instrument
+  requires BaseInstrument.I, Disclosure.I`) that are structurally close to
+  a Bill of Exchange (an order to pay a fixed sum at a determinable future
+  time) — the BoE Daml template should be modeled on these rather than
+  designed from scratch.
+
+**Mapping, restated for Daml instead of T-REX (not yet built — this is the
+updated spec, replacing the "mapping from `boe_instrument` to T-REX's
+components" section above for the chain-choice question only; the
+underlying `crypto_signal`-is-Ed25519 point below still applies):**
+
+- `model::Party` → a Daml `Party` on the corresponding `Account`/`Holding`,
+  not a T-REX ONCHAINID — eligibility to hold the instrument is enforced by
+  which accounts/custodians the ledger lets sign the transfer, not by a
+  separate on-chain registry contract.
+- `crypto_signal.public_key_hex` → still not a signing/management key on
+  the target ledger, same reasoning as the T-REX section above: it's
+  Ed25519, produced off-chain by this crate, and should be carried as an
+  opaque disclosed attribute on the instrument (e.g. a field in the
+  instrument's `View`, alongside `instrument_id`) for cross-checking, not
+  reinterpreted as something that can sign Canton transactions itself.
+- `content_hash` → similarly carried as a disclosed attribute, checkable
+  against the off-chain `BillOfExchange.content_hash` at any time, same
+  role as the "emitted at mint time" design in the T-REX section.
+- The consent gate is unchanged and non-negotiable here too:
+  `execute_instrument`'s refusal to run without `ConsentRecord` stays the
+  actual authorization check; nothing gets represented on Canton before
+  `InstrumentStatus::Executed`.
+
+**Still open / not done:**
+- No Daml code exists yet for this — the BoE instrument template itself
+  (modeled on the ZeroCoupon/FixedRate bond interfaces above) still needs
+  writing.
+- How the Rust `boe_instrument` crate's output reaches Canton is a separate
+  integration question (most likely: an off-chain service calling Canton's
+  Ledger API/JSON API with the executed instrument's fields, not a direct
+  Rust↔Daml binding) — not designed here.
+- **Toolchain limitation carries over from the BoE crate task above**: this
+  sandbox cannot install the Daml SDK (its distribution isn't on the
+  sandbox's network allowlist), so any Daml written here is unverified
+  syntax, same caveat as `boe_instrument` needing `cargo test -p
+  boe_instrument` run for real elsewhere.
+
+### Session update (2026-09-22, same day): first Canton-side code, unverified
+
+- `crates/boe_instrument/src/tokenization.rs` (the ERC-3643-shaped module
+  from the section above — `TrustedIssuerRef`, `IdentityRegistrationRequest`,
+  `TokenScope`) was deleted and replaced with
+  `crates/boe_instrument/src/canton_bridge.rs`: a chain-agnostic-in-spirit
+  but Canton-shaped module producing `InstrumentDisclosure` (instrument id,
+  crypto signal hex, content hash) and resolved `CantonParty` records from
+  Canton party ids supplied by the caller — no Identity Registry equivalent,
+  since Canton's own signatory/observer model covers eligibility instead.
+  Same `Executed`-status/consent-gate prerequisite as the ERC-3643 version.
+- New `canton/` directory: `daml/BillOfExchange/Instrument.daml` (a
+  standalone `BillOfExchangeInstrument` template — issuer-signed,
+  drawer/drawee/payee as observers, carrying the disclosed instrument
+  fields), `daml.yaml` (sdk-version 2.10.0, matching daml-finance's own pin
+  at time of writing), and a `Dockerfile` that bakes the Daml SDK into the
+  image at build time (per explicit request, since this sandbox can't reach
+  `get.daml.com` live).
+- **None of this has been verified.** This sandbox cannot install the Daml
+  SDK, so `Instrument.daml` has not been run through `daml build`, and the
+  `Dockerfile`'s `RUN daml build` step is itself unverified — it's the
+  correct baked-in-toolchain *approach* for solving the sandbox's network
+  restriction, but confirm the image actually builds somewhere with real
+  network access before relying on it.
+- **Not yet wired to Daml Finance's interfaces** — `BillOfExchangeInstrument`
+  does not yet implement
+  `Daml.Finance.Interface.Instrument.Base.V4.Instrument`, which is what
+  would let it plug into Daml Finance's Holding/Account/lifecycle machinery
+  the way its own bond instruments do. See `canton/README.md` for the full
+  list of what's left.
+- No Ledger API/JSON API integration exists — `canton_bridge.rs` produces
+  data only, nothing submits it to a ledger yet.

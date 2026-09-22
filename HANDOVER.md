@@ -342,3 +342,89 @@ fix. Now the field exists on router's struct, defaults to `false` and is forward
 replica variants) really reaches `storage_impl` — where it currently only logs an error, see
 above. Before this fix the variable was silently ignored by serde. The drainer has its own
 `Database` (no such field, no conversion) and is unaffected.
+
+---
+
+## Session update (2026-09-22): both services confirmed live; CI schedule disabled
+
+### Both Render services are live and healthy, end to end
+
+`b-pay-backend-new` (`srv-daoal7btqb8s73eiu2qg`) and `control-center-new`
+(`srv-daobduf40ujc73el46r0`) both return `200`/`health is good` on `/health`
+as of this session, running the image built from commit `96ed9ef32`
+(current `origin/main` tip at time of writing). Getting here needed two
+things beyond what's documented above:
+
+1. **Both services must be image-backed, not repo-backed.** Creating a
+   Render service with `repo`/`branch`/`dockerfilePath` makes *Render
+   itself* clone and build from source on every deploy — completely
+   bypassing the GHCR/buildx pipeline in `docker-publish.yml` (its caching
+   is then dead weight, never used). The correct source config, confirmed
+   via `PATCH /v1/services/{id}` with an `image: {ownerId, imagePath}`
+   body: `imagePath: ghcr.io/zapier-codes/b-pay-backend:latest` /
+   `ghcr.io/zapier-codes/control-center:latest`. This also incidentally
+   fixes an unrelated bug: `control-center`'s `package.json` has a
+   `postinstall` script (`git config core.hooksPath ...`) that fails with
+   `fatal: not in a git directory` when Render builds from source (its
+   build context has no `.git`), but works fine under GitHub Actions'
+   `actions/checkout`, which does include one.
+2. **The baked `docker_compose.toml` defaults four separate DB roles to
+   `pg`** (a docker-compose-only hostname): `master_database` (already
+   fixed, Priority 1), plus `accounts_database`, `global_database`, and
+   `replica_database`, which were missed. All three needed the same
+   Supabase host/port/user/password/dbname as master, added as
+   `ROUTER__ACCOUNTS_DATABASE__*` / `ROUTER__GLOBAL_DATABASE__*` /
+   `ROUTER__REPLICA_DATABASE__*` env vars on the Render service. (Our
+   Supabase connection is on port `5432`, the session-mode pooler, so the
+   transaction-pooler/prepared-statement problem described just above this
+   section does not apply to this deployment — that issue is specific to
+   port `6543`, which we never switched to.)
+
+Current full set of env vars on `b-pay-backend-new`, beyond what's already
+listed under Priority 1 point 4: the `ACCOUNTS_DATABASE`/`GLOBAL_DATABASE`/
+`REPLICA_DATABASE` quintuples above, plus
+`ROUTER__SUPERPOSITION__BACKUP_FILE_PATH=/local/config/superposition_seed.toml`
+(required per the Superposition section above once that file started being
+baked into the image).
+
+### `control-center` deployment specifics (new this session)
+
+- Render service is separate from the backend, `env: image`, same owner
+  account, pointed at `ghcr.io/zapier-codes/control-center:latest`.
+- Its own `docker-publish.yml` was added (mirrors the backend's, same
+  `type=gha`/`mode=max` layer caching), pushing to GHCR under the
+  `control-center` package.
+- **Port is hardcoded to `9000`** in `src/server/Server.res` — not
+  configurable via an app-level env var like the backend's server port
+  was. Render's own `PORT` env var (distinct from any `ROUTER__`-style
+  app config — this one is Render's platform-level port-binding variable)
+  is set to `9000` to match, since Render's docs confirm it's a first-class
+  configurable override, default `10000`.
+- Connects to the backend via `default__endpoints__api_url` (this app's own
+  `section__key` env-override convention, confirmed in its
+  `start:test` npm script), set to
+  `https://b-pay-backend-new.onrender.com/api`.
+- `/health` route exists and was used as the healthcheck path, same as the
+  backend.
+
+### CI: nightly-tag/Postman-collection workflow schedule disabled
+
+`.github/workflows/release-nightly-version.yml` ran on a weekday-midnight
+cron and failed every time on this fork — it needs an `AUTO_RELEASE_PAT`
+secret (a PAT with push access to `main`) that was never set, so
+`actions/checkout`'s `token` input got an empty string and errored
+immediately (`Input required and not supplied: token`). Investigated
+before disabling rather than assumed: this workflow does two things,
+neither of which is API documentation — (1) regenerates Postman
+*test-collection* JSON files (`postman/collection-json/*.json`, used by the
+separate `postman-collection-runner.yml` connector-testing workflow) from
+their source directories and auto-commits the result to `main`, and (2)
+creates a calendar-versioned git tag (`YYYY.MM.DD.MICRO`) via `git-cliff`.
+Neither is consumed by anything else in this fork's pipeline — notably,
+the tag format doesn't match `docker-publish.yml`'s `v*.*.*` tag trigger,
+so it was never going to kick off a deploy even if it worked. **Decision:
+disabled the `schedule:` trigger, kept `workflow_dispatch`** so it's still
+runnable by hand later if ever wanted (at which point `AUTO_RELEASE_PAT`
+would need to be added as a secret too — not done, out of scope for this
+fix).
+

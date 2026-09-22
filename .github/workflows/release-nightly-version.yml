@@ -1,9 +1,18 @@
 name: Create a nightly tag
 
 on:
-  schedule:
-    - cron: "0 0 * * 1-5" # Run workflow at 00:00 midnight UTC (05:30 AM IST) every Monday-Friday
-
+  # PRIORITY (see /HANDOVER.md): the scheduled trigger was disabled for this
+  # fork. This workflow is upstream Hyperswitch's own nightly-release
+  # bookkeeping - it commits regenerated Postman test-collection JSON files
+  # straight to main and creates a calendar-versioned git tag
+  # (YYYY.MM.DD.MICRO). It requires an AUTO_RELEASE_PAT secret (a PAT with
+  # push access to main) that was never set on this fork, so left on its
+  # default schedule it failed automatically every weekday at midnight UTC
+  # for no benefit - this fork doesn't consume the nightly tags for
+  # anything, and the tag format doesn't match docker-publish.yml's
+  # `v*.*.*` trigger, so it was never wired to any deploy anyway. Kept
+  # available via workflow_dispatch in case it's ever wanted deliberately -
+  # at which point an AUTO_RELEASE_PAT secret would need to be added too.
   workflow_dispatch:
 
 concurrency:

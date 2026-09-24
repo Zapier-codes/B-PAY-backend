@@ -691,7 +691,41 @@ needed beyond whatever the account-creation flow already timestamps.
 
 ---
 
-## NEW TASK — Bill of Exchange (BoE) instrument crate, decentralized mode
+## VERSION 2 — Bill of Exchange tokenization, as an additive orchestrator layer
+
+Everything from here to the end of this file (four sections: the
+`boe_instrument` crate, the ERC-3643/T-REX spec, the Canton/Daml direction
+change, and the first Canton-side code) is one feature area, being labeled
+**V2** here for exactly that reason — it's tracked as a unit, not four
+unrelated tasks, and the label says something specific about how it
+relates to everything above this line in the file:
+
+- **V1 = the orchestrator as it exists today**: the live Hyperswitch-based
+  payment routing/orchestration core (Render deploy, Superposition config,
+  the pooling setup, everything in "Product Vision" and the PRIORITY 1/2
+  patches above). V1 is unaffected by any of this — nothing below changes
+  how a normal card/bank payment gets routed.
+- **V2 = an additive layer on top**, not a replacement or a v2 of the
+  orchestrator's existing payment-routing logic itself: a new instrument
+  type (Bill of Exchange) with its own execution/consent model
+  (`boe_instrument`) and its own settlement target (originally spec'd
+  against an EVM chain via ERC-3643/T-REX, superseded by Canton/Daml — see
+  below), sitting alongside the orchestrator rather than inside its
+  existing payment-method/connector code paths.
+- Calling it V2 does **not** mean it's ready to ship as a version bump —
+  every section below still lists real open items (licensing sign-off,
+  unverified Daml, no Ledger API integration, no redemption/burn design,
+  no liquidity model). The label is about scope and architecture
+  (additive layer vs. core orchestrator), not maturity.
+
+Patch `0003-boe-v2-orchestrator-layer.patch` (repo root) applies exactly
+this reorganization — the section headers below gaining a `[V2]` tag, and
+this banner being added — as one commit, `git am`-style like the PRIORITY
+1/2 patches above. It does not change any code, only this file.
+
+---
+
+## [V2] NEW TASK — Bill of Exchange (BoE) instrument crate, decentralized mode
 
 Added 2026-09-22. New crate `crates/boe_instrument/` (picked up automatically
 by the workspace's `members = ["crates/*"]` glob — no root `Cargo.toml`
@@ -780,7 +814,7 @@ crate, not just the HKDF/hashing subset.
 
 ---
 
-## NEW TASK — Tokenize BoE instruments via ERC-3643 (T-REX), mapped to `crates/boe_instrument`
+## [V2] NEW TASK — Tokenize BoE instruments via ERC-3643 (T-REX), mapped to `crates/boe_instrument`
 
 Added 2026-09-22, as the direct follow-on to the BoE instrument task above.
 **Read that section first.** Documented, not yet built — no Solidity exists
@@ -885,7 +919,7 @@ resolve deliberately, not by default.
 
 ---
 
-## CORRECTION / direction change (2026-09-22, same day): chain choice resolved as Canton/Daml, not an EVM chain — ERC-3643/T-REX section above is superseded for the "which chain" question
+## [V2] CORRECTION / direction change (2026-09-22, same day): chain choice resolved as Canton/Daml, not an EVM chain — ERC-3643/T-REX section above is superseded for the "which chain" question
 
 The "vendor T-REX directly" path from the section above was reconsidered
 before any Solidity was written, because it silently defaults the
@@ -960,7 +994,7 @@ underlying `crypto_signal`-is-Ed25519 point below still applies):**
   syntax, same caveat as `boe_instrument` needing `cargo test -p
   boe_instrument` run for real elsewhere.
 
-### Session update (2026-09-22, same day): first Canton-side code, unverified
+### [V2] Session update (2026-09-22, same day): first Canton-side code, unverified
 
 - `crates/boe_instrument/src/tokenization.rs` (the ERC-3643-shaped module
   from the section above — `TrustedIssuerRef`, `IdentityRegistrationRequest`,

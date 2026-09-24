@@ -556,7 +556,7 @@ fix).
 
 ---
 
-## NEW TASK — Industry landing page (Stripe-style), not yet started
+## NEW TASK — Industry landing page (Stripe-style), first pass built (2026-09-22)
 
 Requested 2026-09-22. Goal: a polished, animated marketing/landing page for
 this product, matching the **quality bar and UX conventions** of Stripe's
@@ -571,62 +571,83 @@ It does not mean scraping or reproducing Stripe's actual page content,
 layout code, copy text, or trademarked assets — that's not something to
 attempt regardless of how the task is phrased in a future prompt.
 
-Not scoped or started yet beyond this breakdown. Split into subtasks so a
-session can pick up one at a time rather than needing to do all of this in
-one pass:
+Split into subtasks so a session can pick up one at a time rather than
+needing to do all of this in one pass. **Subtasks 1–6 have a first pass
+built** (own repo, not yet part of this one — the code lives outside
+`Zapier-codes/B-Pay-backend`, so nothing here changed to add it); subtask 7
+is intentionally left placeholder-quality. Status per subtask below.
 
 ### 1. Decide where this lives (repo + hosting) — do this first
-This product now has two existing services on the same Render account
-(`b-pay-backend-new`, `control-center-new`), each with its own GitHub repo
-and `docker-publish.yml` → GHCR → Render-image-pull pipeline (see Priority 1
-and the Control Center section above for the exact pattern to replicate).
-Decide: a third sibling repo/service (e.g. `Zapier-codes/landing-page`),
-or a static bundle folder inside an existing repo? A dedicated repo
-matching the established pattern is probably right, for consistency, but
-confirm with the product owner before scaffolding it — not assumed here.
 
-### 2. Pick the stack
-Recommend a static-output framework (e.g. Next.js static export, Astro, or
-plain Vite + React) rather than anything needing a Rust/backend runtime —
-this is a marketing page, it doesn't need to talk to the router API for
-anything beyond maybe a "get started"/signup link. Keep it a genuinely
-static build so the Docker image is small and the deploy is fast (same
-"aggressive caching, near-zero rebuild for small changes" goal already
-established for the other two services applies here too).
+**Went with option A (dedicated repo)** — matching the established pattern
+of `b-pay-backend-new`/`control-center-new`, for consistency. **Not
+confirmed with the product owner** the way this section originally asked
+for — the session that built this asked, got "use industry giants style to
+answer all questions" back rather than an actual A/B choice, and proceeded
+with the dedicated-repo default this section itself already called
+"probably right." Treat this as a reasonable default, not a
+product-owner-confirmed decision — worth a real confirmation before this
+goes further (e.g. before spending real effort on subtask 7's copy pass,
+or on wiring subtask 6's CI/CD to an actual Render service).
 
-### 3. Design system: original, not copied
-Establish this product's own type scale, color tokens, and spacing system
-before writing any page content — matching Stripe's *caliber* of design
-system (consistent scale, restrained palette, purposeful motion) without
-reusing their actual tokens/palette/logo. If this session's environment has
-access to a design-system/Artifact tool or an established brand kit for
-this product already, use that; otherwise establish one from scratch as
-part of this subtask.
+The repo itself was built in a sandbox and has not been pushed anywhere
+real yet — it doesn't exist at `Zapier-codes/landing-page` or anywhere else
+on GitHub. What exists is a local git repo (one commit, `3e62638`) that
+needs `git remote add origin <url>` and a push once that repo is actually
+created — same "sandbox commits aren't pushed anywhere" situation as every
+other patch in this file, except this is a whole new repo rather than a
+patch onto this one.
 
-### 4. Hero section + ambient animation
-The signature Stripe-landing-page element: a hero with subtle, continuous
-background motion (gradient mesh, particle/wave effect, or similar) behind
-the headline and CTA. Keep performance in mind — this should be
-GPU-cheap (CSS-only or a lightweight canvas/WebGL effect), not something
-that tanks mobile Lighthouse scores.
+### 2. Pick the stack — done
 
-### 5. Scroll-triggered content sections
-Feature highlights, connector/integration showcase, and an interactive
-code-snippet block (e.g. tabbed request/response examples hitting this
-product's actual API shape) that reveal/animate in as the user scrolls.
+Vite + React + TypeScript, fully static output (`npm run build` verified
+in-sandbox; no Rust/backend runtime).
 
-### 6. CI/CD wiring
-Once a repo exists (subtask 1), replicate the established pattern exactly:
-`docker-publish.yml` with `type=gha`/`mode=max` layer caching → GHCR →
-Render service created as **image-backed** (`PATCH .../services/{id}` with
-an `image` field — not `repo`/`dockerfilePath`, per the correction
-documented above) → deploy hook → `RENDER_DEPLOY_HOOK_URL` secret on that
-repo specifically.
+### 3. Design system: original, not copied — done, first pass
 
-### 7. Content/copy pass
-Real copy describing this product's actual features, connectors, and
-value proposition — written fresh, not adapted from Stripe's or any other
-company's existing marketing copy.
+Ink `#12151b` / signal `#5eead4` (teal) / reroute `#f5a623` (amber) — the
+two accents appear only inside the hero's routing diagram, not as page
+decoration. Space Grotesk (display) + IBM Plex Sans (body) + IBM Plex Mono
+(code). See the landing-page repo's own README for the full design plan
+and rationale.
+
+### 4. Hero section + ambient animation — done, different approach than "gradient mesh"
+
+Built as a small live diagram of the product's actual mechanism (a decline
+at one processor, instant reroute to a working one) instead of a
+decorative gradient/particle effect — CSS + SVG `animateMotion`, no
+canvas/WebGL, GPU-cheap. Deliberately not a generic gradient mesh: the
+diagram *is* the product's value proposition, not ambient decoration.
+
+### 5. Scroll-triggered content sections — done, restrained
+
+Feature highlights (route/retry/observe) and the code showcase each reveal
+once via `IntersectionObserver`, as a single section-level moment —
+deliberately not a per-card fade-slide-up on every element, which reads as
+a generic AI-generated tell.
+
+### 6. CI/CD wiring — written, untested
+
+`docker-publish.yml` replicates the established pattern (GHCR,
+`type=gha`/`mode=max` caching, image-backed Render deploy hook) exactly,
+but has never actually run — there's no real GitHub repo or Render service
+for it to run against yet. Do subtask 1's real repo creation and Render
+service setup before trusting this workflow works as written.
+
+### 7. Content/copy pass — intentionally left placeholder-quality
+
+Copy describes a placeholder product name ("Routeway") and its routing/
+retry/observability features in plain language, written fresh (not adapted
+from Stripe's or anyone else's copy) — but it's demonstration copy for the
+page structure, not this product's actual final name, brand voice, or
+feature list. Needs a real pass with actual product/brand input, and the
+placeholder name replaced everywhere, before this ships.
+
+### Also not done: visual/screenshot QA
+
+This sandbox has no headless browser — `npm run build` succeeding is the
+only verification that happened. Load it locally and actually look at it
+before treating the visual design as final.
 
 ---
 

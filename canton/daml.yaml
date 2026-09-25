@@ -4,19 +4,26 @@
 sdk-version: 2.10.0
 name: bpay-boe-canton
 source: daml
-version: 0.1.0
+version: 0.2.0
 dependencies:
   - daml-prim
   - daml-stdlib
 
-# Not wired in yet: implementing Daml.Finance.Interface.Instrument.Base.V4.Instrument
-# (so BillOfExchangeInstrument plugs into Daml Finance's Holding/Account/lifecycle
-# machinery, the way its ZeroCoupon/FixedRate bond instruments do) needs the
-# daml-finance interface DARs as data-dependencies, e.g.:
+# Now wired in: BillOfExchangeInstrument implements Daml.Finance.Interface.Instrument.Base.V4.Instrument
+# and Daml.Finance.Interface.Util.V3.Disclosure (see Instrument.daml). Versions below were read
+# directly out of a clone of digital-asset/daml-finance (each package's own daml.yaml), not
+# guessed -- they're the actual current pins as of this session, so this is a step more confirmed
+# than "unverified" even though `daml build` itself still hasn't been run (see "Status" in
+# canton/README.md: this sandbox can't reach get.daml.com to fetch the DARs or run the build).
+#
+# Fetching the actual .dar files at these versions and placing them under .lib/ is still
+# outstanding -- data-dependencies need real files on disk, and downloading/building daml-finance
+# from source (or pulling published DARs) requires the Daml SDK toolchain this sandbox doesn't
+# have network access to. Uncomment once the DARs are staged under .lib/daml-finance/.
 #
 # data-dependencies:
-#   - .lib/daml-finance-interface-instrument-base-1.6.1.dar
-#   - .lib/daml-finance-interface-util-1.6.1.dar
-#
-# Fetching/pinning the right DAR versions is separate follow-up work -- see
-# canton/README.md.
+#   - .lib/daml-finance/Daml.Finance.Interface.Instrument.Base.V4/4.0.0/daml-finance-interface-instrument-base-v4-4.0.0.dar
+#   - .lib/daml-finance/Daml.Finance.Interface.Holding.V4/4.0.0/daml-finance-interface-holding-v4-4.0.0.dar
+#   - .lib/daml-finance/Daml.Finance.Interface.Types.Common.V3/3.0.0/daml-finance-interface-types-common-v3-3.0.0.dar
+#   - .lib/daml-finance/Daml.Finance.Interface.Util.V3/3.0.0/daml-finance-interface-util-v3-3.0.0.dar
+#   - .lib/daml-finance/Daml.Finance.Util.V4/4.0.0/daml-finance-util-v4-4.0.0.dar

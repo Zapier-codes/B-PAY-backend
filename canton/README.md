@@ -30,17 +30,32 @@ allowlist, so `daml build` has not been run against `Instrument.daml`, and
 the `RUN daml build` step in `Dockerfile` is unverified. Treat the type
 shapes here as the intended design, not a confirmed-working build.
 
+## Wired this session, still unbuilt
+
+`BillOfExchangeInstrument` now implements both
+`Daml.Finance.Interface.Instrument.Base.V4.Instrument` and
+`Daml.Finance.Interface.Util.V3.Disclosure`, modeled on
+`Daml.Finance.Instrument.Bond.V3.ZeroCoupon.Instrument` as the reference
+pattern (all three read out of a real clone of
+`digital-asset/daml-finance`, not written from memory). See the design-call
+comments at the top of `Instrument.daml` for the specific choices this
+required (`depository = issuer`, `holdingStandard = BaseHolding`,
+`id`/`version` mapping, why `VerifyDisclosure` stays BoE-specific rather
+than folded into either interface).
+
+The `data-dependencies` in `daml.yaml` are filled in with the actual
+current versions from that same clone (`daml-finance-interface-instrument-base-v4`
+`4.0.0`, `-holding-v4` `4.0.0`, `-types-common-v3` `3.0.0`, `-util-v3`
+`3.0.0`, plus `daml-finance-util-v4` `4.0.0` for the `*ObserversImpl`
+helpers) rather than the placeholder `1.6.1` guessed in the previous
+session — but they're commented out, because `data-dependencies` needs
+real `.dar` files staged under `.lib/daml-finance/`, and fetching or
+building those requires the Daml SDK toolchain, which this sandbox can't
+reach (`get.daml.com` isn't on the network allowlist). Staging those DARs
+and uncommenting the block is the next concrete step here.
+
 ## Not yet done
 
-- **Not wired to Daml Finance's interfaces.** `BillOfExchangeInstrument` is
-  a standalone template, not yet an implementation of
-  `Daml.Finance.Interface.Instrument.Base.V4.Instrument` (the interface its
-  own `ZeroCoupon`/`FixedRate` bond instruments implement, which is what
-  would let this plug into Daml Finance's Holding/Account/lifecycle
-  machinery instead of standing alone). That needs the daml-finance
-  interface DARs pinned as `data-dependencies` in `daml.yaml` (commented
-  out there for now) and implementing `getKey`/`GetView` plus
-  `Disclosure.I` — left as follow-up rather than guessed at blind.
 - **No Ledger API integration.** `crates/boe_instrument/src/canton_bridge.rs`
   produces the Rust-side data (`InstrumentDisclosure`, resolved
   `CantonParty` ids) but does not call any Ledger API/JSON API itself —

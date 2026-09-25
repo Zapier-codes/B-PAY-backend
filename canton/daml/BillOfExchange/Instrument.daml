@@ -15,15 +15,53 @@
 -- reasoning in `VerifyDisclosure` in particular, once the toolchain baked
 -- into `canton/Dockerfile` is actually available to build with.
 --
--- NOT YET WIRED to Daml Finance: this is a standalone template, not yet an
--- implementation of `Daml.Finance.Interface.Instrument.Base.V4.Instrument`
--- (which would let it plug into Daml Finance's Holding/Account/lifecycle
--- machinery, the way its ZeroCoupon/FixedRate bond instruments do). Doing
--- that needs the daml-finance DAR wired in as a data-dependency (see
--- `canton/daml.yaml`) and implementing that interface's `getKey`/`GetView`
--- plus `Disclosure.I` -- left as a follow-up rather than guessed at here.
+-- NOW WIRED to Daml Finance's Base.V4.Instrument and Util.V3.Disclosure
+-- interfaces (previously a standalone template -- see the "chain choice"
+-- and "[V2] Session update" sections of HANDOVER.md for that history).
+-- The interface shapes and the exact dependency versions below were read
+-- directly out of a clone of digital-asset/daml-finance
+-- (Daml.Finance.Interface.Instrument.Base.V4, Daml.Finance.Instrument.Bond.V3.ZeroCoupon
+-- as the reference implementation pattern to follow, and Daml.Finance.Interface.Util.V3.Disclosure),
+-- not guessed at -- but the DARs themselves still aren't staged under `.lib/` (see
+-- `canton/daml.yaml`) and nothing here has been run through `daml build`, so "wired"
+-- means "implements the right interface shape in source," not "confirmed to compile."
+--
+-- Design calls made in wiring this up, so the next session doesn't have to re-derive them:
+--   * `depository = issuer`: Base.V4.Instrument distinguishes a depository role from the
+--     issuer role (see e.g. Daml.Finance.Instrument.Bond.V3.ZeroCoupon.Instrument, which has
+--     both as separate signatories). This platform plays both roles for now -- there's no
+--     separate custodian/depository entity in this product -- so the two fields carry the
+--     same Party. If a real depository is ever introduced, this collapses back to two
+--     distinct fields with no interface-shape change needed.
+--   * `holdingStandard = BaseHolding`: the four `HoldingStandard` values describe how
+--     *holdings* referencing this instrument can behave (transferable/fungible/both/neither).
+--     Nothing in this codebase creates a Holding against a BillOfExchangeInstrument yet --
+--     this contract is a disclosure/anchoring record, not something anyone holds a
+--     transferable position in -- so `BaseHolding` (the "neither" case) is the honest
+--     placeholder rather than a specific claim about transfer/fungibility semantics that
+--     hasn't been designed.
+--   * `id = Id instrumentId`, `version = "1"`: `instrumentId` (e.g. "BOE-9F3K2N8QZR1A") already
+--     uniquely identifies one executed instrument -- Daml Finance's own `Id`/`version` split is
+--     for instruments that get re-versioned over time (`DynamicInstrument.CreateNewVersion`,
+--     see ZeroCoupon's own use of it for lifecycle events). A Bill of Exchange doesn't
+--     lifecycle-mutate the way a bond does, so `version` is a fixed literal for now rather
+--     than wired to any re-versioning logic -- revisit if BoE lifecycle events are ever added.
+--   * `validAsOf = dateOfIssue`-derived time, via `lastEventTimestamp`: kept as an explicit
+--     field (like ZeroCoupon's) rather than always recomputed, in case a future lifecycle
+--     event needs to bump it independently of `dateOfIssue`.
+--   * The original `key (issuer, instrumentId) : (Party, Text)` and `VerifyDisclosure` choice
+--     are kept as-is alongside the new interfaces -- `VerifyDisclosure` is BoE-specific
+--     (comparing a recomputed off-chain hash) and has no Base.V4.Instrument equivalent, and
+--     existing off-chain code (`canton_bridge.rs`) may already assume the plain template key
+--     shape, so it isn't removed just because `BaseInstrument.instrumentKey` now also exists.
 
 module BillOfExchange.Instrument where
+
+import DA.Set (singleton)
+import Daml.Finance.Interface.Instrument.Base.V4.Instrument qualified as BaseInstrument (I, View(..), createReference, disclosureUpdateReference, instrumentKey)
+import Daml.Finance.Interface.Types.Common.V3.Types (HoldingStandard(..), Id(..), PartiesMap)
+import Daml.Finance.Interface.Util.V3.Disclosure qualified as Disclosure (I, View(..), flattenObservers)
+import Daml.Finance.Util.V4.Disclosure (addObserversImpl, removeObserversImpl, setObserversImpl)
 
 -- | Mirrors `model::Jurisdiction`. `Decentralized` carries no special
 -- on-ledger meaning here beyond being a value to disclose -- it's the Rust
@@ -58,13 +96,15 @@ template BillOfExchangeInstrument
   with
     issuer : Party
       -- ^ The platform party that creates and discloses this instrument.
-      --   Analogous to Daml Finance's issuer/depository convention.
+      --   Also plays the Base.V4.Instrument `depository` role -- see the
+      --   "depository = issuer" design note above the module.
     drawer : Party
     drawee : Party
     payee : Party
     instrumentId : Text
       -- ^ The human-facing alphanumeric id, e.g. "BOE-9F3K2N8QZR1A" (see
-      --   `hashing::generate_instrument_id` in the Rust crate).
+      --   `hashing::generate_instrument_id` in the Rust crate). Also
+      --   supplies Base.V4.Instrument's `id` field, wrapped as `Id`.
     cryptoSignalHex : Text
       -- ^ Ed25519 public key (hex) derived from `instrumentId` (see
       --   `crypto_signal::derive_crypto_signal`). Disclosed here for
@@ -82,9 +122,19 @@ template BillOfExchangeInstrument
     tenor : Tenor
     dateOfIssue : Date
     placeOfIssue : Text
+    lastEventTimestamp : Time
+      -- ^ Base.V4.Instrument's `validAsOf`. Set to the instrument's
+      --   creation time at execution; there's no lifecycle-event path
+      --   that would bump this yet (see design note above the module).
+    observers : PartiesMap
+      -- ^ Base.V4.Instrument/Disclosure observers, keyed by context.
+      --   Distinct from the always-visible `drawer`/`drawee`/`payee`
+      --   template observers above -- this is for any *additional*
+      --   parties (e.g. an auditor, a regulator) disclosed via the
+      --   Disclosure interface rather than baked into the template itself.
   where
     signatory issuer
-    observer drawer, drawee, payee
+    observer drawer, drawee, payee, Disclosure.flattenObservers observers
 
     ensure
       amountMinorUnits > 0
@@ -95,11 +145,33 @@ template BillOfExchangeInstrument
     key (issuer, instrumentId) : (Party, Text)
     maintainer key._1
 
+    interface instance BaseInstrument.I for BillOfExchangeInstrument where
+      view = BaseInstrument.View with
+        issuer
+        depository = issuer
+        id = Id instrumentId
+        version = "1"
+        holdingStandard = BaseHolding
+        description = "Bill of Exchange " <> instrumentId
+        validAsOf = lastEventTimestamp
+      getKey = BaseInstrument.instrumentKey this
+
+    interface instance Disclosure.I for BillOfExchangeInstrument where
+      view = Disclosure.View with disclosureControllers = singleton issuer; observers
+      setObservers = setObserversImpl this . Some . BaseInstrument.disclosureUpdateReference $
+        BaseInstrument.instrumentKey this
+      addObservers = addObserversImpl this $ Some . BaseInstrument.disclosureUpdateReference $
+        BaseInstrument.instrumentKey this
+      removeObservers = removeObserversImpl this . Some . BaseInstrument.disclosureUpdateReference $
+        BaseInstrument.instrumentKey this
+
     -- | Lets any of the three named parties confirm the on-ledger
     -- `contentHash` matches a value they recomputed themselves off-ledger
     -- (e.g. from their own copy of the executed `BillOfExchange`).
     -- Recomputation itself stays off-ledger, in the Rust crate -- this
-    -- choice only compares, it does not recompute.
+    -- choice only compares, it does not recompute. BoE-specific, so it
+    -- lives on the template directly rather than as part of either
+    -- interface implementation above.
     nonconsuming choice VerifyDisclosure : Bool
       with
         expectedContentHash : Text

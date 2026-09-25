@@ -5,6 +5,16 @@ failing and what's actually needed to get this repo running on its own Render
 service. Read this fully before touching CI/Docker/Render config again — it
 will save you from re-doing the same discovery.
 
+**Product-owner instruction (2026-09-25): V2 (all Bill of Exchange / ERC-3643
+/ Canton-Daml material — everything under "VERSION 2" below) is explicitly
+on hold. Do not start or continue V2 work in a new session unless someone
+asks for it by name.** Focus on V1 — the live Hyperswitch payment
+orchestrator — until told otherwise. A session earlier the same day (2026-09-25)
+did pick up a V2 task (wiring `BillOfExchangeInstrument` to Daml Finance's
+`Base.V4.Instrument`, logged under "VERSION 2" below) before this instruction
+was given; that work is committed locally but is not something to build on
+next — it's parked with everything else under VERSION 2 until V2 resumes.
+
 ---
 
 ## Product Vision — full picture (read this first)
@@ -378,9 +388,21 @@ in this sandbox — re-establish per new session if needed):
    - `ROUTER__SECRETS__ADMIN_API_KEY`
    - `ROUTER__SECRETS__JWT_SECRET`
    - `ROUTER__SECRETS__MASTER_ENC_KEY`
-   - `ROUTER__SERVER__PORT` — reconcile against Render's injected `$PORT`
-     (Render web services must listen on the port Render assigns; the app's
-     own default is `8080` — needs explicit handling, not yet resolved).
+   - `ROUTER__SERVER__PORT` — **resolved, no action needed (2026-09-25):**
+     this was flagged as unhandled, but Render's own support forum
+     (community.render.com, staff reply) confirms Docker/image-backed Web
+     Services don't require the container to read a Render-injected `$PORT`
+     at all — Render does its own port *detection* against whatever port
+     the container is actually listening on, and `PORT` is only needed to
+     skip/speed up that detection or to force a specific port when
+     detection picks the wrong one among several. Since the image `EXPOSE`s
+     `8080` (`Dockerfile` line 122) and `docker_compose.toml`'s baked
+     `server.port = 8080` is the only port the app binds, Render's detector
+     has exactly one candidate to find — consistent with both
+     `b-pay-backend-new` and `control-center-new` already reporting healthy
+     `/health` checks with no `PORT`-reconciliation code ever added. Nothing
+     to change here; leave `ROUTER__SERVER__PORT` unset and let the baked
+     `8080` default stand.
    These override the baked-in `docker_compose.toml` defaults from Priority
    1 fix #2; everything else in that file (locker mock, CORS, scheduler,
    connector filters, etc.) is usable as-is for a first working deploy.
@@ -556,6 +578,27 @@ fix).
 
 ---
 
+## Session update (2026-09-25): V2 put on hold; PORT-reconciliation open item resolved
+
+- **Product owner direction: V2 is on hold.** See the banner at the top of
+  this file and at the "VERSION 2" section header — new sessions should
+  work from V1 tasks (this file, above the VERSION 2 banner) unless V2 is
+  explicitly requested by name. Earlier the same day, before this
+  direction was given, a session picked up a V2 task anyway (wiring
+  `BillOfExchangeInstrument` to Daml Finance's `Base.V4.Instrument` —
+  logged under "VERSION 2" below); it's committed locally but parked, not
+  a thread to continue from.
+- **Closed the `ROUTER__SERVER__PORT`/Render-`$PORT` open item** from
+  "What's actually needed before creating the new Render service," point 4
+  above — see that bullet for the finding (Render does its own port
+  detection for Docker/image-backed services; no code or env-var change
+  needed). This had been sitting as "not yet resolved" since the original
+  investigation even though both services have been confirmed live and
+  healthy since the 2026-09-22 update — worth closing explicitly so a
+  future session doesn't re-open it as a live risk.
+
+---
+
 ## NEW TASK — Industry landing page (Stripe-style), first pass built (2026-09-22)
 
 Requested 2026-09-22. Goal: a polished, animated marketing/landing page for
@@ -713,6 +756,15 @@ needed beyond whatever the account-creation flow already timestamps.
 ---
 
 ## VERSION 2 — Bill of Exchange tokenization, as an additive orchestrator layer
+
+**ON HOLD as of 2026-09-25 — do not pick up any task in this section unless
+explicitly asked for by name.** Everything below this banner, to the end of
+the file, is V2. The product owner's direction is to focus new sessions on
+V1 (the sections above this banner) until V2 is explicitly reopened. This
+doesn't undo the work already logged below — it's a record of what was
+built and why — it just means a session that reaches this point should stop
+reading for task-selection purposes and go find its next task above this
+line instead.
 
 Everything from here to the end of this file (four sections: the
 `boe_instrument` crate, the ERC-3643/T-REX spec, the Canton/Daml direction
@@ -1039,11 +1091,35 @@ underlying `crypto_signal`-is-Ed25519 point below still applies):**
   correct baked-in-toolchain *approach* for solving the sandbox's network
   restriction, but confirm the image actually builds somewhere with real
   network access before relying on it.
-- **Not yet wired to Daml Finance's interfaces** — `BillOfExchangeInstrument`
-  does not yet implement
-  `Daml.Finance.Interface.Instrument.Base.V4.Instrument`, which is what
-  would let it plug into Daml Finance's Holding/Account/lifecycle machinery
-  the way its own bond instruments do. See `canton/README.md` for the full
-  list of what's left.
 - No Ledger API/JSON API integration exists — `canton_bridge.rs` produces
   data only, nothing submits it to a ledger yet.
+
+### [V2] Session update (2026-09-25): wired to Daml Finance's Base.V4.Instrument, still unbuilt
+
+- `BillOfExchangeInstrument` now implements
+  `Daml.Finance.Interface.Instrument.Base.V4.Instrument` and
+  `Daml.Finance.Interface.Util.V3.Disclosure`, closing the item this file
+  previously listed as "not yet wired." Modeled directly on
+  `Daml.Finance.Instrument.Bond.V3.ZeroCoupon.Instrument` — cloned
+  `digital-asset/daml-finance` into the sandbox to read the actual
+  interface and reference-implementation source rather than guessing the
+  shape. See the design-call comments at the top of
+  `canton/daml/BillOfExchange/Instrument.daml` for the specific decisions
+  this forced (`depository = issuer`, `holdingStandard = BaseHolding`,
+  `id`/`version` mapping from `instrumentId`, why `VerifyDisclosure` stays
+  outside both interfaces) — read those before changing this template
+  again.
+- `canton/daml.yaml`'s commented-out `data-dependencies` block now has the
+  actual current package versions (read out of that same clone, one
+  `daml.yaml` per package), replacing the placeholder `1.6.1` guess from
+  the prior session.
+- **Still unbuilt, same root cause as before**: this sandbox can't reach
+  `get.daml.com`, so there's no Daml SDK to fetch the real `.dar` files the
+  `data-dependencies` need, stage them under `.lib/daml-finance/`, or run
+  `daml build` to confirm any of this actually compiles. Verifying this
+  (and the interface-implementation details flagged in the source
+  comments — particularly whether `BaseHolding`/the fixed `version = "1"`
+  hold up once someone designs BoE lifecycle events) is the next concrete
+  step, once real network access to the toolchain exists somewhere.
+- No Ledger API/JSON API integration exists yet — unchanged from before;
+  `canton_bridge.rs` still produces data only.

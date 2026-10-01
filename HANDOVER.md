@@ -439,6 +439,8 @@ in this sandbox — re-establish per new session if needed):
 
 ## CORRECTION to PRIORITY 2/3 — `disable_prepared_statement_cache` does not work on the pinned diesel (2026-09-21)
 
+> **RESOLVED 2026-10-01** by the diesel 2.3 bump — see "Session update (2026-10-01)" below. The text in this section is kept as history; its "flag has no effect" and "`bump-diesel-2.3` branch" statements are no longer true.
+
 The hybrid-pooling section above says the transaction-pooler problem "is now fixed
 at the code level" by `Connection::set_prepared_statement_cache_size(CacheSize::Disabled)`.
 **That call does not exist in the diesel this workspace is locked to.** It was added
@@ -596,6 +598,31 @@ fix).
   investigation even though both services have been confirmed live and
   healthy since the 2026-09-22 update — worth closing explicitly so a
   future session doesn't re-open it as a live risk.
+
+---
+
+## Session update (2026-10-01): diesel 2.3 bump — `disable_prepared_statement_cache` is real now
+
+Picked as the next V1 task (V2 on hold; landing page lives in another repo): the only V1 item with a named blocker.
+
+**The blocker, restated.** `juspay/deja` had merged a diesel-2.3 bump (PR #91), reverted it (PR #95: deja must not move ahead of its host), and re-raised it as `reland/diesel-2.3-bump` (the `bump-diesel-2.3` branch named above no longer exists). `deja` waited on the host, the host waited on `deja`. This change breaks the cycle by moving them together.
+
+**What changed**
+- `deja` pin `de0a42a42` -> `3a59544ae7e4064c893366f283e6e8f7c48270ab` (tip of `reland/diesel-2.3-bump`; its wrapper implements `set_prepared_statement_cache_size`). All 9 occurrences.
+- `diesel` 2.2.10 -> 2.3.0 (locks to 2.3.13), `async-bb8-diesel` 0.2.1 -> 0.3.0, `bb8` 0.8 -> 0.9 (locks to 0.9.1), in every manifest that names them. `diesel_migrations` follows to 2.3.2 via the lockfile.
+- **MSRV 1.85.0 -> 1.86.0** (every diesel 2.3.x declares 1.86.0): `Cargo.toml`, `.deepsource.toml`, the pinned `storage-impl` job in `ci.yml`. The Docker build uses `rust:trixie` and is unaffected.
+- `Cargo.lock` also gained `boe_instrument`, which the earlier V2 commit never recorded.
+- `storage_impl/src/database/store.rs`: `TestTransaction` replaced by one composed `ConnectionSetup` customizer (bb8 allows a single customizer per pool) that applies `CacheSize::Disabled` and/or the test transaction. bb8 0.9 dropped `#[async_trait]` on `CustomizeConnection`, so it is written against the new `Pin<Box<dyn Future>>` signature. The "set but NOT supported" error log is gone; no customizer is installed when neither option is on.
+- `storage_impl/tests/transaction_pooler.rs`: `#[ignore]`d regression test against a real transaction-mode pooler (run instructions in its header). Needs the `tokio` `macros` dev-dependency added to `storage_impl`.
+
+**Verification — read this before trusting it**
+- Verified in the sandbox: lockfile resolution; and a standalone crate containing `ConnectionSetup` verbatim, built on bb8 0.9.1 / async-bb8-diesel 0.3.0 / diesel 2.3.13 (compiles, no errors), run against Postgres 16 behind PgBouncer 1.22 (`pool_mode=transaction`, `max_prepared_statements=0`, pool 2, 8 clients x 60 rounds x 3 statements): direct, cache on: 480 ok / 0 failed; pooler, cache on: 131 ok / 349 failed (`prepared statement "__diesel_stmt_2" already exists`); pooler, cache off: 480 ok / 0 failed.
+- **NOT verified: the real workspace build.** The sandbox (~4 GB RAM cap) OOM-kills rustc on `diesel` with `128-column-tables`, so `cargo check -p storage_impl`, the `release` feature set (which compiles `deja`), and the in-repo test were never run. The standalone probe used plain `PgConnection`, not `deja::DejaLoadConnection` (the forwarding is a 2-line delegation in deja, read but not compiled here). Treat the PR's CI as the first real compile signal; do not push to `main` unreviewed (the Priority 3 commit broke `main` exactly this way).
+
+**Consequences for deployment**
+- `ROUTER__*_DATABASE__DISABLE_PREPARED_STATEMENT_CACHE=true` now has an effect, so the four Diesel pools can go on the 6543 transaction pooler safely; `ROUTER__REDIS__POSTGRES_URL` must stay on 5432 (LISTEN/NOTIFY).
+- Open: `get_database_url` sends `options=-c search_path=<schema>`. PgBouncer rejects it unless `ignore_startup_parameters = options`; not checked against Supabase's pooler (`public` is the default schema, so possibly harmless — test it).
+- Still open: a distinct session-mode/direct URL for migrations.
 
 ---
 

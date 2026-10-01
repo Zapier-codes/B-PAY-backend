@@ -493,24 +493,24 @@ jobs:
         run: cargo check --no-default-features --features "release,v1,postgres"
 
   storage-impl:
-    name: cargo check -p storage_impl (pinned 1.85.0)
+    name: cargo check -p storage_impl (pinned 1.86.0)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v7
 
       # Pinned to the exact version this workspace declares
-      # (package.rust-version = "1.85.0" in the root Cargo.toml) so CI
+      # (package.rust-version = "1.86.0" in the root Cargo.toml) so CI
       # enforces the same floor the workspace itself claims, independently
       # of whatever "stable 2 weeks ago" resolves to for the other jobs in
       # this file. See legacy-node/handover.md, Task 73/a: sandboxed agent
-      # sessions working on this repo cannot reach a >=1.85 toolchain, so
+      # sessions working on this repo cannot reach a >=1.86 toolchain, so
       # this job is the actual, only source of "does storage_impl compile"
       # signal for that work.
-      - name: Install Rust 1.85.0
+      - name: Install Rust 1.86.0
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: "1.85.0"
+          toolchain: "1.86.0"
           components: clippy
 
       # Without this, cargo check fails before it even reaches storage_impl:
@@ -528,7 +528,7 @@ jobs:
       - name: Install rust cache
         uses: Swatinem/rust-cache@v2.9.1
         with:
-          shared-key: storage-impl-1.85.0
+          shared-key: storage-impl-1.86.0
           save-if: ${{ env.IS_CANONICAL_RUN == 'true' }}
           cache-on-failure: true
 

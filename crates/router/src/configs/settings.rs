@@ -1222,8 +1222,8 @@ pub struct Database {
     pub min_idle_pool_size: u32,
     pub max_lifetime: u64,
     pub idle_timeout: u64,
-    /// Forwarded to `storage_impl::config::Database::disable_prepared_statement_cache`
-    /// (currently NOT honoured there: needs diesel >= 2.3.0, see that field's docs).
+    /// Forwarded to `storage_impl::config::Database::disable_prepared_statement_cache`;
+    /// see that field's docs.
     pub disable_prepared_statement_cache: bool,
 }
 

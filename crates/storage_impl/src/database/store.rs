@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{future::Future, pin::Pin, sync::Arc};
 
 use async_bb8_diesel::{AsyncConnection, ConnectionError};
 use bb8::CustomizeConnection;
@@ -213,26 +213,22 @@ pub async fn diesel_make_pg_pool(
         .max_lifetime(std::time::Duration::from_secs(database.max_lifetime))
         .idle_timeout(std::time::Duration::from_secs(database.idle_timeout));
 
-    if test_transaction {
-        pool = pool.connection_customizer(Box::new(TestTransaction));
-    }
-
-    // `Database::disable_prepared_statement_cache` needs
-    // `diesel::Connection::set_prepared_statement_cache_size` /
-    // `diesel::connection::CacheSize`, which only exist from diesel 2.3.0. This
-    // workspace is locked to diesel 2.2.10 (and `deja`'s connection wrapper is
-    // built against it), so the setting cannot be honoured yet: the code that
-    // called it did not compile (E0433/E0599/E0063 in the image build and in CI).
-    // Say so loudly instead of silently running with the cache on.
-    if database.disable_prepared_statement_cache {
-        router_env::logger::error!(
-            host = %database.host,
-            port = database.port,
-            "disable_prepared_statement_cache is set but NOT supported with the pinned diesel \
-             (2.2.10; needs >= 2.3.0). Named prepared statements stay cached, which is unsafe \
-             behind a transaction-mode pooler (Supabase port 6543): use a session-mode pooler \
-             (port 5432) or a direct connection for this database, with a small max_pool_size"
-        );
+    // bb8 accepts exactly one customizer per pool, so every per-connection
+    // setup step is composed into `ConnectionSetup`. Only install it when there
+    // is something to do, so a default pool behaves exactly as it always has.
+    let setup = ConnectionSetup {
+        test_transaction,
+        disable_prepared_statement_cache: database.disable_prepared_statement_cache,
+    };
+    if setup.is_needed() {
+        if setup.disable_prepared_statement_cache {
+            router_env::logger::info!(
+                host = %database.host,
+                port = database.port,
+                "disabling the prepared-statement cache for this pool (transaction-mode pooler)"
+            );
+        }
+        pool = pool.connection_customizer(Box::new(setup));
     }
 
     let raw_pool = pool
@@ -275,19 +271,55 @@ pub async fn diesel_make_pg_pool(
     Ok(PgPool::new(raw_pool, event_emitter))
 }
 
-#[derive(Debug)]
-struct TestTransaction;
+/// Per-connection setup, run by bb8 on every physical connection the pool
+/// opens (including the `min_idle` ones created while the pool is built).
+#[derive(Debug, Clone, Copy)]
+struct ConnectionSetup {
+    /// Wrap each connection in a transaction that is never committed (tests).
+    test_transaction: bool,
+    /// Stop diesel caching *named* prepared statements on the connection.
+    ///
+    /// Behind a transaction-mode pooler (Supabase Supavisor on port 6543,
+    /// PgBouncer in transaction mode) the backend Postgres session changes
+    /// between transactions, so a statement prepared earlier can be executed
+    /// on a backend that has never seen it and fails with
+    /// `prepared statement "..." does not exist`. With the cache disabled
+    /// diesel uses unnamed statements, which is what such poolers support.
+    disable_prepared_statement_cache: bool,
+}
 
-#[async_trait::async_trait]
-impl CustomizeConnection<RawPgConnection, ConnectionError> for TestTransaction {
-    #[allow(clippy::unwrap_used)]
-    async fn on_acquire(&self, conn: &mut RawPgConnection) -> Result<(), ConnectionError> {
-        use diesel::Connection;
+impl ConnectionSetup {
+    const fn is_needed(&self) -> bool {
+        self.test_transaction || self.disable_prepared_statement_cache
+    }
+}
 
-        conn.run(|conn| {
-            conn.begin_test_transaction().unwrap();
-            Ok(())
+impl CustomizeConnection<RawPgConnection, ConnectionError> for ConnectionSetup {
+    fn on_acquire<'a>(
+        &'a self,
+        conn: &'a mut RawPgConnection,
+    ) -> Pin<Box<dyn Future<Output = Result<(), ConnectionError>> + Send + 'a>> {
+        let Self {
+            test_transaction,
+            disable_prepared_statement_cache,
+        } = *self;
+
+        Box::pin(async move {
+            use diesel::{connection::CacheSize, Connection};
+
+            conn.run(move |conn| {
+                // Must come first: it only affects statements prepared after it,
+                // and `begin_test_transaction` issues one.
+                if disable_prepared_statement_cache {
+                    conn.set_prepared_statement_cache_size(CacheSize::Disabled);
+                }
+                if test_transaction {
+                    #[allow(clippy::unwrap_used)]
+                    conn.begin_test_transaction().unwrap();
+                }
+                Ok(())
+            })
+            .await
         })
-        .await
     }
 }

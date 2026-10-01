@@ -21,13 +21,6 @@ pub struct Database {
     pub max_lifetime: u64,
     #[serde(default = "default_idle_timeout")]
     pub idle_timeout: u64,
-    /// **Currently accepted but NOT honoured**: it needs diesel >= 2.3.0
-    /// (`Connection::set_prepared_statement_cache_size`), and the workspace is
-    /// locked to diesel 2.2.10. Setting it makes the pool builder log an error
-    /// (see `database::store::diesel_make_pg_pool`); behind a transaction-mode
-    /// pooler use a session-mode pooler or a direct connection instead. The
-    /// intended behaviour, once diesel is bumped, is described below.
-    ///
     /// Set when this database's `host`/`port` point at a transaction-mode
     /// pooler (e.g. Supabase Supavisor on port 6543, or PgBouncer in
     /// transaction mode). Such poolers reassign the real backend Postgres
@@ -37,8 +30,9 @@ pub struct Database {
     /// different one later, causing intermittent
     /// "prepared statement ... does not exist" errors under load - see
     /// HANDOVER.md PRIORITY 2. Setting this to true disables Diesel's
-    /// prepared-statement cache for this pool (via
-    /// `Connection::set_prepared_statement_cache_size(CacheSize::Disabled)`),
+    /// prepared-statement cache for every connection in this pool (via
+    /// `Connection::set_prepared_statement_cache_size(CacheSize::Disabled)`,
+    /// available since diesel 2.3.0),
     /// which makes Diesel fall back to Postgres's unnamed-statement,
     /// single-message extended-query protocol (prepare+execute together) -
     /// the pattern transaction-mode poolers are actually designed to

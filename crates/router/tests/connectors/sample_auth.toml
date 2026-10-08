@@ -423,12 +423,18 @@ api_key="API Key"
 
 [paymentpoint]
 api_key="API Key"
+api_secret="Secret Key"
+key1="Business ID"
 
 [xixapay]
 api_key="API Key"
+api_secret="Secret Key"
+key1="Business ID"
 
 [prestmit]
 api_key="API Key"
+api_secret="API Secret"
+key1="Account PIN"
 
 [opik]
 api_key="API Key"

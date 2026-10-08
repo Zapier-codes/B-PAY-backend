@@ -1,14 +1,16 @@
-// Task 77 scaffold -- Prestmit connector, generated from the
-// compile-verified Remita connector template. This file is a SCAFFOLD:
-// it wires the connector into the engine (id, base URL, auth header,
-// Authorize + PSync) so it compiles and registers, and leaves every flow
-// whose endpoint/signature Prestmit's discovery audit did not confirm
-// as NotImplemented / FlowNotSupported / WebhooksNotImplemented rather than
-// guessing at one.
+// Prestmit connector — gift-card SELL trade (a collection-shaped flow onto a
+// gift-card/crypto off-ramp; Prestmit has no bank/card "charge" primitive).
 //
-// Base URL: https://dev-api.prestmit.io/
-// Charge (Authorize): partners/v1/sell
-// Verify (PSync):     partners/v1/sell/{id}
+// Auth is not a plain bearer key: every request carries an `API-KEY` header
+// AND an `API-Hash` header = HMAC-SHA256(`{API_KEY}:{json_body}`, API_SECRET)
+// hex. The hash signs the exact serialized body, so this connector builds it
+// at request time from the same bytes `RequestContent::Json` sends — see
+// `build_headers`. Credentials are carried via `SignatureKey`
+// (api_key = API_KEY, api_secret = API_SECRET, key1 = account PIN).
+//
+// Base URL:  https://dev-api.prestmit.io/
+// Authorize: POST /partners/v1/giftcard-trade/sell/create
+// PSync:     GET  /partners/v1/giftcard-trade/sell/history?referenceOrID={ref}
 //
 pub mod transformers;
 
@@ -19,7 +21,7 @@ use common_utils::{
     errors::CustomResult,
     ext_traits::BytesExt,
     request::{Method, Request, RequestBuilder, RequestContent},
-    types::{AmountConvertor, FloatMajorUnit, FloatMajorUnitForConnector},
+    types::{AmountConvertor, MinorUnit, MinorUnitForConnector},
 };
 use error_stack::ResultExt;
 use hyperswitch_domain_models::{
@@ -55,27 +57,22 @@ use hyperswitch_interfaces::{
     webhooks,
 };
 use hyperswitch_masking::{ExposeInterface, Mask, Maskable};
+use ring::hmac;
 use transformers as prestmit;
 
 use crate::{constants::headers, types::ResponseRouterData, utils::convert_amount};
 
-// Prestmit's "Accept Online Payments" (Checkout Solutions) surface, per
-// Task 50/c -- see prestmit/transformers.rs's own header comment for why this
-// surface (not the classic RRR flow) is the one implemented, and for the
-// three fields/paths this connector had to flag rather than settle
-// (amount unit, the charge endpoint's prose-vs-curl path inconsistency, and
-// the PSync verify response shape). Base URL and path are taken directly
-// from Task 50/c's real worked example:
-// `https://api-demo.systemspecsng.com/services/connect-gateway/api/v1/...`.
+// Prestmit's gift-card sell surface — see prestmit/transformers.rs for the
+// confirmed request/response contract.
 #[derive(Clone)]
 pub struct Prestmit {
-    amount_converter: &'static (dyn AmountConvertor<Output = FloatMajorUnit> + Sync),
+    amount_converter: &'static (dyn AmountConvertor<Output = MinorUnit> + Sync),
 }
 
 impl Prestmit {
     pub fn new() -> &'static Self {
         &Self {
-            amount_converter: &FloatMajorUnitForConnector,
+            amount_converter: &MinorUnitForConnector,
         }
     }
 }
@@ -93,18 +90,16 @@ impl api::RefundExecute for Prestmit {}
 impl api::RefundSync for Prestmit {}
 impl api::PaymentToken for Prestmit {}
 
-// Prestmit's Checkout Solutions surface has no payout flows at all (Task 50
-// covers collection only) -- deliberately no `impl api::Payouts for Prestmit`,
-// so this crate's own `default_imp_for_payouts*!` macros keep supplying
-// Prestmit's no-op default for every payout flow, exactly as they already do
-// for Flutterwave (the other Authorize+PSync-only Task 77 connector).
+// Prestmit's gift-card sell surface has no payout flows exposed by this
+// connector -- deliberately no `impl api::Payouts for Prestmit`, so this
+// crate's own `default_imp_for_payouts*!` macros keep supplying Prestmit's
+// no-op default for every payout flow.
 
 impl ConnectorIntegration<PaymentMethodToken, PaymentMethodTokenizationData, PaymentsResponseData>
     for Prestmit
 {
-    // Not Implemented (R) — Prestmit's `payment/charge` endpoint takes the
-    // full request at Authorize time and hosts card entry itself; there is
-    // no separate tokenization step on this surface.
+    // Not Implemented (R) — Prestmit's sell-trade endpoint takes the full
+    // request at Authorize time; there is no separate tokenization step.
 }
 
 impl<Flow, Request, Response> ConnectorCommonExt<Flow, Request, Response> for Prestmit
@@ -114,15 +109,31 @@ where
     fn build_headers(
         &self,
         req: &RouterData<Flow, Request, Response>,
-        _connectors: &Connectors,
+        connectors: &Connectors,
     ) -> CustomResult<Vec<(String, Maskable<String>)>, errors::ConnectorError> {
-        let mut header = vec![(
-            headers::CONTENT_TYPE.to_string(),
-            self.get_content_type().to_string().into(),
-        )];
-        let mut api_key = self.get_auth_header(&req.connector_auth_type)?;
-        header.append(&mut api_key);
-        Ok(header)
+        let auth = prestmit::PrestmitAuthType::try_from(&req.connector_auth_type)
+            .change_context(errors::ConnectorError::FailedToObtainAuthType)?;
+        // `API-Hash` signs the exact serialized body that will be sent, so it
+        // is computed here from `get_request_body`'s own output (the same
+        // string `RequestContent::Json` serializes into the request), not
+        // from a separately re-serialized copy.
+        let request_payload = self
+            .get_request_body(req, connectors)?
+            .get_inner_value()
+            .expose();
+        let api_key = auth.api_key.expose();
+        let payload = format!("{}:{}", api_key, request_payload);
+        let key = hmac::Key::new(hmac::HMAC_SHA256, auth.api_secret.expose().as_bytes());
+        let tag = hmac::sign(&key, payload.as_bytes());
+        let api_hash = hex::encode(tag);
+        Ok(vec![
+            (
+                headers::CONTENT_TYPE.to_string(),
+                self.get_content_type().to_string().into(),
+            ),
+            ("API-KEY".to_string(), api_key.into_masked()),
+            ("API-Hash".to_string(), api_hash.into_masked()),
+        ])
     }
 }
 
@@ -131,12 +142,10 @@ impl ConnectorCommon for Prestmit {
         "prestmit"
     }
 
-    // Unconfirmed by any primary source -- see prestmit/transformers.rs's
-    // PrestmitRouterData comment. Base (whole-Naira) is chosen to match
-    // Korapay/Paystack on the same NGN rails; flagged for a live-call
-    // confirmation before production use.
+    // Prestmit's sell `amount` is an integer (gift-card face value) and the
+    // Hyperswitch request amount is passed through as-is in minor units.
     fn get_currency_unit(&self) -> api::CurrencyUnit {
-        api::CurrencyUnit::Base
+        api::CurrencyUnit::Minor
     }
 
     fn common_get_content_type(&self) -> &'static str {
@@ -147,27 +156,12 @@ impl ConnectorCommon for Prestmit {
         connectors.prestmit.base_url.as_ref()
     }
 
-    fn get_auth_header(
-        &self,
-        auth_type: &ConnectorAuthType,
-    ) -> CustomResult<Vec<(String, Maskable<String>)>, errors::ConnectorError> {
-        let auth = prestmit::PrestmitAuthType::try_from(auth_type)
-            .change_context(errors::ConnectorError::FailedToObtainAuthType)?;
-        // Prestmit sends its key in its own header (see the header
-        // comment for the additional API-Hash request signature its audit
-        // documents, which the scaffold does not yet model).
-        Ok(vec![(
-            "API-KEY".to_string(),
-            auth.secret_key.expose().into_masked(),
-        )])
-    }
-
     fn build_error_response(
         &self,
         res: Response,
         event_builder: Option<&mut ConnectorEvent>,
     ) -> CustomResult<ErrorResponse, errors::ConnectorError> {
-        let response: prestmit::PrestmitPaymentsResponse = res
+        let response: prestmit::PrestmitErrorResponse = res
             .response
             .parse_struct("PrestmitErrorResponse")
             .change_context(errors::ConnectorError::ResponseDeserializationFailed)?;
@@ -177,9 +171,12 @@ impl ConnectorCommon for Prestmit {
 
         Ok(ErrorResponse {
             status_code: res.status_code,
-            code: response.status.clone(),
-            message: response.message.clone(),
-            reason: Some(response.message),
+            code: "PRESTMIT_ERROR".to_string(),
+            message: response
+                .message
+                .clone()
+                .unwrap_or_else(|| "Prestmit request failed".to_string()),
+            reason: response.errors.map(|errors| errors.to_string()),
             attempt_status: None,
             connector_transaction_id: None,
             connector_response_reference_id: None,
@@ -191,36 +188,27 @@ impl ConnectorCommon for Prestmit {
     }
 }
 
-impl ConnectorValidation for Prestmit {
-    fn validate_psync_reference_id(
-        &self,
-        _data: &PaymentsSyncData,
-        _is_three_ds: bool,
-        _status: enums::AttemptStatus,
-        _connector_meta_data: Option<common_utils::pii::SecretSerdeValue>,
-    ) -> CustomResult<(), errors::ConnectorError> {
-        // Task 50/c confirms the verify call is made by the merchant's own
-        // `paymentIdentifier` reference, so a connector_transaction_id is
-        // not required to sync -- same posture as Korapay's own override.
-        Ok(())
-    }
-}
+// PSync filters Prestmit's sell history by the stored trade reference, so the
+// framework default (which requires a `connector_transaction_id`) is the
+// correct validation posture — no override needed.
+impl ConnectorValidation for Prestmit {}
 
 impl ConnectorIntegration<Session, PaymentsSessionData, PaymentsResponseData> for Prestmit {
-    // Prestmit has no session-token flow -- the `paymentLink` returned by
-    // Authorize is Prestmit's whole "session".
+    // Prestmit has no session-token flow; a sell trade is created directly.
 }
 
 impl ConnectorIntegration<AccessTokenAuth, AccessTokenRequestData, AccessToken> for Prestmit {}
 
-impl ConnectorIntegration<SetupMandate, SetupMandateRequestData, PaymentsResponseData> for Prestmit {
+impl ConnectorIntegration<SetupMandate, SetupMandateRequestData, PaymentsResponseData>
+    for Prestmit
+{
     fn build_request(
         &self,
         _req: &RouterData<SetupMandate, SetupMandateRequestData, PaymentsResponseData>,
         _connectors: &Connectors,
     ) -> CustomResult<Option<Request>, errors::ConnectorError> {
-        // No mandate/recurring-charge API observed anywhere in Task 50's
-        // supplied material -- not wired rather than guessed.
+        // Prestmit has no mandate/recurring-charge API -- not wired rather
+        // than guessed.
         Err(
             errors::ConnectorError::NotImplemented("Setup Mandate flow for Prestmit".to_string())
                 .into(),
@@ -241,16 +229,14 @@ impl ConnectorIntegration<Authorize, PaymentsAuthorizeData, PaymentsResponseData
         self.common_get_content_type()
     }
 
-    // Task 50/c's prose path (the same doc's own curl example shows
-    // `payment-engine/payment/charge` instead -- see prestmit/transformers.rs's
-    // own note; flagged for live confirmation).
+    // Prestmit's gift-card sell-trade creation endpoint.
     fn get_url(
         &self,
         _req: &PaymentsAuthorizeRouterData,
         connectors: &Connectors,
     ) -> CustomResult<String, errors::ConnectorError> {
         Ok(format!(
-            "{}partners/v1/sell",
+            "{}partners/v1/giftcard-trade/sell/create",
             self.base_url(connectors)
         ))
     }
@@ -267,7 +253,7 @@ impl ConnectorIntegration<Authorize, PaymentsAuthorizeData, PaymentsResponseData
         )?;
 
         let connector_router_data = prestmit::PrestmitRouterData::from((amount, req));
-        let connector_req = prestmit::PrestmitPaymentsRequest::try_from(&connector_router_data)?;
+        let connector_req = prestmit::PrestmitSellTradeRequest::try_from(&connector_router_data)?;
         Ok(RequestContent::Json(Box::new(connector_req)))
     }
 
@@ -295,7 +281,7 @@ impl ConnectorIntegration<Authorize, PaymentsAuthorizeData, PaymentsResponseData
         event_builder: Option<&mut ConnectorEvent>,
         res: Response,
     ) -> CustomResult<PaymentsAuthorizeRouterData, errors::ConnectorError> {
-        let response: prestmit::PrestmitPaymentsResponse = res
+        let response: prestmit::PrestmitSellTradeResponse = res
             .response
             .parse_struct("Prestmit PaymentsAuthorizeResponse")
             .change_context(errors::ConnectorError::ResponseDeserializationFailed)?;
@@ -331,10 +317,8 @@ impl ConnectorIntegration<PSync, PaymentsSyncData, PaymentsResponseData> for Pre
         self.common_get_content_type()
     }
 
-    // Task 50/c: `GET .../payment/merchant/verify/{{transRef}}`, same
-    // `secretKey` header, verifiable by the merchant's own
-    // `paymentIdentifier` reference -- a real advantage over JuicyWay, whose
-    // confirmed gap is having no way to verify by reference alone.
+    // Prestmit has no single-trade GET; a specific trade is fetched from the
+    // paginated sell history using Prestmit's own `referenceOrID` filter.
     fn get_url(
         &self,
         req: &PaymentsSyncRouterData,
@@ -346,7 +330,7 @@ impl ConnectorIntegration<PSync, PaymentsSyncData, PaymentsResponseData> for Pre
             .get_connector_transaction_id()
             .change_context(errors::ConnectorError::MissingConnectorTransactionID)?;
         Ok(format!(
-            "{}partners/v1/sell/{}",
+            "{}partners/v1/giftcard-trade/sell/history?referenceOrID={}",
             self.base_url(connectors),
             connector_id
         ))
@@ -373,7 +357,7 @@ impl ConnectorIntegration<PSync, PaymentsSyncData, PaymentsResponseData> for Pre
         event_builder: Option<&mut ConnectorEvent>,
         res: Response,
     ) -> CustomResult<PaymentsSyncRouterData, errors::ConnectorError> {
-        let response: prestmit::PrestmitPaymentsResponse = res
+        let response: prestmit::PrestmitSellHistoryResponse = res
             .response
             .parse_struct("Prestmit PaymentsSyncResponse")
             .change_context(errors::ConnectorError::ResponseDeserializationFailed)?;
@@ -396,10 +380,9 @@ impl ConnectorIntegration<PSync, PaymentsSyncData, PaymentsResponseData> for Pre
     }
 }
 
-// Prestmit's `payment/charge` is a hosted-checkout, single-step flow (no
-// separate authorize-then-capture endpoint on the Checkout Solutions
-// surface) -- `FlowNotSupported` rather than guessing at an endpoint, same
-// position as Korapay/Opennode elsewhere in this crate.
+// A gift-card sell trade is a single-step submission with no separate
+// authorize-then-capture endpoint -- `FlowNotSupported` rather than guessing
+// at an endpoint.
 impl ConnectorIntegration<Capture, PaymentsCaptureData, PaymentsResponseData> for Prestmit {
     fn build_request(
         &self,
@@ -430,9 +413,8 @@ impl ConnectorIntegration<Void, PaymentsCancelData, PaymentsResponseData> for Pr
     }
 }
 
-// No refund method is documented on the Checkout Solutions surface (Task 50
-// covers collection only) -- not wired rather than guessing at an
-// unconfirmed `/refunds` endpoint.
+// Prestmit exposes no refund method on the sell-trade surface -- not wired
+// rather than guessing at the request/response shape.
 impl ConnectorIntegration<Execute, RefundsData, RefundsResponseData> for Prestmit {
     fn build_request(
         &self,
@@ -454,10 +436,11 @@ impl ConnectorIntegration<RSync, RefundsData, RefundsResponseData> for Prestmit 
 }
 
 impl webhooks::IncomingWebhook for Prestmit {
-    // Prestmit's Checkout Solutions webhook signature scheme is not documented
-    // in any supplied source (Task 50 covers the request/verify API only) --
-    // left as WebhooksNotImplemented and flagged in handover.md as the next
-    // natural follow-up, rather than half-ported here.
+    // Prestmit's webhook signature scheme is confirmed: an
+    // `x-prestmit-signature` header carrying HMAC-SHA256(raw body, API_SECRET)
+    // BASE64-encoded (a real difference from the hex scheme every other
+    // provider here uses). Payload parsing into this framework's domain types
+    // is deferred as WebhooksNotImplemented, matching Korapay/DodoPayments.
     fn get_webhook_object_reference_id(
         &self,
         _request: &webhooks::IncomingWebhookRequestDetails<'_>,
@@ -488,38 +471,39 @@ impl webhooks::IncomingWebhook for Prestmit {
     }
 }
 
-static PRESTMIT_SUPPORTED_PAYMENT_METHODS: LazyLock<SupportedPaymentMethods> = LazyLock::new(|| {
-    let supported_capture_methods = vec![enums::CaptureMethod::Automatic];
+static PRESTMIT_SUPPORTED_PAYMENT_METHODS: LazyLock<SupportedPaymentMethods> =
+    LazyLock::new(|| {
+        let supported_capture_methods = vec![enums::CaptureMethod::Automatic];
 
-    let mut prestmit_supported_payment_methods = SupportedPaymentMethods::new();
+        let mut prestmit_supported_payment_methods = SupportedPaymentMethods::new();
 
-    prestmit_supported_payment_methods.add(
-        enums::PaymentMethod::Card,
-        enums::PaymentMethodType::Credit,
-        PaymentMethodDetails {
-            mandates: enums::FeatureStatus::NotSupported,
-            refunds: enums::FeatureStatus::NotSupported,
-            supported_capture_methods: supported_capture_methods.clone(),
-            specific_features: None,
-        },
-    );
-    prestmit_supported_payment_methods.add(
-        enums::PaymentMethod::BankTransfer,
-        enums::PaymentMethodType::Ach,
-        PaymentMethodDetails {
-            mandates: enums::FeatureStatus::NotSupported,
-            refunds: enums::FeatureStatus::NotSupported,
-            supported_capture_methods,
-            specific_features: None,
-        },
-    );
+        prestmit_supported_payment_methods.add(
+            enums::PaymentMethod::Card,
+            enums::PaymentMethodType::Credit,
+            PaymentMethodDetails {
+                mandates: enums::FeatureStatus::NotSupported,
+                refunds: enums::FeatureStatus::NotSupported,
+                supported_capture_methods: supported_capture_methods.clone(),
+                specific_features: None,
+            },
+        );
+        prestmit_supported_payment_methods.add(
+            enums::PaymentMethod::BankTransfer,
+            enums::PaymentMethodType::Ach,
+            PaymentMethodDetails {
+                mandates: enums::FeatureStatus::NotSupported,
+                refunds: enums::FeatureStatus::NotSupported,
+                supported_capture_methods,
+                specific_features: None,
+            },
+        );
 
-    prestmit_supported_payment_methods
-});
+        prestmit_supported_payment_methods
+    });
 
 static PRESTMIT_CONNECTOR_INFO: ConnectorInfo = ConnectorInfo {
     display_name: "Prestmit",
-    description: "Prestmit is a gift-card / crypto off-ramp trading platform; it has no charge-a-customer endpoint, so its scaffold maps onto the gift-card sell/wallet-withdrawal shape (sell + lookup).",
+    description: "Prestmit is a gift-card / crypto off-ramp trading platform; it has no charge-a-customer endpoint, so Authorize maps onto a gift-card SELL trade (POST /partners/v1/giftcard-trade/sell/create) with PSync by reference.",
     connector_type: enums::HyperswitchConnectorCategory::PaymentGateway,
     integration_status: enums::ConnectorIntegrationStatus::Beta,
 };

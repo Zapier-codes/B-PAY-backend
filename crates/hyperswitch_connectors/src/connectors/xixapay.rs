@@ -1,14 +1,14 @@
-// Task 77 scaffold -- Xixapay connector, generated from the
-// compile-verified Remita connector template. This file is a SCAFFOLD:
-// it wires the connector into the engine (id, base URL, auth header,
-// Authorize + PSync) so it compiles and registers, and leaves every flow
-// whose endpoint/signature Xixapay's discovery audit did not confirm
-// as NotImplemented / FlowNotSupported / WebhooksNotImplemented rather than
-// guessing at one.
+// Xixapay connector — virtual-account collection surface.
 //
-// Base URL: https://api.xixapay.com/
-// Charge (Authorize): api/v1/createVirtualAccount
-// Verify (PSync):     api/v1/transactions/{id}
+// Xixapay authenticates with three simultaneous credentials: an
+// `Authorization: Bearer {secret key}` header, a separate `api-key` header,
+// and a `businessId` field inside the request body (audit a-7). This
+// connector carries them via `SignatureKey` (api_secret = secret key,
+// api_key = API key, key1 = business id).
+//
+// Base URL:  https://api.xixapay.com/
+// Authorize: POST /api/v1/createVirtualAccount
+// PSync:     not implemented (no documented transaction-lookup endpoint)
 //
 pub mod transformers;
 
@@ -51,7 +51,7 @@ use hyperswitch_interfaces::{
     configs::Connectors,
     errors,
     events::connector_api_logs::ConnectorEvent,
-    types::{PaymentsAuthorizeType, PaymentsSyncType, Response},
+    types::{PaymentsAuthorizeType, Response},
     webhooks,
 };
 use hyperswitch_masking::{ExposeInterface, Mask, Maskable};
@@ -59,14 +59,8 @@ use transformers as xixapay;
 
 use crate::{constants::headers, types::ResponseRouterData, utils::convert_amount};
 
-// Xixapay's "Accept Online Payments" (Checkout Solutions) surface, per
-// Task 50/c -- see xixapay/transformers.rs's own header comment for why this
-// surface (not the classic RRR flow) is the one implemented, and for the
-// three fields/paths this connector had to flag rather than settle
-// (amount unit, the charge endpoint's prose-vs-curl path inconsistency, and
-// the PSync verify response shape). Base URL and path are taken directly
-// from Task 50/c's real worked example:
-// `https://api-demo.systemspecsng.com/services/connect-gateway/api/v1/...`.
+// Xixapay's virtual-account funding surface — see xixapay/transformers.rs for
+// the three-credential auth and the confirmed request/response contract.
 #[derive(Clone)]
 pub struct Xixapay {
     amount_converter: &'static (dyn AmountConvertor<Output = FloatMajorUnit> + Sync),
@@ -131,10 +125,8 @@ impl ConnectorCommon for Xixapay {
         "xixapay"
     }
 
-    // Unconfirmed by any primary source -- see xixapay/transformers.rs's
-    // XixapayRouterData comment. Base (whole-Naira) is chosen to match
-    // Korapay/Paystack on the same NGN rails; flagged for a live-call
-    // confirmation before production use.
+    // Xixapay amounts are whole Naira base units, NGN-only (no currency field
+    // anywhere in Virtual Account / Payout; audit a-7).
     fn get_currency_unit(&self) -> api::CurrencyUnit {
         api::CurrencyUnit::Base
     }
@@ -153,14 +145,16 @@ impl ConnectorCommon for Xixapay {
     ) -> CustomResult<Vec<(String, Maskable<String>)>, errors::ConnectorError> {
         let auth = xixapay::XixapayAuthType::try_from(auth_type)
             .change_context(errors::ConnectorError::FailedToObtainAuthType)?;
-        // Xixapay authenticates with a Bearer secret
-        // (its own audit also lists an api-key header and a body businessId
-        // where relevant -- see this connector's header comment; the scaffold
-        // wires the single header the framework's HeaderKey carries).
-        Ok(vec![(
-            "Authorization".to_string(),
-            format!("Bearer {}", auth.secret_key.expose()).into_masked(),
-        )])
+        // Xixapay requires BOTH the Bearer secret and the api-key header; the
+        // third credential (`businessId`) is added to the request body in the
+        // transformers.
+        Ok(vec![
+            (
+                "Authorization".to_string(),
+                format!("Bearer {}", auth.secret_key.expose()).into_masked(),
+            ),
+            ("api-key".to_string(), auth.api_key.expose().into_masked()),
+        ])
     }
 
     fn build_error_response(
@@ -168,7 +162,7 @@ impl ConnectorCommon for Xixapay {
         res: Response,
         event_builder: Option<&mut ConnectorEvent>,
     ) -> CustomResult<ErrorResponse, errors::ConnectorError> {
-        let response: xixapay::XixapayPaymentsResponse = res
+        let response: xixapay::XixapayErrorResponse = res
             .response
             .parse_struct("XixapayErrorResponse")
             .change_context(errors::ConnectorError::ResponseDeserializationFailed)?;
@@ -178,9 +172,15 @@ impl ConnectorCommon for Xixapay {
 
         Ok(ErrorResponse {
             status_code: res.status_code,
-            code: response.status.clone(),
-            message: response.message.clone(),
-            reason: Some(response.message),
+            code: response
+                .status
+                .clone()
+                .unwrap_or_else(|| "XIXAPAY_ERROR".to_string()),
+            message: response
+                .message
+                .clone()
+                .unwrap_or_else(|| "Xixapay request failed".to_string()),
+            reason: response.message,
             attempt_status: None,
             connector_transaction_id: None,
             connector_response_reference_id: None,
@@ -200,16 +200,15 @@ impl ConnectorValidation for Xixapay {
         _status: enums::AttemptStatus,
         _connector_meta_data: Option<common_utils::pii::SecretSerdeValue>,
     ) -> CustomResult<(), errors::ConnectorError> {
-        // Task 50/c confirms the verify call is made by the merchant's own
-        // `paymentIdentifier` reference, so a connector_transaction_id is
-        // not required to sync -- same posture as Korapay's own override.
+        // Xixapay has no documented status-lookup endpoint at all (see the
+        // PSync impl) — nothing to validate against.
         Ok(())
     }
 }
 
 impl ConnectorIntegration<Session, PaymentsSessionData, PaymentsResponseData> for Xixapay {
-    // Xixapay has no session-token flow -- the `paymentLink` returned by
-    // Authorize is Xixapay's whole "session".
+    // Xixapay has no session-token flow; the provisioned virtual account is
+    // the whole "session".
 }
 
 impl ConnectorIntegration<AccessTokenAuth, AccessTokenRequestData, AccessToken> for Xixapay {}
@@ -220,8 +219,8 @@ impl ConnectorIntegration<SetupMandate, SetupMandateRequestData, PaymentsRespons
         _req: &RouterData<SetupMandate, SetupMandateRequestData, PaymentsResponseData>,
         _connectors: &Connectors,
     ) -> CustomResult<Option<Request>, errors::ConnectorError> {
-        // No mandate/recurring-charge API observed anywhere in Task 50's
-        // supplied material -- not wired rather than guessed.
+        // Xixapay has no mandate/recurring-charge API — not wired rather than
+        // guessed.
         Err(
             errors::ConnectorError::NotImplemented("Setup Mandate flow for Xixapay".to_string())
                 .into(),
@@ -242,9 +241,8 @@ impl ConnectorIntegration<Authorize, PaymentsAuthorizeData, PaymentsResponseData
         self.common_get_content_type()
     }
 
-    // Task 50/c's prose path (the same doc's own curl example shows
-    // `payment-engine/payment/charge` instead -- see xixapay/transformers.rs's
-    // own note; flagged for live confirmation).
+    // Xixapay's only documented collection-adjacent endpoint:
+    // POST /api/v1/createVirtualAccount (audit a-7).
     fn get_url(
         &self,
         _req: &PaymentsAuthorizeRouterData,
@@ -268,7 +266,8 @@ impl ConnectorIntegration<Authorize, PaymentsAuthorizeData, PaymentsResponseData
         )?;
 
         let connector_router_data = xixapay::XixapayRouterData::from((amount, req));
-        let connector_req = xixapay::XixapayPaymentsRequest::try_from(&connector_router_data)?;
+        let connector_req =
+            xixapay::XixapayVirtualAccountRequest::try_from(&connector_router_data)?;
         Ok(RequestContent::Json(Box::new(connector_req)))
     }
 
@@ -296,7 +295,7 @@ impl ConnectorIntegration<Authorize, PaymentsAuthorizeData, PaymentsResponseData
         event_builder: Option<&mut ConnectorEvent>,
         res: Response,
     ) -> CustomResult<PaymentsAuthorizeRouterData, errors::ConnectorError> {
-        let response: xixapay::XixapayPaymentsResponse = res
+        let response: xixapay::XixapayVirtualAccountResponse = res
             .response
             .parse_struct("Xixapay PaymentsAuthorizeResponse")
             .change_context(errors::ConnectorError::ResponseDeserializationFailed)?;
@@ -319,88 +318,24 @@ impl ConnectorIntegration<Authorize, PaymentsAuthorizeData, PaymentsResponseData
     }
 }
 
+// Xixapay exposes no documented status lookup for a virtual account / funded
+// payment (its Payout/Verify pages are payout-side only), and its
+// `payment/charge` endpoint is not documented. Sync, capture, void and
+// refunds are therefore left unimplemented rather than pointed at a guessed
+// path. The collectible state is observed via webhook instead.
 impl ConnectorIntegration<PSync, PaymentsSyncData, PaymentsResponseData> for Xixapay {
-    fn get_headers(
-        &self,
-        req: &PaymentsSyncRouterData,
-        connectors: &Connectors,
-    ) -> CustomResult<Vec<(String, Maskable<String>)>, errors::ConnectorError> {
-        self.build_headers(req, connectors)
-    }
-
-    fn get_content_type(&self) -> &'static str {
-        self.common_get_content_type()
-    }
-
-    // Task 50/c: `GET .../payment/merchant/verify/{{transRef}}`, same
-    // `secretKey` header, verifiable by the merchant's own
-    // `paymentIdentifier` reference -- a real advantage over JuicyWay, whose
-    // confirmed gap is having no way to verify by reference alone.
-    fn get_url(
-        &self,
-        req: &PaymentsSyncRouterData,
-        connectors: &Connectors,
-    ) -> CustomResult<String, errors::ConnectorError> {
-        let connector_id = req
-            .request
-            .connector_transaction_id
-            .get_connector_transaction_id()
-            .change_context(errors::ConnectorError::MissingConnectorTransactionID)?;
-        Ok(format!(
-            "{}api/v1/transactions/{}",
-            self.base_url(connectors),
-            connector_id
-        ))
-    }
-
     fn build_request(
         &self,
-        req: &PaymentsSyncRouterData,
-        connectors: &Connectors,
+        _req: &PaymentsSyncRouterData,
+        _connectors: &Connectors,
     ) -> CustomResult<Option<Request>, errors::ConnectorError> {
-        Ok(Some(
-            RequestBuilder::new()
-                .method(Method::Get)
-                .url(&PaymentsSyncType::get_url(self, req, connectors)?)
-                .attach_default_headers()
-                .headers(PaymentsSyncType::get_headers(self, req, connectors)?)
-                .build(),
-        ))
-    }
-
-    fn handle_response(
-        &self,
-        data: &PaymentsSyncRouterData,
-        event_builder: Option<&mut ConnectorEvent>,
-        res: Response,
-    ) -> CustomResult<PaymentsSyncRouterData, errors::ConnectorError> {
-        let response: xixapay::XixapayPaymentsResponse = res
-            .response
-            .parse_struct("Xixapay PaymentsSyncResponse")
-            .change_context(errors::ConnectorError::ResponseDeserializationFailed)?;
-        event_builder.map(|i| i.set_response_body(&response));
-        router_env::logger::info!(connector_response=?response);
-        RouterData::try_from(ResponseRouterData {
-            response,
-            data: data.clone(),
-            http_code: res.status_code,
-        })
-        .change_context(errors::ConnectorError::ResponseHandlingFailed)
-    }
-
-    fn get_error_response(
-        &self,
-        res: Response,
-        event_builder: Option<&mut ConnectorEvent>,
-    ) -> CustomResult<ErrorResponse, errors::ConnectorError> {
-        self.build_error_response(res, event_builder)
+        Err(errors::ConnectorError::NotImplemented("Sync flow for Xixapay".to_string()).into())
     }
 }
 
-// Xixapay's `payment/charge` is a hosted-checkout, single-step flow (no
-// separate authorize-then-capture endpoint on the Checkout Solutions
-// surface) -- `FlowNotSupported` rather than guessing at an endpoint, same
-// position as Korapay/Opennode elsewhere in this crate.
+// Virtual-account funding is a single-step inbound transfer — there is no
+// separate authorize-then-capture step, and no capture endpoint is
+// documented, so `FlowNotSupported` rather than guessing one.
 impl ConnectorIntegration<Capture, PaymentsCaptureData, PaymentsResponseData> for Xixapay {
     fn build_request(
         &self,
@@ -431,9 +366,8 @@ impl ConnectorIntegration<Void, PaymentsCancelData, PaymentsResponseData> for Xi
     }
 }
 
-// No refund method is documented on the Checkout Solutions surface (Task 50
-// covers collection only) -- not wired rather than guessing at an
-// unconfirmed `/refunds` endpoint.
+// Xixapay's refunds are not documented on the virtual-account surface — not
+// wired rather than guessing at the request/response shape.
 impl ConnectorIntegration<Execute, RefundsData, RefundsResponseData> for Xixapay {
     fn build_request(
         &self,
@@ -455,10 +389,14 @@ impl ConnectorIntegration<RSync, RefundsData, RefundsResponseData> for Xixapay {
 }
 
 impl webhooks::IncomingWebhook for Xixapay {
-    // Xixapay's Checkout Solutions webhook signature scheme is not documented
-    // in any supplied source (Task 50 covers the request/verify API only) --
-    // left as WebhooksNotImplemented and flagged in handover.md as the next
-    // natural follow-up, rather than half-ported here.
+    // Xixapay's webhook signature scheme is confirmed on the Virtual/Dynamic
+    // Account page: a raw `xixapay` header carrying HMAC-SHA256(raw body,
+    // secret key), hex, with NO timestamp/nonce (no replay protection — a
+    // provider-side gap). Payload fields (notification_status,
+    // transaction_id, transaction_status, amount_paid, ...) are confirmed
+    // too. Payload parsing into this framework's domain types is left as
+    // WebhooksNotImplemented, matching Korapay/DodoPayments' own deferral,
+    // rather than half-ported here.
     fn get_webhook_object_reference_id(
         &self,
         _request: &webhooks::IncomingWebhookRequestDetails<'_>,

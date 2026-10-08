@@ -121,9 +121,7 @@ impl TryFrom<&RemitaRouterData<&PaymentsAuthorizeRouterData>> for RemitaPayments
             | PaymentMethodData::BankTransfer(_)
             | PaymentMethodData::Wallet(_) => Ok(()),
             _ => Err(error_stack::Report::from(
-                errors::ConnectorError::NotImplemented(
-                    "payment method via Remita".to_string(),
-                ),
+                errors::ConnectorError::NotImplemented("payment method via Remita".to_string()),
             )),
         }?;
 

@@ -155,7 +155,6 @@ extend-exclude = [
     "openapi/open_api_spec.yaml", # no longer updated
     "crates/router/src/utils/user/blocker_emails.txt", # this file contains various email domains
     "CHANGELOG.md", # This file contains all the commits
-    "legacy-node/handover.md", # Append-only session log; intentionally preserves historical/quoted misspellings (e.g. "sic" quotes of vendors' own field names, and "X→Y" typo-fix documentation that must spell the wrong word to describe it) rather than editing history away
     "crates/router/locales/*.yml", # locales
     "crates/router/src/core/payment_link/locale.js", # this file contains conversion of static strings in various languages
 ]

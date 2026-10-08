@@ -1,14 +1,17 @@
-// Task 77 scaffold -- telcos.opik.net connector, generated from the
-// compile-verified Remita connector template. This file is a SCAFFOLD:
-// it wires the connector into the engine (id, base URL, auth header,
-// Authorize + PSync) so it compiles and registers, and leaves every flow
-// whose endpoint/signature telcos.opik.net's discovery audit did not confirm
-// as NotImplemented / FlowNotSupported / WebhooksNotImplemented rather than
-// guessing at one.
+// telcos.opik.net (opik) connector — VTU (airtime/data) rail.
+//
+// Unlike the hosted-checkout providers in this crate, opik is a direct VTU
+// purchase API (register a business account, fund the wallet, buy
+// airtime/data for a phone number). Authorize maps onto
+// `POST /api/v1/purchase/airtime`; PSync reconciles through
+// `GET /api/v1/transactions` by reference (opik has no single-transaction
+// lookup endpoint). See opik/transformers.rs for the full contract and the
+// items this connector still flags as unconfirmed.
 //
 // Base URL: https://telco.opik.net/
-// Charge (Authorize): api/v1/purchases
-// Verify (PSync):     api/v1/transactions/{id}
+// Auth:     raw `X-API-Key` header (no `Bearer` prefix)
+// Authorize: POST api/v1/purchase/airtime
+// PSync:     GET  api/v1/transactions
 //
 pub mod transformers;
 
@@ -59,14 +62,8 @@ use transformers as opik;
 
 use crate::{constants::headers, types::ResponseRouterData, utils::convert_amount};
 
-// Opik's "Accept Online Payments" (Checkout Solutions) surface, per
-// Task 50/c -- see opik/transformers.rs's own header comment for why this
-// surface (not the classic RRR flow) is the one implemented, and for the
-// three fields/paths this connector had to flag rather than settle
-// (amount unit, the charge endpoint's prose-vs-curl path inconsistency, and
-// the PSync verify response shape). Base URL and path are taken directly
-// from Task 50/c's real worked example:
-// `https://api-demo.systemspecsng.com/services/connect-gateway/api/v1/...`.
+// opik's VTU rail — see opik/transformers.rs for the full purchase and
+// transaction contract. Collection-only; no payout flows.
 #[derive(Clone)]
 pub struct Opik {
     amount_converter: &'static (dyn AmountConvertor<Output = FloatMajorUnit> + Sync),
@@ -93,18 +90,18 @@ impl api::RefundExecute for Opik {}
 impl api::RefundSync for Opik {}
 impl api::PaymentToken for Opik {}
 
-// Opik's Checkout Solutions surface has no payout flows at all (Task 50
-// covers collection only) -- deliberately no `impl api::Payouts for Opik`,
-// so this crate's own `default_imp_for_payouts*!` macros keep supplying
-// Opik's no-op default for every payout flow, exactly as they already do
-// for Flutterwave (the other Authorize+PSync-only Task 77 connector).
+// opik's VTU rail has no payout/bank-transfer surface in its audited
+// contract (docs/guides/ covers plans, wallet, purchases, transactions and
+// webhooks only) — deliberately no `impl api::Payouts for Opik`, so this
+// crate's own `default_imp_for_payouts*!` macros keep supplying Opik's
+// no-op default for every payout flow, exactly as they already do for
+// Flutterwave (the other Authorize+PSync-only Task 77 connector).
 
 impl ConnectorIntegration<PaymentMethodToken, PaymentMethodTokenizationData, PaymentsResponseData>
     for Opik
 {
-    // Not Implemented (R) — Opik's `payment/charge` endpoint takes the
-    // full request at Authorize time and hosts card entry itself; there is
-    // no separate tokenization step on this surface.
+    // Not Implemented (R) — opik has no tokenization step; the purchase
+    // endpoint takes the network + phone number + amount directly.
 }
 
 impl<Flow, Request, Response> ConnectorCommonExt<Flow, Request, Response> for Opik
@@ -131,10 +128,9 @@ impl ConnectorCommon for Opik {
         "opik"
     }
 
-    // Unconfirmed by any primary source -- see opik/transformers.rs's
-    // OpikRouterData comment. Base (whole-Naira) is chosen to match
-    // Korapay/Paystack on the same NGN rails; flagged for a live-call
-    // confirmation before production use.
+    // opik's own transaction example (`amount: 100` for NGN 100,
+    // docs/guides/06) uses whole Naira, not kobo — Base unit, matching
+    // Korapay/Paystack on the same rails.
     fn get_currency_unit(&self) -> api::CurrencyUnit {
         api::CurrencyUnit::Base
     }
@@ -153,13 +149,13 @@ impl ConnectorCommon for Opik {
     ) -> CustomResult<Vec<(String, Maskable<String>)>, errors::ConnectorError> {
         let auth = opik::OpikAuthType::try_from(auth_type)
             .change_context(errors::ConnectorError::FailedToObtainAuthType)?;
-        // telcos.opik.net authenticates with a Bearer secret
-        // (its own audit also lists an api-key header and a body businessId
-        // where relevant -- see this connector's header comment; the scaffold
-        // wires the single header the framework's HeaderKey carries).
+        // Confirmed 2026-09-09 directly against the live Swagger UI's
+        // "Available authorizations" modal: raw `X-API-Key`, no `Bearer`
+        // prefix (docs/guides/02-authentication.md,
+        // docs/openapi/components/schemas.yaml#/securitySchemes/apiKeyAuth).
         Ok(vec![(
-            "Authorization".to_string(),
-            format!("Bearer {}", auth.secret_key.expose()).into_masked(),
+            "X-API-Key".to_string(),
+            auth.api_key.expose().into_masked(),
         )])
     }
 
@@ -168,7 +164,11 @@ impl ConnectorCommon for Opik {
         res: Response,
         event_builder: Option<&mut ConnectorEvent>,
     ) -> CustomResult<ErrorResponse, errors::ConnectorError> {
-        let response: opik::OpikPaymentsResponse = res
+        // opik's real error envelope was not captured from the live server
+        // (docs/guides/09, item #2) — the shared `{ success, message }`
+        // shape is what its audit documents as the placeholder, so it is
+        // parsed tolerantly here rather than as a hard-required struct.
+        let response: opik::OpikErrorResponse = res
             .response
             .parse_struct("OpikErrorResponse")
             .change_context(errors::ConnectorError::ResponseDeserializationFailed)?;
@@ -178,9 +178,12 @@ impl ConnectorCommon for Opik {
 
         Ok(ErrorResponse {
             status_code: res.status_code,
-            code: response.status.clone(),
-            message: response.message.clone(),
-            reason: Some(response.message),
+            code: "OPIK_ERROR".to_string(),
+            message: response
+                .message
+                .clone()
+                .unwrap_or_else(|| "opik request failed".to_string()),
+            reason: response.message.clone(),
             attempt_status: None,
             connector_transaction_id: None,
             connector_response_reference_id: None,
@@ -200,16 +203,14 @@ impl ConnectorValidation for Opik {
         _status: enums::AttemptStatus,
         _connector_meta_data: Option<common_utils::pii::SecretSerdeValue>,
     ) -> CustomResult<(), errors::ConnectorError> {
-        // Task 50/c confirms the verify call is made by the merchant's own
-        // `paymentIdentifier` reference, so a connector_transaction_id is
-        // not required to sync -- same posture as Korapay's own override.
+        // Sync is keyed off the stored connector transaction id (opik's
+        // `reference`), so nothing extra to validate.
         Ok(())
     }
 }
 
 impl ConnectorIntegration<Session, PaymentsSessionData, PaymentsResponseData> for Opik {
-    // Opik has no session-token flow -- the `paymentLink` returned by
-    // Authorize is Opik's whole "session".
+    // opik has no session-token flow; the airtime purchase is a direct call.
 }
 
 impl ConnectorIntegration<AccessTokenAuth, AccessTokenRequestData, AccessToken> for Opik {}
@@ -220,8 +221,8 @@ impl ConnectorIntegration<SetupMandate, SetupMandateRequestData, PaymentsRespons
         _req: &RouterData<SetupMandate, SetupMandateRequestData, PaymentsResponseData>,
         _connectors: &Connectors,
     ) -> CustomResult<Option<Request>, errors::ConnectorError> {
-        // No mandate/recurring-charge API observed anywhere in Task 50's
-        // supplied material -- not wired rather than guessed.
+        // opik has no mandate/recurring-charge API — not wired rather than
+        // guessed.
         Err(
             errors::ConnectorError::NotImplemented("Setup Mandate flow for Opik".to_string())
                 .into(),
@@ -242,16 +243,17 @@ impl ConnectorIntegration<Authorize, PaymentsAuthorizeData, PaymentsResponseData
         self.common_get_content_type()
     }
 
-    // Task 50/c's prose path (the same doc's own curl example shows
-    // `payment-engine/payment/charge` instead -- see opik/transformers.rs's
-    // own note; flagged for live confirmation).
+    // opik's airtime purchase endpoint (docs/guides/05-purchasing-data-
+    // airtime.md). Chosen over `/purchase/data` because data bundles need a
+    // pre-provisioned `planId`, which the generic payment request cannot
+    // carry — see opik/transformers.rs's own note.
     fn get_url(
         &self,
         _req: &PaymentsAuthorizeRouterData,
         connectors: &Connectors,
     ) -> CustomResult<String, errors::ConnectorError> {
         Ok(format!(
-            "{}api/v1/purchases",
+            "{}api/v1/purchase/airtime",
             self.base_url(connectors)
         ))
     }
@@ -268,7 +270,7 @@ impl ConnectorIntegration<Authorize, PaymentsAuthorizeData, PaymentsResponseData
         )?;
 
         let connector_router_data = opik::OpikRouterData::from((amount, req));
-        let connector_req = opik::OpikPaymentsRequest::try_from(&connector_router_data)?;
+        let connector_req = opik::OpikAirtimePurchaseRequest::try_from(&connector_router_data)?;
         Ok(RequestContent::Json(Box::new(connector_req)))
     }
 
@@ -296,7 +298,7 @@ impl ConnectorIntegration<Authorize, PaymentsAuthorizeData, PaymentsResponseData
         event_builder: Option<&mut ConnectorEvent>,
         res: Response,
     ) -> CustomResult<PaymentsAuthorizeRouterData, errors::ConnectorError> {
-        let response: opik::OpikPaymentsResponse = res
+        let response: opik::OpikPurchaseResponse = res
             .response
             .parse_struct("Opik PaymentsAuthorizeResponse")
             .change_context(errors::ConnectorError::ResponseDeserializationFailed)?;
@@ -332,25 +334,16 @@ impl ConnectorIntegration<PSync, PaymentsSyncData, PaymentsResponseData> for Opi
         self.common_get_content_type()
     }
 
-    // Task 50/c: `GET .../payment/merchant/verify/{{transRef}}`, same
-    // `secretKey` header, verifiable by the merchant's own
-    // `paymentIdentifier` reference -- a real advantage over JuicyWay, whose
-    // confirmed gap is having no way to verify by reference alone.
+    // opik has no single-transaction lookup; `GET /api/v1/transactions`
+    // returns the business's history and the connector reconciles by
+    // reference (docs/guides/06-transactions.md). `req` is unused because
+    // the reference is matched client-side in the response mapping.
     fn get_url(
         &self,
-        req: &PaymentsSyncRouterData,
+        _req: &PaymentsSyncRouterData,
         connectors: &Connectors,
     ) -> CustomResult<String, errors::ConnectorError> {
-        let connector_id = req
-            .request
-            .connector_transaction_id
-            .get_connector_transaction_id()
-            .change_context(errors::ConnectorError::MissingConnectorTransactionID)?;
-        Ok(format!(
-            "{}api/v1/transactions/{}",
-            self.base_url(connectors),
-            connector_id
-        ))
+        Ok(format!("{}api/v1/transactions", self.base_url(connectors)))
     }
 
     fn build_request(
@@ -374,7 +367,7 @@ impl ConnectorIntegration<PSync, PaymentsSyncData, PaymentsResponseData> for Opi
         event_builder: Option<&mut ConnectorEvent>,
         res: Response,
     ) -> CustomResult<PaymentsSyncRouterData, errors::ConnectorError> {
-        let response: opik::OpikPaymentsResponse = res
+        let response: opik::OpikTransactionsResponse = res
             .response
             .parse_struct("Opik PaymentsSyncResponse")
             .change_context(errors::ConnectorError::ResponseDeserializationFailed)?;
@@ -397,10 +390,9 @@ impl ConnectorIntegration<PSync, PaymentsSyncData, PaymentsResponseData> for Opi
     }
 }
 
-// Opik's `payment/charge` is a hosted-checkout, single-step flow (no
-// separate authorize-then-capture endpoint on the Checkout Solutions
-// surface) -- `FlowNotSupported` rather than guessing at an endpoint, same
-// position as Korapay/Opennode elsewhere in this crate.
+// opik's airtime purchase is a single-step direct debit — there is no
+// separate authorize-then-capture step and no capture endpoint, so
+// `FlowNotSupported` rather than guessing one.
 impl ConnectorIntegration<Capture, PaymentsCaptureData, PaymentsResponseData> for Opik {
     fn build_request(
         &self,
@@ -431,9 +423,8 @@ impl ConnectorIntegration<Void, PaymentsCancelData, PaymentsResponseData> for Op
     }
 }
 
-// No refund method is documented on the Checkout Solutions surface (Task 50
-// covers collection only) -- not wired rather than guessing at an
-// unconfirmed `/refunds` endpoint.
+// No refund method is documented on opik's VTU surface — not wired rather
+// than guessing at the request/response shape.
 impl ConnectorIntegration<Execute, RefundsData, RefundsResponseData> for Opik {
     fn build_request(
         &self,
@@ -455,10 +446,10 @@ impl ConnectorIntegration<RSync, RefundsData, RefundsResponseData> for Opik {
 }
 
 impl webhooks::IncomingWebhook for Opik {
-    // Opik's Checkout Solutions webhook signature scheme is not documented
-    // in any supplied source (Task 50 covers the request/verify API only) --
-    // left as WebhooksNotImplemented and flagged in handover.md as the next
-    // natural follow-up, rather than half-ported here.
+    // opik's webhook signing scheme was not captured in this repo's own
+    // audit (legacy-node/docs/guides/09-conventions-and-open-items.md,
+    // item #1) — left as WebhooksNotImplemented rather than half-ported,
+    // matching Korapay/DodoPayments' own deferral.
     fn get_webhook_object_reference_id(
         &self,
         _request: &webhooks::IncomingWebhookRequestDetails<'_>,
@@ -520,7 +511,7 @@ static OPIK_SUPPORTED_PAYMENT_METHODS: LazyLock<SupportedPaymentMethods> = LazyL
 
 static OPIK_CONNECTOR_INFO: ConnectorInfo = ConnectorInfo {
     display_name: "telcos.opik.net",
-    description: "telcos.opik.net is an operator-owned VTU (airtime/data) rail; its request/response contract is not yet confirmed, so only a scaffold is wired.",
+    description: "telcos.opik.net is an operator-owned VTU (airtime/data) rail; purchase is via POST /api/v1/purchase/airtime and PSync reconciles through GET /api/v1/transactions.",
     connector_type: enums::HyperswitchConnectorCategory::PaymentGateway,
     integration_status: enums::ConnectorIntegrationStatus::Beta,
 };

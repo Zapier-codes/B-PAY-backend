@@ -1,14 +1,14 @@
-// Task 77 scaffold -- DodoPayments connector, generated from the
-// compile-verified Remita connector template. This file is a SCAFFOLD:
-// it wires the connector into the engine (id, base URL, auth header,
-// Authorize + PSync) so it compiles and registers, and leaves every flow
-// whose endpoint/signature DodoPayments's discovery audit did not confirm
-// as NotImplemented / FlowNotSupported / WebhooksNotImplemented rather than
-// guessing at one.
+// DodoPayments connector — Checkout Sessions collection surface.
+//
+// DodoPayments is a Merchant-of-Record platform. Its recommended collection
+// surface is Checkout Sessions (`POST /checkouts`), which is what this
+// connector implements; the legacy `POST /payments` is deprecated. See
+// dodopayments/transformers.rs for the full request/response contract.
 //
 // Base URL: https://test.dodopayments.com/
-// Charge (Authorize): checkout-sessions
-// Verify (PSync):     payments/{id}
+// Auth:     Authorization: Bearer {API_KEY}
+// Authorize: POST /checkouts
+// PSync:     GET  /checkouts/{id}
 //
 pub mod transformers;
 
@@ -19,7 +19,7 @@ use common_utils::{
     errors::CustomResult,
     ext_traits::BytesExt,
     request::{Method, Request, RequestBuilder, RequestContent},
-    types::{AmountConvertor, FloatMajorUnit, FloatMajorUnitForConnector},
+    types::{AmountConvertor, MinorUnit, MinorUnitForConnector},
 };
 use error_stack::ResultExt;
 use hyperswitch_domain_models::{
@@ -59,23 +59,18 @@ use transformers as dodopayments;
 
 use crate::{constants::headers, types::ResponseRouterData, utils::convert_amount};
 
-// Dodopayments's "Accept Online Payments" (Checkout Solutions) surface, per
-// Task 50/c -- see dodopayments/transformers.rs's own header comment for why this
-// surface (not the classic RRR flow) is the one implemented, and for the
-// three fields/paths this connector had to flag rather than settle
-// (amount unit, the charge endpoint's prose-vs-curl path inconsistency, and
-// the PSync verify response shape). Base URL and path are taken directly
-// from Task 50/c's real worked example:
-// `https://api-demo.systemspecsng.com/services/connect-gateway/api/v1/...`.
+// DodoPayments's Checkout Sessions surface — see dodopayments/transformers.rs
+// for the contract sourced from docs.dodopayments.com. Collection-only; no
+// payout flows.
 #[derive(Clone)]
 pub struct Dodopayments {
-    amount_converter: &'static (dyn AmountConvertor<Output = FloatMajorUnit> + Sync),
+    amount_converter: &'static (dyn AmountConvertor<Output = MinorUnit> + Sync),
 }
 
 impl Dodopayments {
     pub fn new() -> &'static Self {
         &Self {
-            amount_converter: &FloatMajorUnitForConnector,
+            amount_converter: &MinorUnitForConnector,
         }
     }
 }
@@ -93,18 +88,16 @@ impl api::RefundExecute for Dodopayments {}
 impl api::RefundSync for Dodopayments {}
 impl api::PaymentToken for Dodopayments {}
 
-// Dodopayments's Checkout Solutions surface has no payout flows at all (Task 50
-// covers collection only) -- deliberately no `impl api::Payouts for Dodopayments`,
-// so this crate's own `default_imp_for_payouts*!` macros keep supplying
-// Dodopayments's no-op default for every payout flow, exactly as they already do
-// for Flutterwave (the other Authorize+PSync-only Task 77 connector).
+// DodoPayments's Checkout Sessions surface has no payout flows (collection
+// only) — deliberately no `impl api::Payouts for Dodopayments`, so this
+// crate's own `default_imp_for_payouts*!` macros keep supplying
+// Dodopayments's no-op default for every payout flow.
 
 impl ConnectorIntegration<PaymentMethodToken, PaymentMethodTokenizationData, PaymentsResponseData>
     for Dodopayments
 {
-    // Not Implemented (R) — Dodopayments's `payment/charge` endpoint takes the
-    // full request at Authorize time and hosts card entry itself; there is
-    // no separate tokenization step on this surface.
+    // Not Implemented (R) — Dodo hosts card entry itself at the returned
+    // `checkout_url`; there is no separate tokenization step.
 }
 
 impl<Flow, Request, Response> ConnectorCommonExt<Flow, Request, Response> for Dodopayments
@@ -131,12 +124,11 @@ impl ConnectorCommon for Dodopayments {
         "dodopayments"
     }
 
-    // Unconfirmed by any primary source -- see dodopayments/transformers.rs's
-    // DodopaymentsRouterData comment. Base (whole-Naira) is chosen to match
-    // Korapay/Paystack on the same NGN rails; flagged for a live-call
-    // confirmation before production use.
+    // Dodo's own `product_price` must be in "the lowest denomination of the
+    // currency (e.g. cents for USD)" (docs.dodopayments.com preview docs) —
+    // minor units, matching Hyperswitch's canonical amount.
     fn get_currency_unit(&self) -> api::CurrencyUnit {
-        api::CurrencyUnit::Base
+        api::CurrencyUnit::Minor
     }
 
     fn common_get_content_type(&self) -> &'static str {
@@ -153,13 +145,10 @@ impl ConnectorCommon for Dodopayments {
     ) -> CustomResult<Vec<(String, Maskable<String>)>, errors::ConnectorError> {
         let auth = dodopayments::DodopaymentsAuthType::try_from(auth_type)
             .change_context(errors::ConnectorError::FailedToObtainAuthType)?;
-        // DodoPayments authenticates with a Bearer secret
-        // (its own audit also lists an api-key header and a body businessId
-        // where relevant -- see this connector's header comment; the scaffold
-        // wires the single header the framework's HeaderKey carries).
+        // DodoPayments: `Authorization: Bearer {API_KEY}` on every request.
         Ok(vec![(
             "Authorization".to_string(),
-            format!("Bearer {}", auth.secret_key.expose()).into_masked(),
+            format!("Bearer {}", auth.api_key.expose()).into_masked(),
         )])
     }
 
@@ -168,7 +157,10 @@ impl ConnectorCommon for Dodopayments {
         res: Response,
         event_builder: Option<&mut ConnectorEvent>,
     ) -> CustomResult<ErrorResponse, errors::ConnectorError> {
-        let response: dodopayments::DodopaymentsPaymentsResponse = res
+        // Dodo's real error envelope is flat `{ code, message }` with a
+        // stable machine-readable `code` (docs.dodopayments.com/api-reference/
+        // introduction).
+        let response: dodopayments::DodopaymentsErrorResponse = res
             .response
             .parse_struct("DodopaymentsErrorResponse")
             .change_context(errors::ConnectorError::ResponseDeserializationFailed)?;
@@ -178,9 +170,15 @@ impl ConnectorCommon for Dodopayments {
 
         Ok(ErrorResponse {
             status_code: res.status_code,
-            code: response.status.clone(),
-            message: response.message.clone(),
-            reason: Some(response.message),
+            code: response
+                .code
+                .clone()
+                .unwrap_or_else(|| "DODOPAYMENTS_ERROR".to_string()),
+            message: response
+                .message
+                .clone()
+                .unwrap_or_else(|| "DodoPayments request failed".to_string()),
+            reason: response.message,
             attempt_status: None,
             connector_transaction_id: None,
             connector_response_reference_id: None,
@@ -200,32 +198,35 @@ impl ConnectorValidation for Dodopayments {
         _status: enums::AttemptStatus,
         _connector_meta_data: Option<common_utils::pii::SecretSerdeValue>,
     ) -> CustomResult<(), errors::ConnectorError> {
-        // Task 50/c confirms the verify call is made by the merchant's own
-        // `paymentIdentifier` reference, so a connector_transaction_id is
-        // not required to sync -- same posture as Korapay's own override.
+        // PSync reads the checkout session by its `session_id`, which
+        // Authorize stores as part of the transaction id — so no separate
+        // reference is required to sync.
         Ok(())
     }
 }
 
 impl ConnectorIntegration<Session, PaymentsSessionData, PaymentsResponseData> for Dodopayments {
-    // Dodopayments has no session-token flow -- the `paymentLink` returned by
-    // Authorize is Dodopayments's whole "session".
+    // Dodo has no session-token flow; the `checkout_url` returned by
+    // Authorize is the whole hosted session.
 }
 
 impl ConnectorIntegration<AccessTokenAuth, AccessTokenRequestData, AccessToken> for Dodopayments {}
 
-impl ConnectorIntegration<SetupMandate, SetupMandateRequestData, PaymentsResponseData> for Dodopayments {
+impl ConnectorIntegration<SetupMandate, SetupMandateRequestData, PaymentsResponseData>
+    for Dodopayments
+{
     fn build_request(
         &self,
         _req: &RouterData<SetupMandate, SetupMandateRequestData, PaymentsResponseData>,
         _connectors: &Connectors,
     ) -> CustomResult<Option<Request>, errors::ConnectorError> {
-        // No mandate/recurring-charge API observed anywhere in Task 50's
-        // supplied material -- not wired rather than guessed.
-        Err(
-            errors::ConnectorError::NotImplemented("Setup Mandate flow for Dodopayments".to_string())
-                .into(),
+        // Dodo's Subscriptions surface (subscription_data on a checkout
+        // session) exists, but mandate/setup-mandate as Hyperswitch models it
+        // is not a documented single call — not wired rather than guessed.
+        Err(errors::ConnectorError::NotImplemented(
+            "Setup Mandate flow for Dodopayments".to_string(),
         )
+        .into())
     }
 }
 
@@ -242,18 +243,14 @@ impl ConnectorIntegration<Authorize, PaymentsAuthorizeData, PaymentsResponseData
         self.common_get_content_type()
     }
 
-    // Task 50/c's prose path (the same doc's own curl example shows
-    // `payment-engine/payment/charge` instead -- see dodopayments/transformers.rs's
-    // own note; flagged for live confirmation).
+    // Dodo's recommended collection endpoint: POST /checkouts
+    // (docs.dodopayments.com/api-reference/checkout-sessions/create).
     fn get_url(
         &self,
         _req: &PaymentsAuthorizeRouterData,
         connectors: &Connectors,
     ) -> CustomResult<String, errors::ConnectorError> {
-        Ok(format!(
-            "{}checkout-sessions",
-            self.base_url(connectors)
-        ))
+        Ok(format!("{}checkouts", self.base_url(connectors)))
     }
 
     fn get_request_body(
@@ -268,7 +265,8 @@ impl ConnectorIntegration<Authorize, PaymentsAuthorizeData, PaymentsResponseData
         )?;
 
         let connector_router_data = dodopayments::DodopaymentsRouterData::from((amount, req));
-        let connector_req = dodopayments::DodopaymentsPaymentsRequest::try_from(&connector_router_data)?;
+        let connector_req =
+            dodopayments::DodopaymentsPaymentsRequest::try_from(&connector_router_data)?;
         Ok(RequestContent::Json(Box::new(connector_req)))
     }
 
@@ -296,7 +294,7 @@ impl ConnectorIntegration<Authorize, PaymentsAuthorizeData, PaymentsResponseData
         event_builder: Option<&mut ConnectorEvent>,
         res: Response,
     ) -> CustomResult<PaymentsAuthorizeRouterData, errors::ConnectorError> {
-        let response: dodopayments::DodopaymentsPaymentsResponse = res
+        let response: dodopayments::DodopaymentsCheckoutSessionResponse = res
             .response
             .parse_struct("Dodopayments PaymentsAuthorizeResponse")
             .change_context(errors::ConnectorError::ResponseDeserializationFailed)?;
@@ -332,10 +330,9 @@ impl ConnectorIntegration<PSync, PaymentsSyncData, PaymentsResponseData> for Dod
         self.common_get_content_type()
     }
 
-    // Task 50/c: `GET .../payment/merchant/verify/{{transRef}}`, same
-    // `secretKey` header, verifiable by the merchant's own
-    // `paymentIdentifier` reference -- a real advantage over JuicyWay, whose
-    // confirmed gap is having no way to verify by reference alone.
+    // Dodo's session-status lookup: GET /checkouts/{id}. Sync always calls
+    // it by the stored connector transaction id (the checkout `session_id`),
+    // and the session's `payment_status` gives the real attempt status.
     fn get_url(
         &self,
         req: &PaymentsSyncRouterData,
@@ -347,7 +344,7 @@ impl ConnectorIntegration<PSync, PaymentsSyncData, PaymentsResponseData> for Dod
             .get_connector_transaction_id()
             .change_context(errors::ConnectorError::MissingConnectorTransactionID)?;
         Ok(format!(
-            "{}payments/{}",
+            "{}checkouts/{}",
             self.base_url(connectors),
             connector_id
         ))
@@ -374,7 +371,7 @@ impl ConnectorIntegration<PSync, PaymentsSyncData, PaymentsResponseData> for Dod
         event_builder: Option<&mut ConnectorEvent>,
         res: Response,
     ) -> CustomResult<PaymentsSyncRouterData, errors::ConnectorError> {
-        let response: dodopayments::DodopaymentsPaymentsResponse = res
+        let response: dodopayments::DodopaymentsCheckoutSessionStatus = res
             .response
             .parse_struct("Dodopayments PaymentsSyncResponse")
             .change_context(errors::ConnectorError::ResponseDeserializationFailed)?;
@@ -397,10 +394,9 @@ impl ConnectorIntegration<PSync, PaymentsSyncData, PaymentsResponseData> for Dod
     }
 }
 
-// Dodopayments's `payment/charge` is a hosted-checkout, single-step flow (no
-// separate authorize-then-capture endpoint on the Checkout Solutions
-// surface) -- `FlowNotSupported` rather than guessing at an endpoint, same
-// position as Korapay/Opennode elsewhere in this crate.
+// Dodo's Checkout Sessions are auto-capture, single-step (the customer pays
+// the full amount at the hosted page) — no separate authorize-then-capture
+// endpoint is exposed, so `FlowNotSupported` rather than guessing one.
 impl ConnectorIntegration<Capture, PaymentsCaptureData, PaymentsResponseData> for Dodopayments {
     fn build_request(
         &self,
@@ -431,16 +427,19 @@ impl ConnectorIntegration<Void, PaymentsCancelData, PaymentsResponseData> for Do
     }
 }
 
-// No refund method is documented on the Checkout Solutions surface (Task 50
-// covers collection only) -- not wired rather than guessing at an
-// unconfirmed `/refunds` endpoint.
+// Dodo's refunds (POST /refunds) belong to a separate resource family this
+// connector's audited contract did not cover — not wired rather than
+// guessing at the request/response shape.
 impl ConnectorIntegration<Execute, RefundsData, RefundsResponseData> for Dodopayments {
     fn build_request(
         &self,
         _req: &RefundsRouterData<Execute>,
         _connectors: &Connectors,
     ) -> CustomResult<Option<Request>, errors::ConnectorError> {
-        Err(errors::ConnectorError::NotImplemented("Refund flow for Dodopayments".to_string()).into())
+        Err(
+            errors::ConnectorError::NotImplemented("Refund flow for Dodopayments".to_string())
+                .into(),
+        )
     }
 }
 
@@ -450,15 +449,19 @@ impl ConnectorIntegration<RSync, RefundsData, RefundsResponseData> for Dodopayme
         _req: &RefundsRouterData<RSync>,
         _connectors: &Connectors,
     ) -> CustomResult<Option<Request>, errors::ConnectorError> {
-        Err(errors::ConnectorError::NotImplemented("Refund flow for Dodopayments".to_string()).into())
+        Err(
+            errors::ConnectorError::NotImplemented("Refund flow for Dodopayments".to_string())
+                .into(),
+        )
     }
 }
 
 impl webhooks::IncomingWebhook for Dodopayments {
-    // Dodopayments's Checkout Solutions webhook signature scheme is not documented
-    // in any supplied source (Task 50 covers the request/verify API only) --
-    // left as WebhooksNotImplemented and flagged in handover.md as the next
-    // natural follow-up, rather than half-ported here.
+    // Dodo uses the Standard Webhooks scheme (three headers `webhook-id`/
+    // `webhook-timestamp`/`webhook-signature`, base64 HMAC-SHA256 over
+    // `${id}.${timestamp}.${raw-body}`) — structurally different from every
+    // other connector's single-hex-header scheme. Deferred rather than
+    // half-ported; flagged in handover.md as the next follow-up.
     fn get_webhook_object_reference_id(
         &self,
         _request: &webhooks::IncomingWebhookRequestDetails<'_>,
@@ -489,34 +492,35 @@ impl webhooks::IncomingWebhook for Dodopayments {
     }
 }
 
-static DODOPAYMENTS_SUPPORTED_PAYMENT_METHODS: LazyLock<SupportedPaymentMethods> = LazyLock::new(|| {
-    let supported_capture_methods = vec![enums::CaptureMethod::Automatic];
+static DODOPAYMENTS_SUPPORTED_PAYMENT_METHODS: LazyLock<SupportedPaymentMethods> =
+    LazyLock::new(|| {
+        let supported_capture_methods = vec![enums::CaptureMethod::Automatic];
 
-    let mut dodopayments_supported_payment_methods = SupportedPaymentMethods::new();
+        let mut dodopayments_supported_payment_methods = SupportedPaymentMethods::new();
 
-    dodopayments_supported_payment_methods.add(
-        enums::PaymentMethod::Card,
-        enums::PaymentMethodType::Credit,
-        PaymentMethodDetails {
-            mandates: enums::FeatureStatus::NotSupported,
-            refunds: enums::FeatureStatus::NotSupported,
-            supported_capture_methods: supported_capture_methods.clone(),
-            specific_features: None,
-        },
-    );
-    dodopayments_supported_payment_methods.add(
-        enums::PaymentMethod::BankTransfer,
-        enums::PaymentMethodType::Ach,
-        PaymentMethodDetails {
-            mandates: enums::FeatureStatus::NotSupported,
-            refunds: enums::FeatureStatus::NotSupported,
-            supported_capture_methods,
-            specific_features: None,
-        },
-    );
+        dodopayments_supported_payment_methods.add(
+            enums::PaymentMethod::Card,
+            enums::PaymentMethodType::Credit,
+            PaymentMethodDetails {
+                mandates: enums::FeatureStatus::NotSupported,
+                refunds: enums::FeatureStatus::NotSupported,
+                supported_capture_methods: supported_capture_methods.clone(),
+                specific_features: None,
+            },
+        );
+        dodopayments_supported_payment_methods.add(
+            enums::PaymentMethod::BankTransfer,
+            enums::PaymentMethodType::Ach,
+            PaymentMethodDetails {
+                mandates: enums::FeatureStatus::NotSupported,
+                refunds: enums::FeatureStatus::NotSupported,
+                supported_capture_methods,
+                specific_features: None,
+            },
+        );
 
-    dodopayments_supported_payment_methods
-});
+        dodopayments_supported_payment_methods
+    });
 
 static DODOPAYMENTS_CONNECTOR_INFO: ConnectorInfo = ConnectorInfo {
     display_name: "DodoPayments",

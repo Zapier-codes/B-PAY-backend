@@ -1,17 +1,40 @@
-// Task 77 scaffold -- PaymentPoint transformers, generated from the
-// compile-verified Remita transformers template. Request/response field
-// shapes below are the generic hosted-checkout shape Remita confirmed; they
-// are a PLACEHOLDER for PaymentPoint's real payload and must be replaced
-// against PaymentPoint's own API docs (see the connector file's header)
-// before this connector is used for real money.
+// PaymentPoint transformers.
 //
-use common_enums::{enums, AttemptStatus};
+// PaymentPoint is a Nigerian payments platform. Its only documented
+// collection-adjacent surface is virtual-account provisioning
+// (`POST /api/v1/createVirtualAccount`) — confirmed against the product
+// owner-supplied docs (audit a-8). There is no documented "charge a
+// customer" endpoint, so Authorize maps onto virtual-account creation: the
+// returned NUBAN account(s) are the funding destination and the attempt
+// stays non-terminal until funds arrive.
+//
+// Auth is three simultaneous credentials on every endpoint:
+//   - `Authorization: Bearer {secret key}` header
+//   - `api-key: {API key}` header
+//   - `businessId` field inside the request body
+// carried here via `SignatureKey` (api_key = API key, api_secret = secret
+// key, key1 = business id).
+//
+// Confirmed contract details:
+//   - `bankCode` is an ARRAY of partner-bank codes — confirmed values
+//     20946 (PalmPay) and 20897 (OPay).
+//   - `idType` (`bvn`/`nin`) + `idNumber` (11 digits) are optional; required
+//     only when `idType` is set.
+//   - Response `status` is the STRING `"success"`; `bankAccounts` is a list
+//     (a single call can return more than one funded account).
+//   - Amounts are whole Naira base units (webhook example: 100 == ₦100).
+//
+// Webhook: `Paymentpoint-Signature` header, HMAC-SHA256(raw body, secret
+// key) hex — same algorithm/encoding as Korapay's verifier. No replay
+// protection (provider-side gap). See paymentpoint.rs.
+
+use common_enums::AttemptStatus;
 use common_utils::{pii::Email, types::FloatMajorUnit};
 use hyperswitch_domain_models::{
     payment_method_data::PaymentMethodData,
     router_data::{ConnectorAuthType, RouterData},
     router_request_types::ResponseId,
-    router_response_types::{PaymentsResponseData, RedirectForm},
+    router_response_types::PaymentsResponseData,
     types::PaymentsAuthorizeRouterData,
 };
 use hyperswitch_interfaces::errors;
@@ -23,19 +46,6 @@ use crate::{
     utils::{PaymentsAuthorizeRequestData, RouterData as OtherRouterData},
 };
 
-// Paymentpoint's "Accept Online Payments" (Checkout Solutions) surface -- the
-// First Gen surface Task 50/c identified as the recommended target, not the
-// classic RRR Invoice-Generation flow (whose base URL/auth scheme is still
-// unresolved per Task 49/b and Task 50/b). Amount unit is NOT confirmed by
-// any primary source this connector had: Task 50/c records one worked
-// example using `10000` for a "Test Transaction" with no stated
-// currency-unit rule, and the product owner has not supplied the merchant
-// onboarding email that would settle it. `FloatMajorUnit` (whole Naira, not
-// kobo) is chosen to match Korapay/Paystack's own established
-// major-unit behaviour for the same NGN rails, and is flagged in
-// legacy-node/handover.md as the one field to re-confirm against a live
-// sandbox call before production use -- same discipline as Korapay's own
-// flagged-but-unconfirmed response-field note.
 pub struct PaymentpointRouterData<T> {
     pub amount: FloatMajorUnit,
     pub router_data: T,
@@ -50,190 +60,214 @@ impl<T> From<(FloatMajorUnit, T)> for PaymentpointRouterData<T> {
     }
 }
 
-// Auth Struct
-// Paymentpoint's Checkout Solutions surface authenticates with a flat `secretKey`
-// header -- Task 50/c confirms this explicitly and notes it is NOT either of
-// the two hash schemes Paymentpoint's classic-RRR research previously guessed at.
-// HeaderKey is hyperswitch's matching single-key auth type (same one
-// Korapay/Paystack use for their single Bearer/HMAC key), and
-// ConnectorCommon::get_auth_header (see paymentpoint.rs) emits it under Paymentpoint's
-// own `secretKey` header name rather than `Authorization`.
+// Three-credential auth: `api_secret` -> Bearer header, `api_key` -> api-key
+// header, `key1` -> body `businessId`.
 pub struct PaymentpointAuthType {
+    pub(super) api_key: Secret<String>,
     pub(super) secret_key: Secret<String>,
+    pub(super) business_id: Secret<String>,
 }
 
 impl TryFrom<&ConnectorAuthType> for PaymentpointAuthType {
     type Error = error_stack::Report<errors::ConnectorError>;
     fn try_from(auth_type: &ConnectorAuthType) -> Result<Self, Self::Error> {
         match auth_type {
-            ConnectorAuthType::HeaderKey { api_key } => Ok(Self {
-                secret_key: api_key.to_owned(),
+            ConnectorAuthType::SignatureKey {
+                api_key,
+                key1,
+                api_secret,
+            } => Ok(Self {
+                api_key: api_key.to_owned(),
+                secret_key: api_secret.to_owned(),
+                business_id: key1.to_owned(),
             }),
             _ => Err(errors::ConnectorError::FailedToObtainAuthType.into()),
         }
     }
 }
 
-// ---------------------------------------------------------------------
-// Authorize (collection) — POST /services/connect-gateway/api/v1/payment/charge
-// ---------------------------------------------------------------------
-//
-// Request shape confirmed against Task 50/c's real worked example:
-// `firstName`, `lastName`, `email`, `phoneNumber`, `paymentIdentifier`,
-// `currency`, `narration`, `amount`. `paymentIdentifier` is the
-// merchant-generated reference and maps onto
-// `connector_request_reference_id` exactly the way every other connector in
-// this crate maps its own reference. The optional `split` object Task 50/c
-// mentions is deliberately NOT modelled: its full schema is not explained in
-// any supplied source, so forwarding it would be a guess -- callers who need
-// sub-account splits need that schema confirmed first.
-//
-// The endpoint path itself is a real, confirmed inconsistency within
-// Paymentpoint's own supplied doc: the prose says
-// `.../services/connect-gateway/api/v1/payment/charge` while the same doc's
-// own curl example shows `.../payment-engine/payment/charge` (Task 50/c,
-// same class of finding as Flutterwave's inverted env-select ternary). The
-// prose path is used here; the discrepancy is flagged in handover.md for a
-// live-call confirmation rather than silently picking one as if settled.
-#[derive(Debug, Serialize)]
-pub struct PaymentpointPaymentsRequest {
-    #[serde(rename = "firstName")]
-    pub first_name: Secret<String>,
-    #[serde(rename = "lastName")]
-    pub last_name: Secret<String>,
-    pub email: Email,
-    #[serde(rename = "phoneNumber")]
-    pub phone_number: Secret<String>,
-    #[serde(rename = "paymentIdentifier")]
-    pub payment_identifier: String,
-    pub currency: enums::Currency,
-    pub narration: String,
-    pub amount: FloatMajorUnit,
+// PaymentPoint's Errors page gives no stable machine-readable error code —
+// only an HTTP status and a human-readable meaning. `status`/`message` are
+// modeled here, with the HTTP status carried on `ErrorResponse`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct PaymentpointErrorResponse {
+    #[serde(default)]
+    pub status: Option<String>,
+    #[serde(default)]
+    pub message: Option<String>,
 }
 
-impl TryFrom<&PaymentpointRouterData<&PaymentsAuthorizeRouterData>> for PaymentpointPaymentsRequest {
+// ---------------------------------------------------------------------
+// Authorize (collection) — POST /api/v1/createVirtualAccount
+// ---------------------------------------------------------------------
+
+#[derive(Debug, Serialize)]
+pub struct PaymentpointVirtualAccountRequest {
+    pub email: Email,
+    pub name: Secret<String>,
+    #[serde(rename = "phoneNumber")]
+    pub phone_number: Secret<String>,
+    #[serde(rename = "bankCode")]
+    pub bank_code: Vec<String>,
+    #[serde(rename = "businessId")]
+    pub business_id: Secret<String>,
+    #[serde(rename = "idType", skip_serializing_if = "Option::is_none")]
+    pub id_type: Option<String>,
+    #[serde(rename = "idNumber", skip_serializing_if = "Option::is_none")]
+    pub id_number: Option<Secret<String>>,
+}
+
+impl TryFrom<&PaymentpointRouterData<&PaymentsAuthorizeRouterData>>
+    for PaymentpointVirtualAccountRequest
+{
     type Error = error_stack::Report<errors::ConnectorError>;
     fn try_from(
         item: &PaymentpointRouterData<&PaymentsAuthorizeRouterData>,
     ) -> Result<Self, Self::Error> {
-        // Card/redirect/bank-transfer/mobile-money all funnel through
-        // Paymentpoint's single hosted-checkout `payment/charge` endpoint -- there
-        // is no separate direct-card API on this surface, so any
-        // payment-method-data variant lands here the same way; nothing
-        // card-specific is read out of `PaymentMethodData` because Paymentpoint
-        // hosts card entry itself at the returned `paymentLink`.
-        match item.router_data.request.payment_method_data {
-            PaymentMethodData::Card(_)
-            | PaymentMethodData::BankRedirect(_)
-            | PaymentMethodData::BankTransfer(_)
-            | PaymentMethodData::Wallet(_) => Ok(()),
+        let router_data = item.router_data;
+        match router_data.request.payment_method_data {
+            PaymentMethodData::BankTransfer(_) | PaymentMethodData::BankRedirect(_) => Ok(()),
             _ => Err(error_stack::Report::from(
                 errors::ConnectorError::NotImplemented(
-                    "payment method via Paymentpoint".to_string(),
+                    "payment method via PaymentPoint (virtual-account funding only)".to_string(),
                 ),
             )),
         }?;
 
-        let email: Email = item.router_data.request.get_email()?;
-        let first_name = item
-            .router_data
-            .get_optional_billing_first_name()
-            .unwrap_or_else(|| Secret::new("".to_string()));
-        let last_name = item
-            .router_data
-            .get_optional_billing_last_name()
-            .unwrap_or_else(|| Secret::new("".to_string()));
-        // `phoneNumber` is required by Paymentpoint's own confirmed request shape
-        // (Task 50/c lists it as a plain required field, not optional) --
-        // fail loudly rather than send a placeholder Paymentpoint will reject.
-        let phone_number = item.router_data.get_optional_billing_phone_number().ok_or(
-            errors::ConnectorError::MissingRequiredField {
-                field_name: "phone_number (required by Paymentpoint's confirmed \
-                    payment/charge shape)"
+        let metadata = router_data.request.metadata.as_ref();
+        let bank_code = metadata
+            .and_then(|m| m.get("bankCode"))
+            .and_then(|v| v.as_array())
+            .map(|codes| {
+                codes
+                    .iter()
+                    .filter_map(|c| c.as_str().map(str::to_owned))
+                    .collect::<Vec<_>>()
+            })
+            .filter(|codes| !codes.is_empty())
+            .ok_or(errors::ConnectorError::MissingRequiredField {
+                field_name: "bankCode (PaymentPoint partner-bank codes — pass via request metadata.bankCode)"
                     .into(),
+            })?;
+
+        let name = router_data.get_optional_billing_full_name().ok_or(
+            errors::ConnectorError::MissingRequiredField {
+                field_name: "billing.full_name (PaymentPoint virtual-account `name`)".into(),
             },
         )?;
+        let email: Email = router_data.request.get_email()?;
+        let phone_number = router_data.get_billing_phone_number()?;
+
+        // `businessId` is the third credential, carried in the body.
+        let business_id =
+            PaymentpointAuthType::try_from(&router_data.connector_auth_type)?.business_id;
+
+        // idType/idNumber are optional; when idType is present the doc
+        // requires an 11-digit idNumber.
+        let id_type = metadata
+            .and_then(|m| m.get("idType"))
+            .and_then(|v| v.as_str())
+            .map(str::to_owned);
+        let id_number = metadata
+            .and_then(|m| m.get("idNumber"))
+            .and_then(|v| v.as_str())
+            .map(|v| Secret::new(v.to_owned()));
+        match (&id_type, &id_number) {
+            (Some(_), None) => Err::<(), error_stack::Report<errors::ConnectorError>>(
+                errors::ConnectorError::MissingRequiredField {
+                    field_name: "idNumber (required when idType is supplied)".into(),
+                }
+                .into(),
+            )?,
+            (None, Some(_)) => Err::<(), error_stack::Report<errors::ConnectorError>>(
+                errors::ConnectorError::MissingRequiredField {
+                    field_name: "idType (required when idNumber is supplied)".into(),
+                }
+                .into(),
+            )?,
+            _ => {}
+        }
 
         Ok(Self {
-            first_name,
-            last_name,
             email,
+            name,
             phone_number,
-            payment_identifier: item.router_data.connector_request_reference_id.clone(),
-            currency: item.router_data.request.currency,
-            narration: "Payment".to_string(),
-            amount: item.amount,
+            bank_code,
+            business_id,
+            id_type,
+            id_number,
         })
     }
 }
 
 // ---------------------------------------------------------------------
-// Response — shared by Authorize and PSync
+// Authorize response — virtual-account creation
 // ---------------------------------------------------------------------
 //
-// ⚠️ Shape below (`status: "00"`, `message`, `data.paymentLink`) is from
-// Task 50/c's real worked example for the charge call -- NOT re-confirmed
-// via a live sandbox call in this session. Paymentpoint's `status` is a
-// two-character string code, not a boolean or an enum: `"00"` is the one
-// confirmed success value ("Approved or Completed Successfully."). The full
-// set of `status`/`message` values beyond that one success case is
-// explicitly not documented in any supplied source (Task 50/c), so any
-// non-`"00"` code maps to `Failure` conservatively rather than being
-// pattern-matched as if the code table were known. The PSync verify
-// response shape is likewise not independently documented -- the same
-// envelope is reused here, flagged in handover.md for live confirmation.
+// `{ status: "success", message, customer, business, bankAccounts: [...],
+// errors: [] }`. A provisioned account means funds have not yet arrived, so
+// the attempt stays non-terminal (`Pending`).
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
-pub struct PaymentpointChargeData {
-    #[serde(rename = "paymentLink")]
-    pub payment_link: Option<String>,
+pub struct PaymentpointBankAccount {
+    #[serde(default, rename = "bankCode")]
+    pub bank_code: Option<String>,
+    #[serde(default, rename = "accountNumber")]
+    pub account_number: Option<String>,
+    #[serde(default, rename = "accountName")]
+    pub account_name: Option<String>,
+    #[serde(default, rename = "bankName")]
+    pub bank_name: Option<String>,
+    #[serde(default, rename = "Reserved_Account_Id")]
+    pub reserved_account_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
-pub struct PaymentpointPaymentsResponse {
+pub struct PaymentpointVirtualAccountResponse {
+    #[serde(default)]
     pub status: String,
-    pub message: String,
-    pub data: PaymentpointChargeData,
+    #[serde(default)]
+    pub message: Option<String>,
+    #[serde(default, rename = "bankAccounts")]
+    pub bank_accounts: Vec<PaymentpointBankAccount>,
 }
 
-impl PaymentpointPaymentsResponse {
+impl PaymentpointVirtualAccountResponse {
     fn attempt_status(&self) -> AttemptStatus {
         match self.status.as_str() {
-            "00" => AttemptStatus::Charged,
+            "success" => AttemptStatus::Pending,
             _ => AttemptStatus::Failure,
         }
     }
+
+    fn first_account_number(&self) -> Option<String> {
+        self.bank_accounts
+            .iter()
+            .find_map(|account| account.account_number.clone())
+    }
 }
 
-impl<F, T> TryFrom<ResponseRouterData<F, PaymentpointPaymentsResponse, T, PaymentsResponseData>>
+impl<F, T>
+    TryFrom<ResponseRouterData<F, PaymentpointVirtualAccountResponse, T, PaymentsResponseData>>
     for RouterData<F, T, PaymentsResponseData>
 {
     type Error = error_stack::Report<errors::ConnectorError>;
     fn try_from(
-        item: ResponseRouterData<F, PaymentpointPaymentsResponse, T, PaymentsResponseData>,
+        item: ResponseRouterData<F, PaymentpointVirtualAccountResponse, T, PaymentsResponseData>,
     ) -> Result<Self, Self::Error> {
-        let redirection_data =
-            item.response
-                .data
-                .payment_link
-                .clone()
-                .map(|url| RedirectForm::Form {
-                    endpoint: url,
-                    method: common_utils::request::Method::Get,
-                    form_fields: std::collections::HashMap::new(),
-                });
-
+        let resource_id = item
+            .response
+            .first_account_number()
+            .unwrap_or_else(|| item.data.connector_request_reference_id.clone());
         Ok(Self {
             status: item.response.attempt_status(),
             response: Ok(PaymentsResponseData::TransactionResponse {
-                resource_id: ResponseId::ConnectorTransactionId(
-                    item.data.connector_request_reference_id.clone(),
-                ),
-                redirection_data: Box::new(redirection_data),
+                resource_id: ResponseId::ConnectorTransactionId(resource_id),
+                redirection_data: Box::new(None),
                 mandate_reference: Box::new(None),
                 connector_metadata: None,
                 network_txn_id: None,
                 network_txn_link_id: None,
-                connector_response_reference_id: None,
+                connector_response_reference_id: item.response.first_account_number(),
                 incremental_authorization_allowed: None,
                 authentication_data: None,
                 charges: None,

@@ -1,41 +1,42 @@
-// Task 77 scaffold -- telcos.opik.net transformers, generated from the
-// compile-verified Remita transformers template. Request/response field
-// shapes below are the generic hosted-checkout shape Remita confirmed; they
-// are a PLACEHOLDER for telcos.opik.net's real payload and must be replaced
-// against telcos.opik.net's own API docs (see the connector file's header)
-// before this connector is used for real money.
+// telcos.opik.net (opik) transformers — VTU (airtime/data) rail.
 //
-use common_enums::{enums, AttemptStatus};
-use common_utils::{pii::Email, types::FloatMajorUnit};
+// Unlike the hosted-checkout providers in this crate, opik is a direct
+// VTU purchase API: set up a business account, fund the wallet, then
+// `POST /purchase/airtime` (or `/purchase/data`) to buy airtime/data for a
+// phone number. Every endpoint shares one envelope, `{ success, data }`
+// (docs/guides/01-getting-started.md), and all amounts are whole Naira
+// (docs/guides/06-transactions.md's own example shows `amount: 100` for
+// what reads as NGN 100) — `FloatMajorUnit`, matching Korapay/Paystack on
+// the same NGN rails.
+//
+// Auth is a raw `X-API-Key` header, no `Bearer` prefix — confirmed against
+// the live Swagger UI 2026-09-09 (docs/guides/02-authentication.md and
+// docs/openapi/components/schemas.yaml#/securitySchemes/apiKeyAuth).
+//
+// Source material is this repo's own `legacy-node/docs/` audit of
+// `https://telco.opik.net/api/v1/docs`, which is authoritative for this
+// provider (the product owner operates the rail) — see
+// `legacy-node/docs/guides/09-conventions-and-open-items.md` for the
+// items that audit still leaves unconfirmed (webhook signing scheme, full
+// transaction-status/type enums, error envelope shape, insufficient-balance
+// behaviour). Those are flagged in-code below rather than guessed at.
+
+use common_enums::AttemptStatus;
+use common_utils::types::FloatMajorUnit;
 use hyperswitch_domain_models::{
     payment_method_data::PaymentMethodData,
     router_data::{ConnectorAuthType, RouterData},
-    router_request_types::ResponseId,
-    router_response_types::{PaymentsResponseData, RedirectForm},
-    types::PaymentsAuthorizeRouterData,
+    router_flow_types::payments::PSync,
+    router_request_types::{PaymentsSyncData, ResponseId},
+    router_response_types::PaymentsResponseData,
+    types::{PaymentsAuthorizeRouterData, PaymentsSyncRouterData},
 };
 use hyperswitch_interfaces::errors;
 use hyperswitch_masking::Secret;
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    types::ResponseRouterData,
-    utils::{PaymentsAuthorizeRequestData, RouterData as OtherRouterData},
-};
+use crate::{types::ResponseRouterData, utils::RouterData as OtherRouterData};
 
-// Opik's "Accept Online Payments" (Checkout Solutions) surface -- the
-// First Gen surface Task 50/c identified as the recommended target, not the
-// classic RRR Invoice-Generation flow (whose base URL/auth scheme is still
-// unresolved per Task 49/b and Task 50/b). Amount unit is NOT confirmed by
-// any primary source this connector had: Task 50/c records one worked
-// example using `10000` for a "Test Transaction" with no stated
-// currency-unit rule, and the product owner has not supplied the merchant
-// onboarding email that would settle it. `FloatMajorUnit` (whole Naira, not
-// kobo) is chosen to match Korapay/Paystack's own established
-// major-unit behaviour for the same NGN rails, and is flagged in
-// legacy-node/handover.md as the one field to re-confirm against a live
-// sandbox call before production use -- same discipline as Korapay's own
-// flagged-but-unconfirmed response-field note.
 pub struct OpikRouterData<T> {
     pub amount: FloatMajorUnit,
     pub router_data: T,
@@ -50,16 +51,23 @@ impl<T> From<(FloatMajorUnit, T)> for OpikRouterData<T> {
     }
 }
 
-// Auth Struct
-// Opik's Checkout Solutions surface authenticates with a flat `secretKey`
-// header -- Task 50/c confirms this explicitly and notes it is NOT either of
-// the two hash schemes Opik's classic-RRR research previously guessed at.
-// HeaderKey is hyperswitch's matching single-key auth type (same one
-// Korapay/Paystack use for their single Bearer/HMAC key), and
-// ConnectorCommon::get_auth_header (see opik.rs) emits it under Opik's
-// own `secretKey` header name rather than `Authorization`.
+// opik's real error envelope was never captured from the live server
+// (docs/guides/09-conventions-and-open-items.md, item #2) — its audit
+// documents a tolerant `{ success, message }` shape as the placeholder.
+// Modeled with both fields optional so a bare 4xx/5xx body still parses.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct OpikErrorResponse {
+    #[serde(default)]
+    pub success: Option<bool>,
+    #[serde(default)]
+    pub message: Option<String>,
+}
+
+// Auth — single `api_key` sent verbatim as the `X-API-Key` header (see
+// opik.rs's `get_auth_header`). `HeaderKey` is the matching single-key
+// hyperswitch auth type.
 pub struct OpikAuthType {
-    pub(super) secret_key: Secret<String>,
+    pub(super) api_key: Secret<String>,
 }
 
 impl TryFrom<&ConnectorAuthType> for OpikAuthType {
@@ -67,7 +75,7 @@ impl TryFrom<&ConnectorAuthType> for OpikAuthType {
     fn try_from(auth_type: &ConnectorAuthType) -> Result<Self, Self::Error> {
         match auth_type {
             ConnectorAuthType::HeaderKey { api_key } => Ok(Self {
-                secret_key: api_key.to_owned(),
+                api_key: api_key.to_owned(),
             }),
             _ => Err(errors::ConnectorError::FailedToObtainAuthType.into()),
         }
@@ -75,93 +83,66 @@ impl TryFrom<&ConnectorAuthType> for OpikAuthType {
 }
 
 // ---------------------------------------------------------------------
-// Authorize (collection) — POST /services/connect-gateway/api/v1/payment/charge
+// Authorize (collection) — POST /api/v1/purchase/airtime
 // ---------------------------------------------------------------------
 //
-// Request shape confirmed against Task 50/c's real worked example:
-// `firstName`, `lastName`, `email`, `phoneNumber`, `paymentIdentifier`,
-// `currency`, `narration`, `amount`. `paymentIdentifier` is the
-// merchant-generated reference and maps onto
-// `connector_request_reference_id` exactly the way every other connector in
-// this crate maps its own reference. The optional `split` object Task 50/c
-// mentions is deliberately NOT modelled: its full schema is not explained in
-// any supplied source, so forwarding it would be a guess -- callers who need
-// sub-account splits need that schema confirmed first.
+// opik's airtime purchase is the closest analog to a generic "collect from
+// a customer" call on this API: `{ network, phoneNumber, amount }` →
+// `{ success, data: { reference, amount, phone_number, message } }`
+// (docs/guides/05-purchasing-data-airtime.md). The data-bundle purchase
+// (`/purchase/data`) is deliberately NOT the Authorize target because it
+// requires a pre-provisioned `planId` rather than an amount, which the
+// generic Hyperswitch payment request has no first-class field for.
 //
-// The endpoint path itself is a real, confirmed inconsistency within
-// Opik's own supplied doc: the prose says
-// `.../services/connect-gateway/api/v1/payment/charge` while the same doc's
-// own curl example shows `.../payment-engine/payment/charge` (Task 50/c,
-// same class of finding as Flutterwave's inverted env-select ternary). The
-// prose path is used here; the discrepancy is flagged in handover.md for a
-// live-call confirmation rather than silently picking one as if settled.
+// This API has no first-class `network` field in a Hyperswitch payment
+// request either, so `network` is read out of the request's `metadata`
+// object (one of `MTN | AIRTEL | GLO | 9MOBILE`, per
+// docs/openapi/components/schemas.yaml#/schemas/Network). Callers routing a
+// VTU payment through this connector must set `metadata.network`; missing it
+// fails loudly rather than defaulting to a guessed network.
 #[derive(Debug, Serialize)]
-pub struct OpikPaymentsRequest {
-    #[serde(rename = "firstName")]
-    pub first_name: Secret<String>,
-    #[serde(rename = "lastName")]
-    pub last_name: Secret<String>,
-    pub email: Email,
+pub struct OpikAirtimePurchaseRequest {
+    pub network: String,
     #[serde(rename = "phoneNumber")]
     pub phone_number: Secret<String>,
-    #[serde(rename = "paymentIdentifier")]
-    pub payment_identifier: String,
-    pub currency: enums::Currency,
-    pub narration: String,
     pub amount: FloatMajorUnit,
 }
 
-impl TryFrom<&OpikRouterData<&PaymentsAuthorizeRouterData>> for OpikPaymentsRequest {
+impl TryFrom<&OpikRouterData<&PaymentsAuthorizeRouterData>> for OpikAirtimePurchaseRequest {
     type Error = error_stack::Report<errors::ConnectorError>;
-    fn try_from(
-        item: &OpikRouterData<&PaymentsAuthorizeRouterData>,
-    ) -> Result<Self, Self::Error> {
-        // Card/redirect/bank-transfer/mobile-money all funnel through
-        // Opik's single hosted-checkout `payment/charge` endpoint -- there
-        // is no separate direct-card API on this surface, so any
-        // payment-method-data variant lands here the same way; nothing
-        // card-specific is read out of `PaymentMethodData` because Opik
-        // hosts card entry itself at the returned `paymentLink`.
+    fn try_from(item: &OpikRouterData<&PaymentsAuthorizeRouterData>) -> Result<Self, Self::Error> {
+        // opik hosts no card entry: the call site always supplies a
+        // phone-number rail (airtime/data). Any payment-method-data variant
+        // is accepted here because the only data this API needs beyond the
+        // amount is the network + phone number, both taken from the request
+        // rather than from card details.
         match item.router_data.request.payment_method_data {
             PaymentMethodData::Card(_)
             | PaymentMethodData::BankRedirect(_)
             | PaymentMethodData::BankTransfer(_)
             | PaymentMethodData::Wallet(_) => Ok(()),
             _ => Err(error_stack::Report::from(
-                errors::ConnectorError::NotImplemented(
-                    "payment method via Opik".to_string(),
-                ),
+                errors::ConnectorError::NotImplemented("payment method via opik".to_string()),
             )),
         }?;
 
-        let email: Email = item.router_data.request.get_email()?;
-        let first_name = item
+        let network = item
             .router_data
-            .get_optional_billing_first_name()
-            .unwrap_or_else(|| Secret::new("".to_string()));
-        let last_name = item
-            .router_data
-            .get_optional_billing_last_name()
-            .unwrap_or_else(|| Secret::new("".to_string()));
-        // `phoneNumber` is required by Opik's own confirmed request shape
-        // (Task 50/c lists it as a plain required field, not optional) --
-        // fail loudly rather than send a placeholder Opik will reject.
-        let phone_number = item.router_data.get_optional_billing_phone_number().ok_or(
-            errors::ConnectorError::MissingRequiredField {
-                field_name: "phone_number (required by Opik's confirmed \
-                    payment/charge shape)"
-                    .into(),
-            },
-        )?;
+            .request
+            .metadata
+            .as_ref()
+            .and_then(|metadata| metadata.get("network"))
+            .and_then(|value| value.as_str())
+            .map(str::to_owned)
+            .ok_or(errors::ConnectorError::MissingRequiredField {
+                field_name: "network (opik VTU network — pass via request metadata.network)".into(),
+            })?;
+
+        let phone_number = item.router_data.get_billing_phone_number()?;
 
         Ok(Self {
-            first_name,
-            last_name,
-            email,
+            network,
             phone_number,
-            payment_identifier: item.router_data.connector_request_reference_id.clone(),
-            currency: item.router_data.request.currency,
-            narration: "Payment".to_string(),
             amount: item.amount,
         })
     }
@@ -171,64 +152,175 @@ impl TryFrom<&OpikRouterData<&PaymentsAuthorizeRouterData>> for OpikPaymentsRequ
 // Response — shared by Authorize and PSync
 // ---------------------------------------------------------------------
 //
-// ⚠️ Shape below (`status: "00"`, `message`, `data.paymentLink`) is from
-// Task 50/c's real worked example for the charge call -- NOT re-confirmed
-// via a live sandbox call in this session. Opik's `status` is a
-// two-character string code, not a boolean or an enum: `"00"` is the one
-// confirmed success value ("Approved or Completed Successfully."). The full
-// set of `status`/`message` values beyond that one success case is
-// explicitly not documented in any supplied source (Task 50/c), so any
-// non-`"00"` code maps to `Failure` conservatively rather than being
-// pattern-matched as if the code table were known. The PSync verify
-// response shape is likewise not independently documented -- the same
-// envelope is reused here, flagged in handover.md for live confirmation.
+// `{ success, data: { reference, plan_name?, amount, phone_number, message } }`
+// per docs/guides/05-purchasing-data-airtime.md. `success` is a boolean
+// (opik's own confirmed convention, unlike Xixapay/PaymentPoint's mixed
+// boolean-vs-string `status`, and unlike DodoPayments' flat error envelope).
+//
+// The purchase endpoint's own doc flags that a `200` may mean the purchase
+// is already final *or* still `pending` (docs/guides/05, and the
+// transaction-status enum is marked CONFIRM in the spec for the same
+// reason). `reference` is what `GET /transactions` is then used to
+// reconcile. This connector maps `success: true` to `Charged` because that
+// is opik's own affirmative signal on the purchase call; the pending
+// nuance is flagged in handover.md for a live confirmation.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
-pub struct OpikChargeData {
-    #[serde(rename = "paymentLink")]
-    pub payment_link: Option<String>,
+pub struct OpikPurchaseData {
+    #[serde(default)]
+    pub reference: Option<String>,
+    #[serde(default, rename = "plan_name")]
+    pub plan_name: Option<String>,
+    #[serde(default)]
+    pub amount: Option<FloatMajorUnit>,
+    #[serde(default, rename = "phone_number")]
+    pub phone_number: Option<String>,
+    #[serde(default)]
+    pub message: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
-pub struct OpikPaymentsResponse {
-    pub status: String,
-    pub message: String,
-    pub data: OpikChargeData,
+pub struct OpikPurchaseResponse {
+    pub success: bool,
+    #[serde(default)]
+    pub data: Option<OpikPurchaseData>,
+    #[serde(default)]
+    pub message: Option<String>,
 }
 
-impl OpikPaymentsResponse {
+impl OpikPurchaseResponse {
     fn attempt_status(&self) -> AttemptStatus {
-        match self.status.as_str() {
-            "00" => AttemptStatus::Charged,
-            _ => AttemptStatus::Failure,
+        if self.success {
+            AttemptStatus::Charged
+        } else {
+            AttemptStatus::Failure
         }
+    }
+
+    fn reference(&self) -> Option<String> {
+        self.data
+            .as_ref()
+            .and_then(|data| data.reference.clone())
+            .filter(|reference| !reference.is_empty())
     }
 }
 
-impl<F, T> TryFrom<ResponseRouterData<F, OpikPaymentsResponse, T, PaymentsResponseData>>
+impl<F, T> TryFrom<ResponseRouterData<F, OpikPurchaseResponse, T, PaymentsResponseData>>
     for RouterData<F, T, PaymentsResponseData>
 {
     type Error = error_stack::Report<errors::ConnectorError>;
     fn try_from(
-        item: ResponseRouterData<F, OpikPaymentsResponse, T, PaymentsResponseData>,
+        item: ResponseRouterData<F, OpikPurchaseResponse, T, PaymentsResponseData>,
     ) -> Result<Self, Self::Error> {
-        let redirection_data =
-            item.response
-                .data
-                .payment_link
-                .clone()
-                .map(|url| RedirectForm::Form {
-                    endpoint: url,
-                    method: common_utils::request::Method::Get,
-                    form_fields: std::collections::HashMap::new(),
-                });
+        // opik returns no per-transaction id on the purchase call — the
+        // `reference` is the handle `GET /transactions` reconciles against,
+        // so it is what this connector stores as the connector transaction
+        // id (falling back to the merchant reference when the response
+        // omits it, so PSync still has something to look up).
+        let resource_id = item
+            .response
+            .reference()
+            .unwrap_or_else(|| item.data.connector_request_reference_id.clone());
 
         Ok(Self {
             status: item.response.attempt_status(),
             response: Ok(PaymentsResponseData::TransactionResponse {
-                resource_id: ResponseId::ConnectorTransactionId(
-                    item.data.connector_request_reference_id.clone(),
-                ),
-                redirection_data: Box::new(redirection_data),
+                resource_id: ResponseId::ConnectorTransactionId(resource_id),
+                redirection_data: Box::new(None),
+                mandate_reference: Box::new(None),
+                connector_metadata: None,
+                network_txn_id: None,
+                network_txn_link_id: None,
+                connector_response_reference_id: item.response.reference(),
+                incremental_authorization_allowed: None,
+                authentication_data: None,
+                charges: None,
+                payment_account_reference: None,
+            }),
+            ..item.data
+        })
+    }
+}
+
+// ---------------------------------------------------------------------
+// PSync — GET /api/v1/transactions, reconciled by reference
+// ---------------------------------------------------------------------
+//
+// opik has no single-transaction lookup endpoint; `GET /transactions`
+// returns the authenticated business's history
+// (docs/guides/06-transactions.md). This connector fetches the default
+// page and matches the stored `reference`. The full transaction `status`
+// enum is only partially confirmed (`pending` observed; the spec marks the
+// value set CONFIRM), so unknown values map to `Pending` rather than being
+// treated as terminal — fail-safe-to-non-terminal, matching Flutterwave's
+// own posture in this crate.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct OpikTransaction {
+    #[serde(default)]
+    pub id: Option<String>,
+    #[serde(default, rename = "type")]
+    pub transaction_type: Option<String>,
+    #[serde(default)]
+    pub amount: Option<FloatMajorUnit>,
+    #[serde(default)]
+    pub status: Option<String>,
+    #[serde(default)]
+    pub reference: Option<String>,
+    #[serde(default)]
+    pub created_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct OpikTransactionsResponse {
+    pub success: bool,
+    #[serde(default)]
+    pub data: Vec<OpikTransaction>,
+    #[serde(default)]
+    pub message: Option<String>,
+}
+
+impl OpikTransactionsResponse {
+    fn attempt_status(&self, reference: &str) -> AttemptStatus {
+        let status = self
+            .data
+            .iter()
+            .find(|transaction| transaction.reference.as_deref() == Some(reference))
+            .and_then(|transaction| transaction.status.as_deref());
+        match status {
+            Some("success") => AttemptStatus::Charged,
+            Some("failed") => AttemptStatus::Failure,
+            // "pending" plus anything not yet confirmed by opik's own
+            // partially-documented enum.
+            _ => AttemptStatus::Pending,
+        }
+    }
+}
+
+impl
+    TryFrom<
+        ResponseRouterData<PSync, OpikTransactionsResponse, PaymentsSyncData, PaymentsResponseData>,
+    > for RouterData<PSync, PaymentsSyncData, PaymentsResponseData>
+{
+    type Error = error_stack::Report<errors::ConnectorError>;
+    fn try_from(
+        item: ResponseRouterData<
+            PSync,
+            OpikTransactionsResponse,
+            PaymentsSyncData,
+            PaymentsResponseData,
+        >,
+    ) -> Result<Self, Self::Error> {
+        let reference = item
+            .data
+            .request
+            .connector_transaction_id
+            .get_connector_transaction_id()
+            .unwrap_or_else(|_| item.data.connector_request_reference_id.clone());
+        let status = item.response.attempt_status(&reference);
+        Ok(Self {
+            status,
+            response: Ok(PaymentsResponseData::TransactionResponse {
+                resource_id: ResponseId::ConnectorTransactionId(reference),
+                redirection_data: Box::new(None),
                 mandate_reference: Box::new(None),
                 connector_metadata: None,
                 network_txn_id: None,

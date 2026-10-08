@@ -503,8 +503,8 @@ jobs:
       # (package.rust-version = "1.86.0" in the root Cargo.toml) so CI
       # enforces the same floor the workspace itself claims, independently
       # of whatever "stable 2 weeks ago" resolves to for the other jobs in
-      # this file. See legacy-node/handover.md, Task 73/a: sandboxed agent
-      # sessions working on this repo cannot reach a >=1.86 toolchain, so
+      # this file. Sandboxed agent sessions working on this repo cannot reach
+      # a >=1.86 toolchain, so
       # this job is the actual, only source of "does storage_impl compile"
       # signal for that work.
       - name: Install Rust 1.86.0
@@ -679,5 +679,5 @@ jobs:
       # `om.yaml` for `ci run` to work. NOT confirmed against a real
       # run yet -- flagged reviewed-by-reading only, same as the other
       # fixes in this session (no working `om`/`nix` in this sandbox to
-      # test against either; see legacy-node/handover.md).
+      # test against either).
       - run: nix run github:juspay/omnix -- ci run --extra-access-tokens ${{ secrets.GITHUB_TOKEN }} --systems "x86_64-linux"

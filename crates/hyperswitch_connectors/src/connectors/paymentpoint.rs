@@ -1,14 +1,14 @@
-// Task 77 scaffold -- PaymentPoint connector, generated from the
-// compile-verified Remita connector template. This file is a SCAFFOLD:
-// it wires the connector into the engine (id, base URL, auth header,
-// Authorize + PSync) so it compiles and registers, and leaves every flow
-// whose endpoint/signature PaymentPoint's discovery audit did not confirm
-// as NotImplemented / FlowNotSupported / WebhooksNotImplemented rather than
-// guessing at one.
+// PaymentPoint connector — virtual-account collection surface.
 //
-// Base URL: https://api.paymentpoint.co/
-// Charge (Authorize): api/v1/createVirtualAccount
-// Verify (PSync):     api/v1/transactions/{id}
+// PaymentPoint authenticates with three simultaneous credentials: an
+// `Authorization: Bearer {secret key}` header, a separate `api-key` header,
+// and a `businessId` field inside the request body (audit a-8). Carried here
+// via `SignatureKey` (api_secret = secret key, api_key = API key,
+// key1 = business id).
+//
+// Base URL:  https://api.paymentpoint.co/
+// Authorize: POST /api/v1/createVirtualAccount
+// PSync:     not implemented (no documented transaction-lookup endpoint)
 //
 pub mod transformers;
 
@@ -51,7 +51,7 @@ use hyperswitch_interfaces::{
     configs::Connectors,
     errors,
     events::connector_api_logs::ConnectorEvent,
-    types::{PaymentsAuthorizeType, PaymentsSyncType, Response},
+    types::{PaymentsAuthorizeType, Response},
     webhooks,
 };
 use hyperswitch_masking::{ExposeInterface, Mask, Maskable};
@@ -59,14 +59,9 @@ use transformers as paymentpoint;
 
 use crate::{constants::headers, types::ResponseRouterData, utils::convert_amount};
 
-// Paymentpoint's "Accept Online Payments" (Checkout Solutions) surface, per
-// Task 50/c -- see paymentpoint/transformers.rs's own header comment for why this
-// surface (not the classic RRR flow) is the one implemented, and for the
-// three fields/paths this connector had to flag rather than settle
-// (amount unit, the charge endpoint's prose-vs-curl path inconsistency, and
-// the PSync verify response shape). Base URL and path are taken directly
-// from Task 50/c's real worked example:
-// `https://api-demo.systemspecsng.com/services/connect-gateway/api/v1/...`.
+// PaymentPoint's virtual-account funding surface — see
+// paymentpoint/transformers.rs for the three-credential auth and the
+// confirmed request/response contract.
 #[derive(Clone)]
 pub struct Paymentpoint {
     amount_converter: &'static (dyn AmountConvertor<Output = FloatMajorUnit> + Sync),
@@ -131,10 +126,8 @@ impl ConnectorCommon for Paymentpoint {
         "paymentpoint"
     }
 
-    // Unconfirmed by any primary source -- see paymentpoint/transformers.rs's
-    // PaymentpointRouterData comment. Base (whole-Naira) is chosen to match
-    // Korapay/Paystack on the same NGN rails; flagged for a live-call
-    // confirmation before production use.
+    // PaymentPoint amounts are whole Naira base units (webhook example:
+    // amount_paid 100 == ₦100; audit a-8).
     fn get_currency_unit(&self) -> api::CurrencyUnit {
         api::CurrencyUnit::Base
     }
@@ -153,14 +146,16 @@ impl ConnectorCommon for Paymentpoint {
     ) -> CustomResult<Vec<(String, Maskable<String>)>, errors::ConnectorError> {
         let auth = paymentpoint::PaymentpointAuthType::try_from(auth_type)
             .change_context(errors::ConnectorError::FailedToObtainAuthType)?;
-        // PaymentPoint authenticates with a Bearer secret
-        // (its own audit also lists an api-key header and a body businessId
-        // where relevant -- see this connector's header comment; the scaffold
-        // wires the single header the framework's HeaderKey carries).
-        Ok(vec![(
-            "Authorization".to_string(),
-            format!("Bearer {}", auth.secret_key.expose()).into_masked(),
-        )])
+        // PaymentPoint requires BOTH the Bearer secret and the api-key header;
+        // the third credential (`businessId`) is added to the request body in
+        // the transformers.
+        Ok(vec![
+            (
+                "Authorization".to_string(),
+                format!("Bearer {}", auth.secret_key.expose()).into_masked(),
+            ),
+            ("api-key".to_string(), auth.api_key.expose().into_masked()),
+        ])
     }
 
     fn build_error_response(
@@ -168,7 +163,7 @@ impl ConnectorCommon for Paymentpoint {
         res: Response,
         event_builder: Option<&mut ConnectorEvent>,
     ) -> CustomResult<ErrorResponse, errors::ConnectorError> {
-        let response: paymentpoint::PaymentpointPaymentsResponse = res
+        let response: paymentpoint::PaymentpointErrorResponse = res
             .response
             .parse_struct("PaymentpointErrorResponse")
             .change_context(errors::ConnectorError::ResponseDeserializationFailed)?;
@@ -178,9 +173,15 @@ impl ConnectorCommon for Paymentpoint {
 
         Ok(ErrorResponse {
             status_code: res.status_code,
-            code: response.status.clone(),
-            message: response.message.clone(),
-            reason: Some(response.message),
+            code: response
+                .status
+                .clone()
+                .unwrap_or_else(|| "PAYMENTPOINT_ERROR".to_string()),
+            message: response
+                .message
+                .clone()
+                .unwrap_or_else(|| "PaymentPoint request failed".to_string()),
+            reason: response.message,
             attempt_status: None,
             connector_transaction_id: None,
             connector_response_reference_id: None,
@@ -200,32 +201,33 @@ impl ConnectorValidation for Paymentpoint {
         _status: enums::AttemptStatus,
         _connector_meta_data: Option<common_utils::pii::SecretSerdeValue>,
     ) -> CustomResult<(), errors::ConnectorError> {
-        // Task 50/c confirms the verify call is made by the merchant's own
-        // `paymentIdentifier` reference, so a connector_transaction_id is
-        // not required to sync -- same posture as Korapay's own override.
+        // PaymentPoint has no documented status-lookup endpoint at all (see
+        // the PSync impl) — nothing to validate against.
         Ok(())
     }
 }
 
 impl ConnectorIntegration<Session, PaymentsSessionData, PaymentsResponseData> for Paymentpoint {
-    // Paymentpoint has no session-token flow -- the `paymentLink` returned by
-    // Authorize is Paymentpoint's whole "session".
+    // PaymentPoint has no session-token flow; the provisioned virtual account
+    // is the whole "session".
 }
 
 impl ConnectorIntegration<AccessTokenAuth, AccessTokenRequestData, AccessToken> for Paymentpoint {}
 
-impl ConnectorIntegration<SetupMandate, SetupMandateRequestData, PaymentsResponseData> for Paymentpoint {
+impl ConnectorIntegration<SetupMandate, SetupMandateRequestData, PaymentsResponseData>
+    for Paymentpoint
+{
     fn build_request(
         &self,
         _req: &RouterData<SetupMandate, SetupMandateRequestData, PaymentsResponseData>,
         _connectors: &Connectors,
     ) -> CustomResult<Option<Request>, errors::ConnectorError> {
-        // No mandate/recurring-charge API observed anywhere in Task 50's
-        // supplied material -- not wired rather than guessed.
-        Err(
-            errors::ConnectorError::NotImplemented("Setup Mandate flow for Paymentpoint".to_string())
-                .into(),
+        // PaymentPoint has no mandate/recurring-charge API — not wired rather
+        // than guessed.
+        Err(errors::ConnectorError::NotImplemented(
+            "Setup Mandate flow for Paymentpoint".to_string(),
         )
+        .into())
     }
 }
 
@@ -242,9 +244,8 @@ impl ConnectorIntegration<Authorize, PaymentsAuthorizeData, PaymentsResponseData
         self.common_get_content_type()
     }
 
-    // Task 50/c's prose path (the same doc's own curl example shows
-    // `payment-engine/payment/charge` instead -- see paymentpoint/transformers.rs's
-    // own note; flagged for live confirmation).
+    // PaymentPoint's only documented collection-adjacent endpoint:
+    // POST /api/v1/createVirtualAccount (audit a-8).
     fn get_url(
         &self,
         _req: &PaymentsAuthorizeRouterData,
@@ -268,7 +269,8 @@ impl ConnectorIntegration<Authorize, PaymentsAuthorizeData, PaymentsResponseData
         )?;
 
         let connector_router_data = paymentpoint::PaymentpointRouterData::from((amount, req));
-        let connector_req = paymentpoint::PaymentpointPaymentsRequest::try_from(&connector_router_data)?;
+        let connector_req =
+            paymentpoint::PaymentpointVirtualAccountRequest::try_from(&connector_router_data)?;
         Ok(RequestContent::Json(Box::new(connector_req)))
     }
 
@@ -296,7 +298,7 @@ impl ConnectorIntegration<Authorize, PaymentsAuthorizeData, PaymentsResponseData
         event_builder: Option<&mut ConnectorEvent>,
         res: Response,
     ) -> CustomResult<PaymentsAuthorizeRouterData, errors::ConnectorError> {
-        let response: paymentpoint::PaymentpointPaymentsResponse = res
+        let response: paymentpoint::PaymentpointVirtualAccountResponse = res
             .response
             .parse_struct("Paymentpoint PaymentsAuthorizeResponse")
             .change_context(errors::ConnectorError::ResponseDeserializationFailed)?;
@@ -319,88 +321,24 @@ impl ConnectorIntegration<Authorize, PaymentsAuthorizeData, PaymentsResponseData
     }
 }
 
+// PaymentPoint exposes no documented status lookup for a virtual account /
+// funded payment (its other audited surfaces are identity/liveness
+// verification), and its `payment/charge` endpoint is not documented. Sync,
+// capture, void and refunds are therefore left unimplemented rather than
+// pointed at a guessed path; the collectible state is observed via webhook.
 impl ConnectorIntegration<PSync, PaymentsSyncData, PaymentsResponseData> for Paymentpoint {
-    fn get_headers(
-        &self,
-        req: &PaymentsSyncRouterData,
-        connectors: &Connectors,
-    ) -> CustomResult<Vec<(String, Maskable<String>)>, errors::ConnectorError> {
-        self.build_headers(req, connectors)
-    }
-
-    fn get_content_type(&self) -> &'static str {
-        self.common_get_content_type()
-    }
-
-    // Task 50/c: `GET .../payment/merchant/verify/{{transRef}}`, same
-    // `secretKey` header, verifiable by the merchant's own
-    // `paymentIdentifier` reference -- a real advantage over JuicyWay, whose
-    // confirmed gap is having no way to verify by reference alone.
-    fn get_url(
-        &self,
-        req: &PaymentsSyncRouterData,
-        connectors: &Connectors,
-    ) -> CustomResult<String, errors::ConnectorError> {
-        let connector_id = req
-            .request
-            .connector_transaction_id
-            .get_connector_transaction_id()
-            .change_context(errors::ConnectorError::MissingConnectorTransactionID)?;
-        Ok(format!(
-            "{}api/v1/transactions/{}",
-            self.base_url(connectors),
-            connector_id
-        ))
-    }
-
     fn build_request(
         &self,
-        req: &PaymentsSyncRouterData,
-        connectors: &Connectors,
+        _req: &PaymentsSyncRouterData,
+        _connectors: &Connectors,
     ) -> CustomResult<Option<Request>, errors::ConnectorError> {
-        Ok(Some(
-            RequestBuilder::new()
-                .method(Method::Get)
-                .url(&PaymentsSyncType::get_url(self, req, connectors)?)
-                .attach_default_headers()
-                .headers(PaymentsSyncType::get_headers(self, req, connectors)?)
-                .build(),
-        ))
-    }
-
-    fn handle_response(
-        &self,
-        data: &PaymentsSyncRouterData,
-        event_builder: Option<&mut ConnectorEvent>,
-        res: Response,
-    ) -> CustomResult<PaymentsSyncRouterData, errors::ConnectorError> {
-        let response: paymentpoint::PaymentpointPaymentsResponse = res
-            .response
-            .parse_struct("Paymentpoint PaymentsSyncResponse")
-            .change_context(errors::ConnectorError::ResponseDeserializationFailed)?;
-        event_builder.map(|i| i.set_response_body(&response));
-        router_env::logger::info!(connector_response=?response);
-        RouterData::try_from(ResponseRouterData {
-            response,
-            data: data.clone(),
-            http_code: res.status_code,
-        })
-        .change_context(errors::ConnectorError::ResponseHandlingFailed)
-    }
-
-    fn get_error_response(
-        &self,
-        res: Response,
-        event_builder: Option<&mut ConnectorEvent>,
-    ) -> CustomResult<ErrorResponse, errors::ConnectorError> {
-        self.build_error_response(res, event_builder)
+        Err(errors::ConnectorError::NotImplemented("Sync flow for Paymentpoint".to_string()).into())
     }
 }
 
-// Paymentpoint's `payment/charge` is a hosted-checkout, single-step flow (no
-// separate authorize-then-capture endpoint on the Checkout Solutions
-// surface) -- `FlowNotSupported` rather than guessing at an endpoint, same
-// position as Korapay/Opennode elsewhere in this crate.
+// Virtual-account funding is a single-step inbound transfer — no separate
+// authorize-then-capture step and no documented capture endpoint, so
+// `FlowNotSupported` rather than guessing one.
 impl ConnectorIntegration<Capture, PaymentsCaptureData, PaymentsResponseData> for Paymentpoint {
     fn build_request(
         &self,
@@ -431,16 +369,18 @@ impl ConnectorIntegration<Void, PaymentsCancelData, PaymentsResponseData> for Pa
     }
 }
 
-// No refund method is documented on the Checkout Solutions surface (Task 50
-// covers collection only) -- not wired rather than guessing at an
-// unconfirmed `/refunds` endpoint.
+// No refund method is documented on the virtual-account surface — not wired
+// rather than guessing at the request/response shape.
 impl ConnectorIntegration<Execute, RefundsData, RefundsResponseData> for Paymentpoint {
     fn build_request(
         &self,
         _req: &RefundsRouterData<Execute>,
         _connectors: &Connectors,
     ) -> CustomResult<Option<Request>, errors::ConnectorError> {
-        Err(errors::ConnectorError::NotImplemented("Refund flow for Paymentpoint".to_string()).into())
+        Err(
+            errors::ConnectorError::NotImplemented("Refund flow for Paymentpoint".to_string())
+                .into(),
+        )
     }
 }
 
@@ -450,15 +390,22 @@ impl ConnectorIntegration<RSync, RefundsData, RefundsResponseData> for Paymentpo
         _req: &RefundsRouterData<RSync>,
         _connectors: &Connectors,
     ) -> CustomResult<Option<Request>, errors::ConnectorError> {
-        Err(errors::ConnectorError::NotImplemented("Refund flow for Paymentpoint".to_string()).into())
+        Err(
+            errors::ConnectorError::NotImplemented("Refund flow for Paymentpoint".to_string())
+                .into(),
+        )
     }
 }
 
 impl webhooks::IncomingWebhook for Paymentpoint {
-    // Paymentpoint's Checkout Solutions webhook signature scheme is not documented
-    // in any supplied source (Task 50 covers the request/verify API only) --
-    // left as WebhooksNotImplemented and flagged in handover.md as the next
-    // natural follow-up, rather than half-ported here.
+    // PaymentPoint's webhook signature is confirmed: a `Paymentpoint-Signature`
+    // header carrying HMAC-SHA256(raw body, secret key), hex — the same
+    // algorithm/encoding as Korapay's verifier. No timestamp/nonce (no replay
+    // protection — a provider-side gap, mitigated by this repo's dedupe).
+    // Payload fields (notification_status, transaction_id,
+    // transaction_status, amount_paid, ...) are confirmed; parsing into this
+    // framework's domain types is deferred as WebhooksNotImplemented,
+    // matching Korapay/DodoPayments' own deferral.
     fn get_webhook_object_reference_id(
         &self,
         _request: &webhooks::IncomingWebhookRequestDetails<'_>,
@@ -489,34 +436,35 @@ impl webhooks::IncomingWebhook for Paymentpoint {
     }
 }
 
-static PAYMENTPOINT_SUPPORTED_PAYMENT_METHODS: LazyLock<SupportedPaymentMethods> = LazyLock::new(|| {
-    let supported_capture_methods = vec![enums::CaptureMethod::Automatic];
+static PAYMENTPOINT_SUPPORTED_PAYMENT_METHODS: LazyLock<SupportedPaymentMethods> =
+    LazyLock::new(|| {
+        let supported_capture_methods = vec![enums::CaptureMethod::Automatic];
 
-    let mut paymentpoint_supported_payment_methods = SupportedPaymentMethods::new();
+        let mut paymentpoint_supported_payment_methods = SupportedPaymentMethods::new();
 
-    paymentpoint_supported_payment_methods.add(
-        enums::PaymentMethod::Card,
-        enums::PaymentMethodType::Credit,
-        PaymentMethodDetails {
-            mandates: enums::FeatureStatus::NotSupported,
-            refunds: enums::FeatureStatus::NotSupported,
-            supported_capture_methods: supported_capture_methods.clone(),
-            specific_features: None,
-        },
-    );
-    paymentpoint_supported_payment_methods.add(
-        enums::PaymentMethod::BankTransfer,
-        enums::PaymentMethodType::Ach,
-        PaymentMethodDetails {
-            mandates: enums::FeatureStatus::NotSupported,
-            refunds: enums::FeatureStatus::NotSupported,
-            supported_capture_methods,
-            specific_features: None,
-        },
-    );
+        paymentpoint_supported_payment_methods.add(
+            enums::PaymentMethod::Card,
+            enums::PaymentMethodType::Credit,
+            PaymentMethodDetails {
+                mandates: enums::FeatureStatus::NotSupported,
+                refunds: enums::FeatureStatus::NotSupported,
+                supported_capture_methods: supported_capture_methods.clone(),
+                specific_features: None,
+            },
+        );
+        paymentpoint_supported_payment_methods.add(
+            enums::PaymentMethod::BankTransfer,
+            enums::PaymentMethodType::Ach,
+            PaymentMethodDetails {
+                mandates: enums::FeatureStatus::NotSupported,
+                refunds: enums::FeatureStatus::NotSupported,
+                supported_capture_methods,
+                specific_features: None,
+            },
+        );
 
-    paymentpoint_supported_payment_methods
-});
+        paymentpoint_supported_payment_methods
+    });
 
 static PAYMENTPOINT_CONNECTOR_INFO: ConnectorInfo = ConnectorInfo {
     display_name: "PaymentPoint",

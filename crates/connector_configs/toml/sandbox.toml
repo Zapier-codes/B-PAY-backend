@@ -9231,16 +9231,22 @@ api_key = "API Key"
 api_key = "API Key"
 
 [paymentpoint]
-[paymentpoint.connector_auth.HeaderKey]
+[paymentpoint.connector_auth.SignatureKey]
 api_key = "API Key"
+api_secret = "Secret Key"
+key1 = "Business ID"
 
 [xixapay]
-[xixapay.connector_auth.HeaderKey]
+[xixapay.connector_auth.SignatureKey]
 api_key = "API Key"
+api_secret = "Secret Key"
+key1 = "Business ID"
 
 [prestmit]
-[prestmit.connector_auth.HeaderKey]
+[prestmit.connector_auth.SignatureKey]
 api_key = "API Key"
+api_secret = "API Secret"
+key1 = "Account PIN"
 
 [opik]
 [opik.connector_auth.HeaderKey]

@@ -319,9 +319,13 @@ not a stopgap.
   (`index.js`, `routes.js`, `webhookGateway.js`, `providers/`, `utils/`,
   a `render.yaml`). Zapier-codes' PR replaces this with the **Hyperswitch**
   Rust payment-orchestration engine (large Cargo workspace under `crates/`).
-- The legacy Node app was **not deleted** — it was moved to `legacy-node/`
-  in this repo, complete with its own `render.yaml` and `handover.md`. That
-  subfolder's `render.yaml` lists the env vars for the *old* system
+- The legacy Node app was **not deleted** originally — it was moved to
+  `legacy-node/` in this repo, complete with its own `render.yaml` and
+  `handover.md`. (That folder has since been **removed entirely** — see the
+  Task 77 handover entry in the git history: all ten legacy providers are
+  now native Rust connector crates, so the legacy-deletion gate is met and
+  `legacy-node/` is gone.) That subfolder's `render.yaml` listed the env vars
+  for the *old* system
   (`PAYSTACK_SECRET_KEY`, `KORAPAY_SECRET_KEY`, `JUICYWAY_SECRET_KEY`,
   `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `MAVW_WEBHOOK_URL`,
   `MAVW_WEBHOOK_FORWARD_SECRET`, `INTERNAL_API_KEY`). **None of these are
@@ -1150,3 +1154,53 @@ underlying `crypto_signal`-is-Ed25519 point below still applies):**
   step, once real network access to the toolchain exists somewhere.
 - No Ledger API/JSON API integration exists yet — unchanged from before;
   `canton_bridge.rs` still produces data only.
+
+---
+
+## Task 77 — all ten legacy providers ported to native Rust connectors; `legacy-node/` deleted (2026-10-08)
+
+This session completed the Task 77 migration recorded in git history (the
+old `legacy-node/handover.md`, now deleted — see below). The ten legacy
+Node.js providers are now native Hyperswitch connector crates under
+`crates/hyperswitch_connectors/src/connectors/`: Korapay, Paystack,
+JuicyWay, Flutterwave (the first five, done in prior sessions) and Remita,
+DodoPayments, PaymentPoint, Xixapay, Prestmit, `telcos.opik.net`
+(the second five, completed here).
+
+What was finished this session:
+
+- **Prestmit** — replaced the placeholder scaffold with a real gift-card
+  SELL-trade implementation: `POST /partners/v1/giftcard-trade/sell/create`
+  for Authorize and `GET /partners/v1/giftcard-trade/sell/history?referenceOrID={ref}`
+  for PSync (Prestmit has no single-trade GET). Auth is `API-KEY` +
+  `API-Hash` where the hash is HMAC-SHA256 of `{API_KEY}:{json_body}` hex,
+  computed at request time from the exact serialized body
+  `RequestContent::Json` emits. Credentials carried via `SignatureKey`.
+- **opik** — dropped the last "scaffold" wording from its metadata; the
+  VTU-airtime implementation (Authorize `POST /api/v1/purchase/airtime`,
+  PSync reconciled through `GET /api/v1/transactions`) is real.
+- **Remita, DodoPayments, PaymentPoint, Xixapay** — verified already
+  holding real, provider-specific implementations (no placeholder scaffolds
+  remain).
+- **Test auth plumbing** — PaymentPoint, Xixapay, and Prestmit were listed
+  as `HeaderKey` in `crates/test_utils/src/connector_auth.rs` while their
+  config TOMLs and implementations require three credentials (Bearer secret
+  + api-key header + businessId/account PIN). Corrected all three to
+  `SignatureKey` and filled in the matching `sample_auth.toml` entries.
+
+Verified: `cargo check -p hyperswitch_connectors --features v1`,
+`--features "v1,payouts"`, `-p test_utils`, and
+`cargo check -p router --test connectors --features v1` all compile clean
+(zero errors).
+
+**`legacy-node/` deleted.** Per Task 77's own legacy-deletion gate (b-8),
+the legacy folder is removed now that all ten providers are native
+connectors. The few non-comment references to its path that would have gone
+stale (CI workflow comments, `.typos.toml`'s exclude entry, this file's own
+context note) were updated. The many `legacy-node/providers/*.js` provenance
+comments inside connector source files were left in place — they are
+historical annotations in already-written code, not live path dependencies.
+
+**V2 remains on hold** per the standing product-owner instruction at the top
+of this file — none of this session touched Bill of Exchange / ERC-3643 /
+Canton-Daml material.

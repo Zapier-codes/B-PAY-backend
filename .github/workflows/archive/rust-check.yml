@@ -2,7 +2,7 @@ name: Rust check
 
 # Sandboxed agent sessions working on this repo cannot reach
 # static.rust-lang.org / sh.rustup.rs (network policy blocks both,
-# confirmed repeatedly -- see legacy-node/handover.md, Task 73/a), so
+# confirmed repeatedly), so
 # this repo has had no real compile signal on any storage_impl Rust
 # change since that work started. GitHub-hosted runners have
 # unrestricted internet access and are the actual source of truth for

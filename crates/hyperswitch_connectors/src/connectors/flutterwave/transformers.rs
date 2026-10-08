@@ -31,7 +31,7 @@ use crate::{
 // the currency's base/major unit (e.g. whole Naira, not kobo) — confirmed
 // this session against developer.flutterwave.com's own worked examples
 // (Standard Payment guide: `amount: '7500'` prices a ₦7,500 charge, not
-// ₦75). This matches this repo's own legacy-node/providers/flutterwave.js
+// ₦75). This matches this repo's own original Node "flutterwave" integration
 // note (Task 52/d-2, `getAmountFormat`'s `'flutterwave'` case) — that note
 // flagged itself as "inferred from examples, not an explicit doc
 // statement"; the Standard guide's worked example above is the literal
@@ -56,7 +56,7 @@ impl<T> From<(FloatMajorUnit, T)> for FlutterwaveRouterData<T> {
 // Flutterwave v3 authenticates with a single secret key, sent as
 // `Authorization: Bearer <secretKey>` on every call — confirmed against
 // developer.flutterwave.com's own examples and this repo's own
-// legacy-node/providers/flutterwave.js (every v3 method in that file uses
+// the original Node "flutterwave" integration (every v3 method in that file uses
 // this exact header). HeaderKey is this crate's matching single-key auth
 // type, same as Korapay/Paystack/JuicyWay in this same connectors/
 // directory.
@@ -83,7 +83,7 @@ impl TryFrom<&ConnectorAuthType> for FlutterwaveAuthType {
 // Request shape confirmed against developer.flutterwave.com's own
 // "Flutterwave Standard" guide, fetched this session — `customer` nested
 // exactly as shown there (`email`/`name`/`phonenumber`), `redirect_url`
-// required. This mirrors this repo's own legacy-node/providers/
+// required. This mirrors this repo's own original Node integration's
 // flutterwave.js#processPayment() payload exactly (that file's own
 // comment already cites the same guide page). `customizations` is only
 // sent when the caller actually supplies a title/logo/description —
@@ -111,7 +111,7 @@ impl TryFrom<&FlutterwaveRouterData<&PaymentsAuthorizeRouterData>> for Flutterwa
         item: &FlutterwaveRouterData<&PaymentsAuthorizeRouterData>,
     ) -> Result<Self, Self::Error> {
         // Every real collection method in this repo's own
-        // legacy-node/providers/flutterwave.js (v3) funnels through this
+        // the original Node "flutterwave" integration (v3) funnels through this
         // one hosted-checkout endpoint — there is no separate direct-card
         // API confirmed for v3 in that file. Card/redirect/bank-transfer/
         // wallet payment-method-data all land here the same way; nothing
@@ -171,8 +171,8 @@ impl TryFrom<&FlutterwaveRouterData<&PaymentsAuthorizeRouterData>> for Flutterwa
 // PSync below deliberately calls `verify_by_reference` (by tx_ref)
 // rather than the numeric-id `verify` endpoint most other connectors in
 // this crate use: there is no id to key off yet. This also matches
-// legacy-node/providers/flutterwave.js#verifyTransaction()'s own
-// endpoint choice, so it's a genuine API constraint, not a legacy-only
+// the original Node "flutterwave" integration's verifyTransaction()'s own
+// endpoint choice, so it's a genuine API constraint, not a integration-specific
 // habit ported over unexamined.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct FlutterwaveChargeInitData {
@@ -198,7 +198,7 @@ impl<F, T> TryFrom<ResponseRouterData<F, FlutterwavePaymentsResponse, T, Payment
         // example fetched this session, and already flagged as a real,
         // confirmed difference from Korapay/Paystack's own boolean
         // `status: true/false` in this repo's own
-        // legacy-node/providers/flutterwave.js (Task 52/d-2's own
+        // the original Node "flutterwave" integration (Task 52/d-2's own
         // comment on `processPayment()`). Checking `!= "success"`, not a
         // falsy/truthy check, matters for the same reason that comment
         // gives: a non-empty error string is still truthy.
@@ -491,7 +491,7 @@ impl<F> TryFrom<ResponseRouterData<F, FlutterwaveRefundResponse, RefundsData, Re
 //
 // Flat `{ status: "error", message: "..." }` shape — confirmed against
 // developer.flutterwave.com's error examples and this repo's own
-// legacy-node/providers/flutterwave.js (every `providerError(responseData
+// the original Node "flutterwave" integration (every `providerError(responseData
 // .message || ...)` call site in that file). No separate machine-readable
 // error code observed, same position Korapay's own `KorapayErrorResponse`
 // is in — `code` is left for `build_error_response` (mod.rs) to fall back
@@ -508,17 +508,17 @@ pub struct FlutterwaveErrorResponse {
 // ---------------------------------------------------------------------
 //
 // Request shape ported directly from this repo's own
-// legacy-node/providers/flutterwave.js#processPayout() (Task 52/d-2a) --
+// the original Node "flutterwave" integration's processPayout() (Task 52/d-2a) --
 // confirmed there against developer.flutterwave.com/reference/endpoints/transfers
 // and the Transfers overview guide. FLAT top-level fields -- a real,
 // confirmed difference from Korapay's own connector in this crate, whose
 // payout destination fields are nested under a `destination` object; not
 // an inconsistency to "fix", the two providers' real APIs are just
-// shaped differently, same note the legacy JS file's own comment already
+// shaped differently, same note the original Node integration's own comment already
 // makes.
 //
 // PoSync's id handling is the other real, confirmed difference from
-// Korapay's connector: legacy-node's own verifyPayout() docblock (Task
+// Korapay's connector: the original Node integration's own verifyPayout() docblock (Task
 // 52/d-2a) states plainly that Flutterwave has no confirmed
 // reference-based single-transfer lookup -- `GET /transfers/:id` only
 // takes Flutterwave's own internal numeric transfer id. So, unlike
@@ -584,7 +584,7 @@ impl<F> TryFrom<&FlutterwaveRouterData<&PayoutsRouterData<F>>> for FlutterwavePa
             amount: item.amount,
             currency: router_data.request.destination_currency,
             // Hyperswitch's `PayoutsData` carries no narration field at
-            // all (unlike the legacy JS request, which took a
+            // all (unlike the original Node integration request, which took a
             // caller-supplied `narration`) -- a generic, connector-level
             // default is used here instead, same choice Korapay's own
             // connector in this crate already made for the identical gap.
@@ -595,10 +595,10 @@ impl<F> TryFrom<&FlutterwaveRouterData<&PayoutsRouterData<F>>> for FlutterwavePa
 }
 
 // Real lifecycle state of the transfer itself. Per
-// legacy-node/providers/flutterwave.js#processPayout()'s own comment,
+// the original Node "flutterwave" integration's processPayout()'s own comment,
 // worked examples confirm `NEW`/`SUCCESSFUL`/`FAILED` (compared there via
 // `.toUpperCase() === 'FAILED'`, implying the API's own casing isn't
-// fully trusted even in the legacy code) -- kept as a plain `String`
+// fully trusted even in the original Node code) -- kept as a plain `String`
 // here, matched case-insensitively below, rather than a strict enum,
 // deliberately mirroring that same defensive `.toUpperCase()` posture
 // instead of risking a deserialization failure on an unexpected case.
@@ -608,7 +608,7 @@ fn flutterwave_payout_status_from_str(status: &str) -> PayoutStatus {
         "SUCCESSFUL" => PayoutStatus::Success,
         "FAILED" => PayoutStatus::Failed,
         // "NEW" is Flutterwave's own confirmed non-terminal acknowledgement
-        // state (per the legacy JS's own comment: "acknowledgement only,
+        // state (per the original Node integration's own comment: "acknowledgement only,
         // not final confirmation") -- and anything else unrecognized folds
         // to the same non-terminal `Pending`, same "don't fail closed on
         // an unrecognized status string" posture Korapay's own
@@ -657,7 +657,7 @@ impl<F> TryFrom<PayoutsResponseRouterData<F, FlutterwavePayoutResponse>> for Pay
         // Outer `status != "success"` is Flutterwave's own signal that
         // the API call itself was rejected -- same discipline as
         // `FlutterwavePaymentsResponse`'s own handling above and every
-        // method in legacy-node/providers/flutterwave.js (`if
+        // method in the original Node "flutterwave" integration (`if
         // (!response.ok || responseData.status !== 'success') throw
         // ...`). Deliberately different from a `data.status: "FAILED"`
         // outcome below, which is a normal, successfully-verified
@@ -673,7 +673,7 @@ impl<F> TryFrom<PayoutsResponseRouterData<F, FlutterwavePayoutResponse>> for Pay
             .as_deref()
             .map(flutterwave_payout_status_from_str)
             // No `data.status` at all (seen on some acknowledgement-only
-            // responses per the legacy JS's own logging comment) is the
+            // responses per the original Node integration's own logging comment) is the
             // same non-terminal "accepted, not yet confirmed" case as an
             // explicit `NEW` -- not a failure.
             .unwrap_or(PayoutStatus::Pending);

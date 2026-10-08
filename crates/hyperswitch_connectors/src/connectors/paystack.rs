@@ -611,7 +611,7 @@ impl ConnectorIntegration<RSync, RefundsData, RefundsResponseData> for Paystack 
 
 // Task 77/a-2-iii — Paystack transfer-recipient creation. Endpoint and
 // request shape ported directly from this repo's own
-// legacy-node/providers/paystack.js#createTransferRecipient(), a real,
+// the original Node "paystack" integration's createTransferRecipient(), a real,
 // already primary-source-confirmed Task 51/c fix. Runs before
 // `PoFulfill` in the payout flow chain -- its response's
 // `recipient_code` is read back by `PoFulfill` below via
@@ -699,11 +699,11 @@ impl ConnectorIntegration<PoRecipient, PayoutsData, PayoutsResponseData> for Pay
 
 // Task 77/a-2-iii — Paystack payout fulfillment (`POST /transfer`).
 // Request shape, and the two-level response shape, ported directly from
-// legacy-node/providers/paystack.js#processPayout() (Task 51/c). See
+// the original Node "paystack" integration's processPayout() (Task 51/c). See
 // paystack/transformers.rs's own `PaystackPayoutTransactionStatus::Otp`
 // comment for a real, flagged caveat this leaf could NOT close: an
 // `"otp"` transfer needs a human to finalize it with a one-time code,
-// which this connector (like the legacy JS it's ported from) has no way
+// which this connector (like the original Node integration it's ported from) has no way
 // to supply.
 #[cfg(feature = "payouts")]
 impl ConnectorIntegration<PoFulfill, PayoutsData, PayoutsResponseData> for Paystack {

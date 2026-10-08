@@ -447,7 +447,7 @@ impl ConnectorIntegration<RSync, RefundsData, RefundsResponseData> for Opik {
 
 impl webhooks::IncomingWebhook for Opik {
     // opik's webhook signing scheme was not captured in this repo's own
-    // audit (legacy-node/docs/guides/09-conventions-and-open-items.md,
+    // audit (the port's conventions-and-open-items notes,
     // item #1) — left as WebhooksNotImplemented rather than half-ported,
     // matching Korapay/DodoPayments' own deferral.
     fn get_webhook_object_reference_id(

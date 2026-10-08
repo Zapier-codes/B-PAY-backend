@@ -3682,7 +3682,7 @@ impl StorageInterface for KafkaStore {
     // `Check compilation for V2 features` run) -- delegates to the wrapped
     // Store exactly like every other non-boxed method in this impl block
     // (see set_key_manager_state below). Not recompiled locally -- no
-    // working rustc >=1.85 in this sandbox (see legacy-node/handover.md
+    // working rustc >=1.85 in this sandbox (see the original Node integration's handover doc
     // New-Clone Checklist). Flag as reviewed-by-reading only until a
     // session with a real toolchain confirms.
     fn get_pg_kv_store(&self) -> CustomResult<PgKvStore, errors::StorageError> {

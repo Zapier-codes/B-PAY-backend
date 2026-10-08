@@ -131,10 +131,10 @@ impl ConnectorCommon for Korapay {
         "korapay"
     }
 
-    // Confirmed against legacy-node/providers/korapay.js (Task 7's own
+    // Confirmed against the original Node "korapay" integration (Task 7's own
     // comment: "Korapay wants base currency units, not subunits") — this is
     // the one currency-unit fact this connector carries over directly from
-    // the legacy integration rather than from Korapay's public docs alone.
+    // the original Node integration rather than from Korapay's public docs alone.
     fn get_currency_unit(&self) -> api::CurrencyUnit {
         api::CurrencyUnit::Base
     }
@@ -214,7 +214,7 @@ impl ConnectorIntegration<SetupMandate, SetupMandateRequestData, PaymentsRespons
         _connectors: &Connectors,
     ) -> CustomResult<Option<Request>, errors::ConnectorError> {
         // No mandate/recurring-charge API observed anywhere in
-        // legacy-node/providers/korapay.js — not wired rather than guessed.
+        // the original Node "korapay" integration — not wired rather than guessed.
         Err(
             errors::ConnectorError::NotImplemented("Setup Mandate flow for Korapay".to_string())
                 .into(),
@@ -236,7 +236,7 @@ impl ConnectorIntegration<Authorize, PaymentsAuthorizeData, PaymentsResponseData
     }
 
     // Real endpoint per Korapay's own docs, confirmed against
-    // legacy-node/providers/korapay.js's own comment: previously
+    // the original Node "korapay" integration's own comment: previously
     // `/transactions/charge`, which does not exist on Korapay's API — this
     // connector starts from the corrected path directly.
     fn get_url(
@@ -327,7 +327,7 @@ impl ConnectorIntegration<PSync, PaymentsSyncData, PaymentsResponseData> for Kor
     }
 
     // Real endpoint per Korapay's own docs, confirmed against
-    // legacy-node/providers/korapay.js's own comment: previously
+    // the original Node "korapay" integration's own comment: previously
     // `/transactions/verify?reference=`, which does not exist on Korapay's
     // API — GET by path param is the corrected shape this connector uses.
     fn get_url(
@@ -393,7 +393,7 @@ impl ConnectorIntegration<PSync, PaymentsSyncData, PaymentsResponseData> for Kor
 
 // Korapay's `charges/initialize` is an auto-capture, single-step flow (no
 // separate authorize-then-capture endpoint anywhere in
-// legacy-node/providers/korapay.js) — same position as Opennode elsewhere
+// the original Node "korapay" integration) — same position as Opennode elsewhere
 // in this crate, which also has no Capture API and returns
 // `FlowNotSupported` rather than guessing at an endpoint.
 impl ConnectorIntegration<Capture, PaymentsCaptureData, PaymentsResponseData> for Korapay {
@@ -411,7 +411,7 @@ impl ConnectorIntegration<Capture, PaymentsCaptureData, PaymentsResponseData> fo
 }
 
 // Same reasoning as Capture above — no void/cancel endpoint observed for
-// Korapay's collection flow in the legacy integration.
+// Korapay's collection flow in the original Node integration.
 impl ConnectorIntegration<Void, PaymentsCancelData, PaymentsResponseData> for Korapay {
     fn build_request(
         &self,
@@ -427,12 +427,12 @@ impl ConnectorIntegration<Void, PaymentsCancelData, PaymentsResponseData> for Ko
 }
 
 // No refund method exists anywhere in
-// legacy-node/providers/korapay.js — this connector does not guess at an
+// the original Node "korapay" integration — this connector does not guess at an
 // unconfirmed `/refunds` endpoint the way Task 42's payout-shape bug taught
 // this codebase not to. Flagged in handover.md as open follow-up work
 // (confirm against developers.korapay.com/docs/refunds or Korapay support
 // before wiring), same discipline as `getCardEvents()`'s own "needs a
-// direct answer before this is written" note in the legacy file.
+// direct answer before this is written" note in the original Node integration.
 impl ConnectorIntegration<Execute, RefundsData, RefundsResponseData> for Korapay {
     fn build_request(
         &self,
@@ -455,7 +455,7 @@ impl ConnectorIntegration<RSync, RefundsData, RefundsResponseData> for Korapay {
 
 // Task 77/a-1-iii — Korapay payout fulfillment. Endpoint, request shape,
 // and the two-level response shape are all ported from
-// legacy-node/providers/korapay.js#processPayout(), a real, already-
+// the original Node "korapay" integration's processPayout(), a real, already-
 // battle-tested Task 42 Part B-a/b fix -- not re-derived from scratch here.
 // See korapay/transformers.rs's own `get_korapay_payout_bank_account` note
 // for a real, flagged gap this leaf could NOT close: Hyperswitch's
@@ -477,7 +477,7 @@ impl ConnectorIntegration<PoFulfill, PayoutsData, PayoutsResponseData> for Korap
 
     // Real endpoint per Korapay's own docs (developers.korapay.com/docs/
     // payout-via-api), confirmed directly against
-    // legacy-node/providers/korapay.js#processPayout()'s own fetch call.
+    // the original Node "korapay" integration's processPayout()'s own fetch call.
     fn get_url(
         &self,
         _req: &PayoutsRouterData<PoFulfill>,
@@ -551,7 +551,7 @@ impl ConnectorIntegration<PoFulfill, PayoutsData, PayoutsResponseData> for Korap
 
 // Task 77/a-1-iii — Korapay payout verification. Endpoint confidence is
 // explicitly weaker than Fulfill's -- see
-// legacy-node/providers/korapay.js#verifyPayout()'s own comment (Task 42
+// the original Node "korapay" integration's verifyPayout()'s own comment (Task 42
 // "the missing verification call — part i"): this path is a strong
 // pattern-match off Korapay's own Bulk Payouts docs
 // (`.../transactions/bulk/:batch_reference` verifies a bulk batch; dropping
@@ -636,8 +636,8 @@ impl ConnectorIntegration<PoSync, PayoutsData, PayoutsResponseData> for Korapay 
 #[async_trait::async_trait]
 impl webhooks::IncomingWebhook for Korapay {
     // Korapay webhook signature verification (hex HMAC-SHA256 of only the
-    // `data` object, per legacy-node/providers/korapay.js's
-    // `verifyWebhookSignature`) is real, working logic in the legacy stack
+    // `data` object, per the original Node "korapay" integration's
+    // `verifyWebhookSignature`) is real, working logic in the original Node stack
     // but genuinely out of scope for this leaf (a-1-ii-X covers
     // ConnectorIntegration, not IncomingWebhook) — left as
     // WebhooksNotImplemented and flagged in handover.md as the next natural

@@ -51,8 +51,8 @@ impl<T> From<(MinorUnit, T)> for JuicywayRouterData<T> {
 // RAW key value in the Authorization header -- NO "Bearer " prefix.
 // Confirmed against docs.juicyway.com/authentication.md directly
 // (handover.md Task 45a / the "FULL API discovery pass"): every one of
-// legacy-node/providers/juicyway.js's REST calls that still sent
-// `Bearer ${apiKey}` was a confirmed bug, fixed in the legacy file by
+// the original Node "juicyway" integration's REST calls that still sent
+// `Bearer ${apiKey}` was a confirmed bug, fixed in the original Node integration by
 // dropping the prefix. This connector starts from the corrected shape.
 // (The webhook checksum uses a SEPARATE credential -- the merchant's
 // "business ID", not this key -- and is out of scope for this leaf; see
@@ -80,7 +80,7 @@ impl TryFrom<&ConnectorAuthType> for JuicywayAuthType {
 // Request shape confirmed against docs.juicyway.com/payments/
 // initialize-payment.md (handover.md's "JuicyWay — FULL API discovery
 // pass", Task 8b/45b): the real required body is a deeply-nested object,
-// not the flat `{ amount, email, reference, currency }` the legacy JS
+// not the flat `{ amount, email, reference, currency }` the original Node integration
 // integration sent (a confirmed, real bug — Task 45b). Every field below
 // is read from RouterData where a matching field exists; anything the
 // docs mark required that RouterData has no generic equivalent for is
@@ -181,8 +181,8 @@ impl TryFrom<&JuicywayRouterData<&PaymentsAuthorizeRouterData>> for JuicywayPaym
         item: &JuicywayRouterData<&PaymentsAuthorizeRouterData>,
     ) -> Result<Self, Self::Error> {
         // JuicyWay's `/payment-sessions` is a single hosted-checkout
-        // endpoint (per legacy-node/providers/juicyway.js, the only
-        // collection call this repo's legacy integration ever made) —
+        // endpoint (per the original Node "juicyway" integration, the only
+        // collection call this repo's original Node integration ever made) —
         // same "one endpoint takes whatever payment-method-data arrives"
         // shape as Korapay's own connector in this crate.
         match item.router_data.request.payment_method_data {
@@ -406,7 +406,7 @@ impl<F, T> TryFrom<ResponseRouterData<F, JuicywayPaymentsResponse, T, PaymentsRe
             // transaction id — this is what makes PSync's `GET
             // /payments/{id}` call correct by construction, closing the
             // reference-vs-ID gap flagged in handover.md Task 45d
-            // (legacy-node/providers/juicyway.js has no such storage and
+            // (the original Node "juicyway" integration has no such storage and
             // still calls the wrong id-shaped endpoint with a reference).
             response: Ok(PaymentsResponseData::TransactionResponse {
                 resource_id: ResponseId::ConnectorTransactionId(item.response.data.payment.id),
@@ -494,7 +494,7 @@ impl<F, T> TryFrom<ResponseRouterData<F, JuicywayFetchPaymentResponse, T, Paymen
 // (validation errors additionally carry a top-level `errors: [{ field,
 // message }]` array). The end-user-facing message lives at
 // `error.message`, NESTED — confirmed as a real, live bug in
-// legacy-node/providers/juicyway.js (Task 45c): that file's own
+// the original Node "juicyway" integration (Task 45c): that file's own
 // `responseData.message || 'Juicyway ... failed'` fallback fires on
 // every single real error, since `responseData.message` is always
 // undefined for JuicyWay's actual envelope. This connector reads the
@@ -530,7 +530,7 @@ impl JuicywayErrorResponse {
     /// `error.message` first (the documented primary field), then the
     /// first validation error's own message, then a generic fallback.
     /// Never falls back to a top-level `message` field the way the
-    /// legacy JS bug did — that field does not exist in JuicyWay's real
+    /// original Node integration bug did — that field does not exist in JuicyWay's real
     /// envelope.
     pub fn get_message(&self) -> String {
         self.error
@@ -557,7 +557,7 @@ impl JuicywayErrorResponse {
 // ---------------------------------------------------------------------
 //
 // Task 77/a-3-iii. Ported from this repo's own
-// legacy-node/providers/juicyway.js#createBeneficiary()/processPayout()/
+// the original Node "juicyway" integration's createBeneficiary()/processPayout()/
 // verifyPayout() -- Task 52's already-confirmed beneficiary-first,
 // pin-gated shape. Unlike Korapay (Task 77/a-1-iii), which takes a raw
 // bank_code/account_number pair inline on a single disburse call,
@@ -580,12 +580,12 @@ impl JuicywayErrorResponse {
 // Request shape CONFIRMED this session (Task 77/a-3-iii follow-up,
 // 2026-09-14) against the actual primary source --
 // docs.juicyway.com/transfers/beneficiaries/create-beneficiary -- which
-// neither this file's original a-3-iii pass nor the legacy JS
+// neither this file's original a-3-iii pass nor the original Node integration
 // (juicyway.js#createBeneficiary) had fetched; both had only reached
 // the parent /transfers/beneficiaries overview page, which documents
 // field *names* but not the request envelope. The confirmed "Create
 // NGN Bank Account Beneficiary" shape is FLAT -- no `account_details`
-// wrapper -- and requires two fields neither the legacy JS nor the
+// wrapper -- and requires two fields neither the original Node integration nor the
 // original Rust struct sent at all: `bank_name` and `rail` (must be
 // literal `"nuban"`). The previous nested-`account_details` shape was
 // never a confirmed guess in the first place; it doesn't match any
@@ -646,7 +646,7 @@ impl Serialize for JuicywayCreateBeneficiaryRequest {
 // added upstream and every connector using this same stopgap (Korapay,
 // Paystack, now JuicyWay) is switched to it together.
 // `crypto_address`/`interac` beneficiaries are real per
-// legacy-node/providers/juicyway.js#createBeneficiary() but rejected
+// the original Node "juicyway" integration's createBeneficiary() but rejected
 // with `NotSupported` here, same discipline as every other
 // non-buildable variant -- there is currently no input shape to build
 // them from.
@@ -756,7 +756,7 @@ impl<F> TryFrom<PayoutsResponseRouterData<F, JuicywayBeneficiaryResponse>>
 // connector in this crate (Korapay, Stripe Connect, Wise, Adyen
 // Platform, etc.) already uses for exactly this kind of provider-
 // specific extra that the shared request shape has no field for --
-// deliberately NOT read from an env var the way the legacy JS's own
+// deliberately NOT read from an env var the way the original Node integration's own
 // `JUICYWAY_PAYOUT_PIN` fallback does, since a transfer PIN is
 // merchant-transaction-specific, per-call data, not a process-wide
 // default a stateless connector integration should assume.
@@ -842,7 +842,7 @@ impl<F> TryFrom<&JuicywayRouterData<&PayoutsRouterData<F>>> for JuicywayPayoutFu
                 beneficiary_type: "bank_account".to_string(),
             },
             // Hyperswitch's `PayoutsData` carries no narration/
-            // description field at all (unlike the legacy JS request,
+            // description field at all (unlike the original Node integration request,
             // which took a caller-supplied `narration`/`description` or
             // fell back to a Mavins-specific default) -- a generic,
             // connector-level default is used here instead, same
@@ -857,7 +857,7 @@ impl<F> TryFrom<&JuicywayRouterData<&PayoutsRouterData<F>>> for JuicywayPayoutFu
 }
 
 // Real lifecycle state of the payout itself. Per
-// legacy-node/providers/juicyway.js#processPayout()'s own docblock:
+// the original Node "juicyway" integration's processPayout()'s own docblock:
 // "status is documented as 'pending' in both worked examples; no
 // documented synchronous 'failed' outcome" -- so, unlike Korapay's/
 // Paystack's payout status enums, `Success`/`Failed` here are
@@ -887,7 +887,7 @@ impl From<JuicywayPayoutStatus> for PayoutStatus {
             // Per this enum's own docblock above: JuicyWay's confirmed
             // behavior never resolves synchronously to a terminal state
             // on the initiate call -- final outcome presumably arrives
-            // via webhook, same caveat legacy-node's own processPayout()
+            // via webhook, same caveat the original Node integration's own processPayout()
             // logs at call time. Callers must not treat a `Pending`
             // result here as final, same discipline Korapay's/
             // Paystack's own Pending mappings already require.
@@ -942,7 +942,7 @@ impl<F> TryFrom<PayoutsResponseRouterData<F, JuicywayPayoutResponse>> for Payout
                 // the right identifier to poll `/payouts/{id}` against.
                 // Per this section's own file-level comment: JuicyWay's
                 // worked example has no `reference` field at all, only
-                // `id`, matching legacy-node's own verifyPayout()
+                // `id`, matching the original Node integration's own verifyPayout()
                 // docblock exactly.
                 connector_payout_id: Some(item.response.data.id.clone()),
                 payout_eligible: None,

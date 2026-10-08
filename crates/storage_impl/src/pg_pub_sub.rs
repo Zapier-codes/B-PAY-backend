@@ -45,7 +45,7 @@
 // those files' fix: a module-level inner attribute, placed before any
 // item as Rust requires, rather than the per-struct attribute that
 // already failed once here too. Not recompiled locally (see
-// legacy-node/handover.md New-Clone Checklist) -- reviewed by reading
+// the original Node integration's handover doc New-Clone Checklist) -- reviewed by reading
 // only.
 #![allow(unused_qualifications)]
 

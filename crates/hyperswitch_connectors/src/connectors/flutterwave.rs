@@ -86,7 +86,7 @@ impl api::PaymentToken for Flutterwave {}
 // hyperswitch_interfaces::api::payouts, same split Korapay's own
 // connector in this crate already follows. Only `PayoutFulfill`/
 // `PayoutSync` are implemented for real below, per
-// legacy-node/providers/flutterwave.js#processPayout()/verifyPayout()'s
+// the original Node "flutterwave" integration's processPayout()/verifyPayout()'s
 // own confirmed request/response shapes (Task 52/d-2a) -- a flat,
 // single-call disburse, same shape class as Korapay's own connector, NOT
 // the beneficiary-first shape Paystack/JuicyWay both need in this crate.
@@ -111,7 +111,7 @@ impl ConnectorIntegration<PaymentMethodToken, PaymentMethodTokenizationData, Pay
 {
     // Not Implemented (R) — Flutterwave v3's Standard checkout is a single
     // hosted-link endpoint; no separate tokenization step is called out
-    // anywhere in this repo's own legacy-node/providers/flutterwave.js.
+    // anywhere in this repo's own original Node "flutterwave" integration.
 }
 
 impl<Flow, Request, Response> ConnectorCommonExt<Flow, Request, Response> for Flutterwave
@@ -142,7 +142,7 @@ impl ConnectorCommon for Flutterwave {
     // Standard" worked example this session (`amount: '7500'` charges
     // ₦7,500, not ₦75) — see transformers.rs's own citation on
     // `FlutterwaveRouterData` for the full note, including this repo's
-    // own legacy-node/providers/flutterwave.js confidence caveat that
+    // own original Node "flutterwave" integration confidence caveat that
     // this fetch resolves.
     fn get_currency_unit(&self) -> api::CurrencyUnit {
         api::CurrencyUnit::Base
@@ -226,7 +226,7 @@ impl ConnectorIntegration<SetupMandate, SetupMandateRequestData, PaymentsRespons
         _connectors: &Connectors,
     ) -> CustomResult<Option<Request>, errors::ConnectorError> {
         // No mandate/recurring-charge API observed anywhere in this
-        // repo's own legacy-node/providers/flutterwave.js — not wired
+        // repo's own original Node "flutterwave" integration — not wired
         // rather than guessed, same posture as Korapay's own connector.
         Err(errors::ConnectorError::NotImplemented(
             "Setup Mandate flow for Flutterwave".to_string(),
@@ -251,7 +251,7 @@ impl ConnectorIntegration<Authorize, PaymentsAuthorizeData, PaymentsResponseData
     // Confirmed against developer.flutterwave.com's own "Flutterwave
     // Standard" guide, fetched this session — `POST /v3/payments` is the
     // real, current endpoint (not a deprecated/renamed path), matching
-    // this repo's own legacy-node/providers/flutterwave.js#processPayment().
+    // this repo's own original Node "flutterwave" integration's processPayment().
     fn get_url(
         &self,
         _req: &PaymentsAuthorizeRouterData,
@@ -345,7 +345,7 @@ impl ConnectorIntegration<PSync, PaymentsSyncData, PaymentsResponseData> for Flu
     // returns Flutterwave's own numeric `id`, only a hosted link, so
     // `tx_ref` (which this connector generates and controls) is the only
     // identifier available to sync against. Matches this repo's own
-    // legacy-node/providers/flutterwave.js#verifyTransaction(), which
+    // the original Node "flutterwave" integration's verifyTransaction(), which
     // made the same endpoint choice for the same reason (its own comment
     // there confirms the id-based path "takes Flutterwave's own internal
     // numeric `id`, not the merchant `reference`").
@@ -412,7 +412,7 @@ impl ConnectorIntegration<PSync, PaymentsSyncData, PaymentsResponseData> for Flu
 
 // Flutterwave's Standard endpoint is redirect/hosted-checkout only in
 // this leaf's scope — no separate authorize-then-capture step is called
-// anywhere in this repo's own legacy-node/providers/flutterwave.js.
+// anywhere in this repo's own original Node "flutterwave" integration.
 // Capture/Void/Refund below all return `FlowNotSupported`/`NotImplemented`
 // rather than a guessed endpoint, same position Opennode and (for its
 // Capture flow) Korapay are already in elsewhere in this crate.
@@ -640,7 +640,7 @@ impl ConnectorIntegration<RSync, RefundsData, RefundsResponseData> for Flutterwa
 }
 
 // Payout fulfillment (`POST /transfers`). Request shape ported from
-// legacy-node/providers/flutterwave.js#processPayout() (Task 52/d-2a) --
+// the original Node "flutterwave" integration's processPayout() (Task 52/d-2a) --
 // see transformers.rs's own file-level note on this section for the
 // flat-vs-nested shape difference from Korapay's own connector, and the
 // real NUBAN/bank-code stopgap this leaf shares with Korapay/Paystack/
@@ -674,7 +674,7 @@ impl ConnectorIntegration<PoFulfill, PayoutsData, PayoutsResponseData> for Flutt
     ) -> CustomResult<RequestContent, errors::ConnectorError> {
         // Same base/major-unit rule as collection above (see
         // transformers.rs's own `FlutterwaveRouterData` note) --
-        // legacy-node's own processPayout() reuses the identical
+        // the original Node integration's own processPayout() reuses the identical
         // `convertAmountForProvider(..., 'flutterwave', ...)` call for
         // payouts, not a separate payout-specific unit rule.
         let amount = convert_amount(
@@ -735,7 +735,7 @@ impl ConnectorIntegration<PoFulfill, PayoutsData, PayoutsResponseData> for Flutt
 // Payout verification (`GET /transfers/{id}`). Keyed on Flutterwave's own
 // internal numeric transfer id, NOT a merchant reference -- unlike
 // Korapay's own PoSync in this crate. See
-// legacy-node/providers/flutterwave.js#verifyPayout()'s own docblock
+// the original Node "flutterwave" integration's verifyPayout()'s own docblock
 // (Task 52/d-2a): no confirmed reference-based single-transfer lookup
 // exists on Flutterwave's side, only the id-based path. `PoFulfill`'s own
 // response above stores that id in `connector_payout_id` for this flow
@@ -817,18 +817,18 @@ impl ConnectorIntegration<PoSync, PayoutsData, PayoutsResponseData> for Flutterw
 #[async_trait::async_trait]
 impl webhooks::IncomingWebhook for Flutterwave {
     // Flutterwave v3 webhook signature verification — ported from
-    // legacy-node/providers/flutterwave.js#verifyWebhookSignature.
+    // the original Node "flutterwave" integration's verifyWebhookSignature.
     //
     // Per developer.flutterwave.com/docs/webhooks and Flutterwave's own
     // official examples (Node, PHP) — both fetched and cross-checked
-    // during the legacy port — the `verif-hash` header is a plain
+    // during the port — the `verif-hash` header is a plain
     // dashboard-configured shared secret echoed back verbatim on every
     // call, NOT a per-payload HMAC digest the way Korapay's
     // `x-korapay-signature` is (at least one third-party blog post found
     // during that port computed an HMAC instead, which would reject every
     // genuine Flutterwave webhook — not followed here, same call the
-    // legacy JS already made). `crypto::ConstantTimeEquals` — the Rust
-    // equivalent of the legacy code's `crypto.timingSafeEqual` — is
+    // original Node integration already made). `crypto::ConstantTimeEquals` — the Rust
+    // equivalent of the original Node code's `crypto.timingSafeEqual` — is
     // therefore the correct algorithm here, not `crypto::HmacSha256`.
     //
     // Structurally this mirrors the same two `IncomingWebhook` trait hooks
@@ -847,15 +847,15 @@ impl webhooks::IncomingWebhook for Flutterwave {
     // existing default `get_webhook_source_verification_merchant_secret`
     // (the per-merchant-connector-account secret already modeled generically
     // by this framework) rather than reading `FLW_SECRET_HASH` from the
-    // environment the way the legacy Node script did — deliberate: this
+    // environment the way the original Node script did — deliberate: this
     // framework already generalizes secret storage per merchant/connector,
     // so bypassing it for a directly-read env var would both re-introduce
-    // the single-tenant assumption the legacy script made and diverge from
+    // the single-tenant assumption the original Node script made and diverge from
     // every other connector's own pattern in this crate. If no secret has
     // been configured for a given merchant, the default falls back to the
     // literal string `"default_secret"`, which will never equal a real
     // Flutterwave `verif-hash` value — so an unconfigured secret still
-    // fails closed, the same posture the legacy JS's own explicit
+    // fails closed, the same posture the original Node integration's own explicit
     // `if (!configuredHash) { ...reject... }` check took.
     //
     // `get_webhook_object_reference_id` / `get_webhook_event_type` /

@@ -13,10 +13,10 @@
 // the live Swagger UI 2026-09-09 (docs/guides/02-authentication.md and
 // docs/openapi/components/schemas.yaml#/securitySchemes/apiKeyAuth).
 //
-// Source material is this repo's own `legacy-node/docs/` audit of
+// Source material is this repo's own `the port's ` audit of
 // `https://telco.opik.net/api/v1/docs`, which is authoritative for this
 // provider (the product owner operates the rail) — see
-// `legacy-node/docs/guides/09-conventions-and-open-items.md` for the
+// `the port's conventions-and-open-items notes` for the
 // items that audit still leaves unconfirmed (webhook signing scheme, full
 // transaction-status/type enums, error envelope shape, insufficient-balance
 // behaviour). Those are flagged in-code below rather than guessed at.

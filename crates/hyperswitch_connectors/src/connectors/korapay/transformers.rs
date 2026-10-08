@@ -33,7 +33,7 @@ use crate::{
 // Korapay's `/api/v1/charges/initialize` and `/api/v1/transactions/disburse`
 // endpoints both take amount in the currency's base/major unit (e.g. whole
 // Naira, not kobo) -- confirmed against developers.korapay.com/docs and
-// against this repo's own legacy-node/providers/korapay.js (Task 7's
+// against this repo's own original Node "korapay" integration (Task 7's
 // `convertAmountForProvider(..., 'korapay', ...)` no-op). FloatMajorUnit is
 // the corresponding hyperswitch amount type for "major-unit, not minor-unit"
 // connectors -- see AuthipayRouterData / other FloatMajorUnit connectors in
@@ -55,7 +55,7 @@ impl<T> From<(FloatMajorUnit, T)> for KorapayRouterData<T> {
 // Auth Struct
 // Korapay authenticates with a single secret key, sent as
 // `Authorization: Bearer <secretKey>` -- confirmed directly against
-// legacy-node/providers/korapay.js, every method in that file uses this
+// the original Node "korapay" integration, every method in that file uses this
 // exact header. HeaderKey is hyperswitch's matching single-key auth type.
 pub struct KorapayAuthType {
     pub(super) api_key: Secret<String>,
@@ -77,11 +77,11 @@ impl TryFrom<&ConnectorAuthType> for KorapayAuthType {
 // Authorize (collection) — POST /api/v1/charges/initialize
 // ---------------------------------------------------------------------
 //
-// Request shape confirmed against legacy-node/providers/korapay.js
+// Request shape confirmed against the original Node "korapay" integration
 // (Korapay's initialize-charge endpoint requires `customer` as a nested
 // object; a flat top-level `email` is rejected). Optional
 // dynamic-currency-conversion and channel-preference fields are only sent
-// when the caller actually supplies them, matching the legacy code's own
+// when the caller actually supplies them, matching the original Node code's own
 // "don't guess, let the provider decide" posture from Task 10/30 --
 // Korapay's own docs (Dynamic Currency Conversion, Checkout & Redirect
 // pages) require `channels`/`default_channel` to travel together, and
@@ -117,9 +117,9 @@ impl TryFrom<&KorapayRouterData<&PaymentsAuthorizeRouterData>> for KorapayPaymen
     ) -> Result<Self, Self::Error> {
         // Card/redirect/bank-transfer/mobile-money are all funneled through
         // Korapay's single hosted-checkout `charges/initialize` endpoint --
-        // there is no separate direct-card API in the legacy integration
+        // there is no separate direct-card API in the original Node integration
         // this connector is replacing (see handover.md Task 77's
-        // "one-engine" note: legacy-node/providers/korapay.js only ever
+        // "one-engine" note: the original Node "korapay" integration only ever
         // called this one endpoint for collection). Any payment-method-data
         // variant lands here the same way; nothing card-specific is read
         // out of `PaymentMethodData` because Korapay's own API doesn't take
@@ -144,7 +144,7 @@ impl TryFrom<&KorapayRouterData<&PaymentsAuthorizeRouterData>> for KorapayPaymen
             reference: item.router_data.connector_request_reference_id.clone(),
             customer: KorapayCustomer { email, name },
             // Task 16/Task 9b companion fields — only forwarded via
-            // connector_metadata today in the legacy stack; left `None`
+            // connector_metadata today in the original Node stack; left `None`
             // here deliberately rather than guessed at from RouterData
             // fields that don't yet carry Korapay-specific DCC/channel
             // intent. Flagged in handover.md as a follow-up, same
@@ -167,7 +167,7 @@ impl TryFrom<&KorapayRouterData<&PaymentsAuthorizeRouterData>> for KorapayPaymen
 // `/charges/:reference` (GET) response shape per developers.korapay.com --
 // NOT re-confirmed via a live sandbox call in this session (no working
 // `rustc` this session to build a throwaway test harness against; see
-// handover.md's New-Clone Checklist). legacy-node/providers/korapay.js
+// handover.md's New-Clone Checklist). The original Node "korapay" integration
 // only ever checked the boolean `status`/`data.status` fields and passed
 // the rest through untyped, so this struct is new, not a straight port --
 // flagging for a live-call confirmation pass before this goes to
@@ -225,7 +225,7 @@ impl<F, T> TryFrom<ResponseRouterData<F, KorapayPaymentsResponse, T, PaymentsRes
         // that path for non-2xx responses; a 2xx with `status: false` is
         // treated the same way here rather than silently mapped to a
         // "successful" attempt status, matching every other method in
-        // legacy-node/providers/korapay.js (`if (!response.ok ||
+        // the original Node "korapay" integration (`if (!response.ok ||
         // !responseData.status) throw ...`).
         if !item.response.status {
             return Err(errors::ConnectorError::ResponseHandlingFailed.into());
@@ -267,9 +267,9 @@ impl<F, T> TryFrom<ResponseRouterData<F, KorapayPaymentsResponse, T, PaymentsRes
 // ---------------------------------------------------------------------
 //
 // Korapay's error shape (per every `providerError(responseData.message ||
-// '...')` call site in legacy-node/providers/korapay.js) is a flat
+// '...')` call site in the original Node "korapay" integration) is a flat
 // `{ status: false, message: "..." }` — no separate machine-readable error
-// code field observed anywhere in the legacy integration, so `code` is
+// code field observed anywhere in the original Node integration, so `code` is
 // left unset (`build_error_response` in mod.rs falls back to
 // `consts::NO_ERROR_CODE`, matching connectors like Opennode that are in
 // the same position).
@@ -285,18 +285,18 @@ pub struct KorapayErrorResponse {
 // ---------------------------------------------------------------------
 //
 // Task 77/a-1-iii. Request shape ported directly from this repo's own
-// legacy-node/providers/korapay.js#processPayout() -- itself a Task 42
+// the original Node "korapay" integration's processPayout() -- itself a Task 42
 // Part B-a fix, independently confirmed at the time against
 // developers.korapay.com/docs/payout-via-api AND a community Elixir
 // client library's own published type spec (two independent sources
 // agreeing). `destination.type` is always sent explicitly rather than
 // relying on Korapay's own "defaults to bank_account if omitted" note,
-// same reasoning the legacy code already applied.
+// same reasoning the original Node code already applied.
 //
 // Response shape shared by both flows -- Korapay's own GET
 // `.../transactions/{reference}` (used here for Sync) returns the same
 // two-level `{ status, data: { status, ... } }` shape as the POST
-// disburse call (used for Fulfill); legacy-node's own
+// disburse call (used for Fulfill); the original Node integration's own
 // processPayout()/verifyPayout() parse it identically. See Task 42's
 // "The 'b' this split implies" and "the missing verification call"
 // entries in handover.md for how that two-level shape was confirmed.
@@ -318,7 +318,7 @@ pub struct KorapayPayoutCustomer {
 }
 
 // Korapay's real schema supports `mobile_money` as a second destination
-// type alongside `bank_account` (see legacy-node's own
+// type alongside `bank_account` (see the original Node integration's own
 // `payment_method === 'mobile_money'` branch). Deliberately NOT
 // buildable here: Hyperswitch's own `PayoutMethodData` enum
 // (api_models::payouts) has no wallet/mobile-money variant that could
@@ -406,7 +406,7 @@ impl<F> TryFrom<&KorapayRouterData<&PayoutsRouterData<F>>> for KorapayPayoutFulf
 
         // `customer.email` is REQUIRED by Korapay's real schema -- same
         // fact Task 42 Part B-a's fix already established for the
-        // legacy JS integration (`if (!data.customer?.email) throw
+        // original Node integration (`if (!data.customer?.email) throw
         // providerError(...)` in processPayout()). Failing loudly here,
         // before a request is built, rather than letting Korapay reject
         // an incomplete request with a less specific error.
@@ -436,7 +436,7 @@ impl<F> TryFrom<&KorapayRouterData<&PayoutsRouterData<F>>> for KorapayPayoutFulf
                 amount: item.amount,
                 currency: router_data.request.destination_currency,
                 // Hyperswitch's `PayoutsData` carries no narration/
-                // description field at all (unlike the legacy JS
+                // description field at all (unlike the original Node integration
                 // request, which took a caller-supplied `narration` or
                 // fell back to a Mavins-specific default) -- a generic,
                 // connector-level default is used here instead of
@@ -476,8 +476,8 @@ impl From<KorapayPayoutTransactionStatus> for PayoutStatus {
         match status {
             KorapayPayoutTransactionStatus::Success => Self::Success,
             KorapayPayoutTransactionStatus::Failed => Self::Failed,
-            // Deliberately NOT mirrored on the legacy JS's own behavior
-            // here: processPayout() in legacy-node/providers/korapay.js
+            // Deliberately NOT mirrored on the original Node integration's own behavior
+            // here: processPayout() in the original Node "korapay" integration
             // treats "processing" as "request accepted, no error
             // thrown" because JS has no separate typed non-terminal
             // payout state to put it in. Hyperswitch's `PayoutStatus`
@@ -499,7 +499,7 @@ impl From<KorapayPayoutTransactionStatus> for PayoutStatus {
 pub struct KorapayPayoutData {
     pub reference: String,
     pub status: KorapayPayoutTransactionStatus,
-    // Per legacy-node's own `responseData.data?.message ||
+    // Per the original Node integration's own `responseData.data?.message ||
     // responseData.message` fallback chain in both processPayout() and
     // the error path generally -- not confirmed against a live Korapay
     // response this session (no working rustc; see New-Clone
@@ -528,7 +528,7 @@ impl<F> TryFrom<PayoutsResponseRouterData<F, KorapayPayoutResponse>> for Payouts
         // immediately-invalid request, etc.) -- a 2xx with `status:
         // false` is treated as a real, thrown failure here, same
         // discipline as KorapayPaymentsResponse's own handling above
-        // and every method in legacy-node/providers/korapay.js
+        // and every method in the original Node "korapay" integration
         // (`if (!response.ok || !responseData.status) throw ...`).
         // This is deliberately different from a `data.status: "failed"`
         // outcome below, which is a normal, successfully-verified

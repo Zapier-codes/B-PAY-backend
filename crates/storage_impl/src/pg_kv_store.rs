@@ -103,7 +103,7 @@
 //! - Per-call-site TTL/atomicity audit (Task 73/a's own explicit next step
 //!   for all 63 files): a real first pass has happened (interface-level
 //!   parity check plus 3 real callers checked against it — see
-//!   `legacy-node/handover.md`'s 2026-09-11 "real first pass" entry for the
+//!   `the original Node integration's handover doc`'s 2026-09-11 "real first pass" entry for the
 //!   write-up), not all 63/102 call sites individually. Finding #16 above
 //!   came out of that pass; the rest of the ~60 remaining sites are still
 //!   unwalked.
@@ -130,7 +130,7 @@
 // item. Matching that here with a module-wide inner attribute, placed
 // before any item in the file as Rust requires, rather than
 // reintroducing the same per-struct attribute that already failed once.
-// Not recompiled locally (see legacy-node/handover.md New-Clone
+// Not recompiled locally (see the original Node integration's handover doc New-Clone
 // Checklist) -- reviewed by reading only.
 #![allow(unused_qualifications)]
 
@@ -169,7 +169,7 @@ use crate::{
 /// same database.
 ///
 /// Not recompiled locally — no working rustc >=1.85 in this sandbox (see
-/// `legacy-node/handover.md` New-Clone Checklist). Reviewed by reading:
+/// `the original Node integration's handover doc` New-Clone Checklist). Reviewed by reading:
 /// `RawPgPool`'s element type is `async_bb8_diesel::ConnectionManager<DejaPgConnection>`,
 /// and `DejaPgConnection` is already used generically as the connection
 /// type behind `RawPgConnection`/`PgPooledConn` throughout `diesel_models`,
@@ -722,7 +722,7 @@ impl PgKvStore {
         // struct-level #[allow] alone didn't suppress the lint in a real CI
         // run; shortened the qualified path (Nullable, Double now imported
         // directly) instead, keeping the #[allow] as a fallback. Not
-        // recompiled locally (see legacy-node/handover.md New-Clone
+        // recompiled locally (see the original Node integration's handover doc New-Clone
         // Checklist) -- reviewed by reading only.
         #[allow(unused_qualifications)]
         #[derive(QueryableByName)]
@@ -1010,7 +1010,7 @@ impl PgKvStore {
         // struct-level #[allow] alone didn't suppress the lint in a real CI
         // run; shortened the qualified path (BigInt now imported directly)
         // instead, keeping the #[allow] as a fallback. Not recompiled
-        // locally (see legacy-node/handover.md New-Clone Checklist) --
+        // locally (see the original Node integration's handover doc New-Clone Checklist) --
         // reviewed by reading only.
         #[allow(unused_qualifications)]
         #[derive(QueryableByName)]
@@ -1117,7 +1117,7 @@ impl PgKvStore {
         // struct-level #[allow] alone didn't suppress the lint in a real CI
         // run; shortened the qualified path (Bool now imported directly)
         // instead, keeping the #[allow] as a fallback. Not recompiled
-        // locally (see legacy-node/handover.md New-Clone Checklist) --
+        // locally (see the original Node integration's handover doc New-Clone Checklist) --
         // reviewed by reading only.
         #[allow(unused_qualifications)]
         #[derive(QueryableByName)]

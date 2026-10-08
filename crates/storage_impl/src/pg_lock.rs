@@ -98,7 +98,7 @@
 // `RawValueRow`/`InsertedRow`. Matching that file's fix: a module-level
 // inner attribute, placed before any item as Rust requires, rather than
 // the per-struct attribute that already failed once here too. Not
-// recompiled locally (see legacy-node/handover.md New-Clone Checklist)
+// recompiled locally (see the original Node integration's handover doc New-Clone Checklist)
 // -- reviewed by reading only.
 #![allow(unused_qualifications)]
 
@@ -188,7 +188,7 @@ pub struct PgLock<'a> {
     // (`pg_kv_store::PgKvPool`, imported above); its own field type just
     // wasn't kept in sync with that pool's real connection type after
     // `PgKvPool` was fixed to alias `RawPgPool`/`DejaPgConnection`. Not
-    // recompiled locally (see legacy-node/handover.md New-Clone
+    // recompiled locally (see the original Node integration's handover doc New-Clone
     // Checklist) -- reviewed by reading only.
     conn: PooledConnection<'a, async_bb8_diesel::ConnectionManager<DejaPgConnection>>,
     // Sorted, deduplicated set of every advisory-lock key this instance

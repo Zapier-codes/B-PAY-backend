@@ -85,7 +85,7 @@ impl api::PaymentToken for Juicyway {}
 // `payouts` cargo feature is on -- see hyperswitch_interfaces::api::payouts,
 // same split every other payout-capable connector in this crate follows.
 //
-// JuicyWay's real shape (legacy-node/providers/juicyway.js#processPayout,
+// JuicyWay's real shape (the original Node "juicyway" integration's processPayout,
 // Task 52) needs a beneficiary created ahead of time -- it does NOT take
 // raw bank_code/account_number the way Korapay's single-call disburse
 // does -- so this is the same three-flow architecture Paystack's own
@@ -94,7 +94,7 @@ impl api::PaymentToken for Juicyway {}
 // `PayoutFulfill` sends the actual payout referencing it, `PayoutSync`
 // polls JuicyWay's own payout `id` (not the merchant reference -- see
 // juicyway/transformers.rs's own note on why, ported directly from
-// legacy-node's own verifyPayout() docblock). Create/Eligibility/Cancel/
+// the original Node integration's own verifyPayout() docblock). Create/Eligibility/Cancel/
 // Quote/RecipientAccount are deliberately left on this crate's own
 // `default_imp_for_payouts_*!` macros (JuicyWay was removed ONLY from
 // the recipient/fulfill/retrieve macro lists in
@@ -160,7 +160,7 @@ impl ConnectorCommon for Juicyway {
 
     // Confirmed against docs.juicyway.com/authentication.md: the raw
     // secret key, no "Bearer " prefix — unlike Korapay/Paystack in this
-    // same crate. legacy-node/providers/juicyway.js's own `Bearer
+    // same crate. The original Node "juicyway" integration's own `Bearer
     // ${apiKey}` calls were a confirmed, real 401-causing bug (Task 45a);
     // this connector starts from the corrected shape directly.
     fn get_auth_header(
@@ -237,7 +237,7 @@ impl ConnectorIntegration<SetupMandate, SetupMandateRequestData, PaymentsRespons
         _connectors: &Connectors,
     ) -> CustomResult<Option<Request>, errors::ConnectorError> {
         // No mandate/recurring-charge API observed anywhere in
-        // legacy-node/providers/juicyway.js — not wired rather than
+        // the original Node "juicyway" integration — not wired rather than
         // guessed, same discipline as Korapay's own SetupMandate gap.
         Err(
             errors::ConnectorError::NotImplemented("Setup Mandate flow for JuicyWay".to_string())
@@ -260,7 +260,7 @@ impl ConnectorIntegration<Authorize, PaymentsAuthorizeData, PaymentsResponseData
     }
 
     // Real endpoint per docs.juicyway.com, confirmed against this repo's
-    // own handover.md Task 8b full audit: legacy-node's `/v1/charges`
+    // own handover.md Task 8b full audit: the original Node integration's `/v1/charges`
     // does not exist on JuicyWay's API — the real path is
     // `/payment-sessions`. This connector starts from the corrected path
     // directly rather than porting the known-wrong one.
@@ -335,11 +335,11 @@ impl ConnectorIntegration<Authorize, PaymentsAuthorizeData, PaymentsResponseData
     }
 }
 
-// Real architectural fix over the legacy integration, not a straight
+// Real architectural fix over the original Node integration, not a straight
 // port: JuicyWay's `GET /payments/{id}` (Fetch Payment) takes JuicyWay's
 // own `id`, not the merchant-supplied `reference` — confirmed in
 // handover.md's "reference-vs-ID distinction" finding (Task 45d, still
-// open in legacy-node/providers/juicyway.js, which calls a
+// open in the original Node "juicyway" integration, which calls a
 // reference-keyed endpoint that was never even the right path to begin
 // with). This connector closes that gap by construction: Authorize's own
 // TryFrom (transformers.rs) stores JuicyWay's `payment.id` as the
@@ -422,7 +422,7 @@ impl ConnectorIntegration<PSync, PaymentsSyncData, PaymentsResponseData> for Jui
 
 // JuicyWay's `/payment-sessions` is a single-step, presumably
 // auto-capture flow — no separate authorize-then-capture endpoint
-// appears anywhere in legacy-node/providers/juicyway.js or in the
+// appears anywhere in the original Node "juicyway" integration or in the
 // endpoint list this session's docs audit turned up. Same position as
 // Korapay's own Capture gap in this crate: `FlowNotSupported` rather
 // than a guessed-at endpoint.
@@ -441,7 +441,7 @@ impl ConnectorIntegration<Capture, PaymentsCaptureData, PaymentsResponseData> fo
 }
 
 // Same reasoning as Capture above — no void/cancel endpoint observed for
-// JuicyWay's collection flow in the legacy integration or this session's
+// JuicyWay's collection flow in the original Node integration or this session's
 // docs audit.
 impl ConnectorIntegration<Void, PaymentsCancelData, PaymentsResponseData> for Juicyway {
     fn build_request(
@@ -458,7 +458,7 @@ impl ConnectorIntegration<Void, PaymentsCancelData, PaymentsResponseData> for Ju
 }
 
 // No refund method exists anywhere in
-// legacy-node/providers/juicyway.js, and none of this session's docs
+// the original Node "juicyway" integration, and none of this session's docs
 // fetches turned up a `/refunds`-shaped endpoint either — this connector
 // does not guess at an unconfirmed refund shape, same discipline Korapay
 // and Paystack's own Execute/RSync gaps in this crate already follow.
@@ -487,10 +487,10 @@ impl ConnectorIntegration<RSync, RefundsData, RefundsResponseData> for Juicyway 
 #[async_trait::async_trait]
 // Task 77/a-3-iii — JuicyWay beneficiary creation. Endpoint path is
 // explicitly UNCONFIRMED -- ported as-is from
-// legacy-node/providers/juicyway.js#createBeneficiary()'s own docblock
+// the original Node "juicyway" integration's createBeneficiary()'s own docblock
 // caveat ("the exact endpoint PATH is the one thing here that is NOT
 // confirmed"). Only the `bank_account` beneficiary type is buildable
-// here; `crypto_address`/`interac` are real per that same legacy method
+// here; `crypto_address`/`interac` are real per that same original Node method
 // but Hyperswitch's `PayoutMethodData` has no matching shape to build
 // them from (same discipline as juicyway/transformers.rs's own
 // `get_juicyway_payout_bank_account` note below).
@@ -573,7 +573,7 @@ impl ConnectorIntegration<PoRecipient, PayoutsData, PayoutsResponseData> for Jui
 
 // Task 77/a-3-iii — JuicyWay payout fulfillment (`POST /payouts`).
 // Request shape ported directly from
-// legacy-node/providers/juicyway.js#processPayout() (Task 52/a-1,
+// the original Node "juicyway" integration's processPayout() (Task 52/a-1,
 // confirmed against docs.juicyway.com/reference/payouts/initiate-a-payout.md
 // and the initiate-bank-transfer.md worked examples). See
 // juicyway/transformers.rs's own note on the `pin` field for a real,
@@ -611,7 +611,7 @@ impl ConnectorIntegration<PoFulfill, PayoutsData, PayoutsResponseData> for Juicy
         // payout amount is minor units, NOT run through this connector's
         // FloatMajorUnit-style `convert_amount` helper -- callers pass
         // minor units directly, same rule Task 49/a already established
-        // for collection and legacy-node's own processPayout() already
+        // for collection and the original Node integration's own processPayout() already
         // follows (it forwards `data.amount` unconverted).
         let connector_router_data =
             juicyway::JuicywayRouterData::from((req.request.minor_amount, req));
@@ -667,7 +667,7 @@ impl ConnectorIntegration<PoFulfill, PayoutsData, PayoutsResponseData> for Juicy
 // Task 77/a-3-iii — JuicyWay payout verification (`GET /payouts/{id}`).
 // Endpoint confidence is explicitly weaker than Fulfill's -- see
 // juicyway/transformers.rs's own note, ported directly from
-// legacy-node/providers/juicyway.js#verifyPayout()'s own docblock: this
+// the original Node "juicyway" integration's verifyPayout()'s own docblock: this
 // path was located via docs.juicyway.com/llms.txt as a sibling of the
 // confirmed POST /payouts, not independently confirmed for GET. Same
 // "verify against a live sandbox call before production trust" caveat
@@ -676,7 +676,7 @@ impl ConnectorIntegration<PoFulfill, PayoutsData, PayoutsResponseData> for Juicy
 // Takes JuicyWay's own `id` (left in `connector_payout_id` by
 // `PoFulfill`'s own response below), NOT the merchant reference --
 // unlike Korapay/Paystack's PoSync, which both key off a reference. See
-// legacy-node's own verifyPayout() docblock for why: JuicyWay's
+// the original Node integration's own verifyPayout() docblock for why: JuicyWay's
 // processPayout() worked-example response has no `reference` field at
 // all, only its own `id`.
 #[cfg(feature = "payouts")]
@@ -757,7 +757,7 @@ impl webhooks::IncomingWebhook for Juicyway {
     // JuicyWay's webhook checksum scheme (checksum travels INSIDE the
     // JSON body, keyed by the merchant's separate "business ID", over an
     // alphabetically-key-sorted encoding of `data` — see
-    // legacy-node/providers/juicyway.js#verifyWebhookSignature and
+    // the original Node "juicyway" integration's verifyWebhookSignature and
     // handover.md's own webhook-scheme confirmation) is real, working,
     // and well-documented — but genuinely out of scope for this leaf,
     // same boundary Korapay's own a-1-ii-X drew for `IncomingWebhook`.

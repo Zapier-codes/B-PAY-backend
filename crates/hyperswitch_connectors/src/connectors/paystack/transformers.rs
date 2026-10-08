@@ -512,7 +512,7 @@ impl From<PaystackWebhookEventData> for api_models::webhooks::IncomingWebhookEve
 // ---------------------------------------------------------------------
 //
 // Task 77/a-2-iii. Ported directly from this repo's own
-// legacy-node/providers/paystack.js#createTransferRecipient()/
+// the original Node "paystack" integration's createTransferRecipient()/
 // processPayout()/verifyPayout() -- itself Task 51/c's already-battle-
 // tested, primary-source-confirmed fix (paystack.com/docs/api/
 // transfer-recipient/, paystack.com/docs/api/transfer/,
@@ -600,7 +600,7 @@ impl<F> TryFrom<&PayoutsRouterData<F>> for PaystackRecipientCreateRequest {
         let (account_number, bank_code) = get_paystack_payout_bank_account(router_data)?;
 
         // Paystack's own docs require a `name` on the recipient.
-        // Mirrors legacy-node/providers/paystack.js#createTransferRecipient()'s
+        // Mirrors the original Node "paystack" integration's createTransferRecipient()'s
         // own fallback chain exactly (`data.customer?.name ||
         // data.account_name || data.account_number`) -- Hyperswitch's
         // `PayoutsData` has no separate `account_name` field, so that
@@ -648,7 +648,7 @@ impl<F> TryFrom<PayoutsResponseRouterData<F, PaystackRecipientResponse>> for Pay
     ) -> Result<Self, Self::Error> {
         // Same "outer `status: false` is a thrown API-call-level
         // failure" discipline as every other Paystack/Korapay response
-        // handler in this file and legacy-node/providers/paystack.js's
+        // handler in this file and the original Node "paystack" integration's
         // own `if (!response.ok || !responseData.status) throw ...` --
         // Paystack's own docs confirm a duplicate `account_number`
         // returns the existing record rather than erroring, so a real
@@ -709,7 +709,7 @@ impl<F> TryFrom<&PaystackRouterData<&PayoutsRouterData<F>>> for PaystackPayoutFu
             recipient,
             reference: router_data.connector_request_reference_id.clone(),
             // Hyperswitch's `PayoutsData` carries no narration/reason
-            // field (unlike the legacy JS request, which took a
+            // field (unlike the original Node integration request, which took a
             // caller-supplied `narration`/`reason` or fell back to a
             // Mavins-specific default) -- a generic, connector-level
             // default is used here instead of guessing at a field this
@@ -726,13 +726,13 @@ impl<F> TryFrom<&PaystackRouterData<&PayoutsRouterData<F>>> for PaystackPayoutFu
 // shape as every other response type in this file).
 //
 // ⚠️ `Otp` is a real, flagged caveat carried over unchanged from
-// legacy-node/providers/paystack.js#processPayout()'s own comment:
+// the original Node "paystack" integration's processPayout()'s own comment:
 // Paystack's transfer `status` comes back `"otp"`, not `"pending"`,
 // unless the Transfers OTP requirement is disabled on the
 // integration's own dashboard -- and an `"otp"` transfer needs a
 // human to finalize it with a one-time code
 // (`/transfer/finalize_transfer`, deliberately NOT implemented here,
-// same as the legacy code: a server-side integration has no way to
+// same as the original Node code: a server-side integration has no way to
 // receive or supply that code). `Otp` is mapped to
 // `PayoutStatus::Pending` below because it is the closest available
 // non-terminal status Hyperswitch's own `PayoutStatus` enum offers --
@@ -777,7 +777,7 @@ pub struct PaystackPayoutData {
     pub status: PaystackPayoutTransactionStatus,
     #[serde(default)]
     pub transfer_code: Option<String>,
-    // Per legacy-node's own `responseData.data?.message ||
+    // Per the original Node integration's own `responseData.data?.message ||
     // responseData.message` fallback chain -- not confirmed against a
     // live Paystack response this session (no working rustc; see
     // New-Clone Checklist), so `#[serde(default)]` keeps this optional
@@ -805,9 +805,9 @@ impl<F> TryFrom<PayoutsResponseRouterData<F, PaystackPayoutResponse>> for Payout
         // call itself was rejected -- a 2xx with `status: false` is
         // treated as a real, thrown failure here, same discipline as
         // every other response handler in this file and every method
-        // in legacy-node/providers/paystack.js. This is deliberately
+        // in the original Node "paystack" integration. This is deliberately
         // different from a `data.status: "failed"` outcome below,
-        // which -- per that same legacy method's own comment -- is a
+        // which -- per that same original Node method's own comment -- is a
         // normal, successfully-verified terminal transfer state, not
         // an error calling this function.
         if !item.response.status {
@@ -834,7 +834,7 @@ impl<F> TryFrom<PayoutsResponseRouterData<F, PaystackPayoutResponse>> for Payout
                 // `/transfer/verify/{reference}` against. Prefers
                 // `reference` (what `verifyPayout`'s own endpoint takes)
                 // over `transfer_code`, matching
-                // legacy-node/providers/paystack.js#verifyPayout()'s own
+                // the original Node "paystack" integration's verifyPayout()'s own
                 // reference-keyed lookup exactly.
                 connector_payout_id: Some(item.response.data.reference.clone()),
                 payout_eligible: None,

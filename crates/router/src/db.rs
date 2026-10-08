@@ -301,7 +301,7 @@ impl StorageInterface for Store {
     // (now aliases `RawPgPool` directly) rather than here — this call site
     // was always doing the right thing, reusing the existing master pool
     // instead of opening a second one; only the type name it targeted was
-    // wrong. Not recompiled locally (see legacy-node/handover.md
+    // wrong. Not recompiled locally (see the original Node integration's handover doc
     // New-Clone Checklist) -- reviewed by reading only.
     fn get_pg_kv_store(&self) -> CustomResult<PgKvStore, StorageError> {
         Ok(PgKvStore::new(

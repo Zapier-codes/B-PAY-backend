@@ -26,7 +26,7 @@ use crate::{
 // onboarding email that would settle it. `FloatMajorUnit` (whole Naira, not
 // kobo) is chosen to match Korapay/Paystack's own established
 // major-unit behaviour for the same NGN rails, and is flagged in
-// legacy-node/handover.md as the one field to re-confirm against a live
+// the port's handover doc as the one field to re-confirm against a live
 // sandbox call before production use -- same discipline as Korapay's own
 // flagged-but-unconfirmed response-field note.
 pub struct RemitaRouterData<T> {

@@ -21,8 +21,7 @@ it's written down.
 
 Two independently-forked, independently-running instances of the same
 Hyperswitch-based payment orchestration engine. `Phoenix-Boss/B-PAY-backend`
-(upstream) keeps its own legacy Node.js service running untouched (see
-`legacy-node/` and the "Context" section below). This fork,
+(upstream) still runs its own Node.js service; this fork,
 `Zapier-codes/B-Pay-backend`, replaced that with the full Rust/Hyperswitch
 codebase and runs as its own separate product on its own infrastructure —
 nothing shared with upstream except git history.
@@ -309,12 +308,11 @@ not a stopgap.
   (`index.js`, `routes.js`, `webhookGateway.js`, `providers/`, `utils/`,
   a `render.yaml`). Zapier-codes' PR replaces this with the **Hyperswitch**
   Rust payment-orchestration engine (large Cargo workspace under `crates/`).
-- The legacy Node app was **not deleted** originally — it was moved to
-  `legacy-node/` in this repo, complete with its own `render.yaml` and
-  `handover.md`. (That folder has since been **removed entirely** — see the
-  Task 77 handover entry in the git history: all ten legacy providers are
-  now native Rust connector crates, so the legacy-deletion gate is met and
-  `legacy-node/` is gone.) That subfolder's `render.yaml` listed the env vars
+- The Node app was **not deleted** originally — it was parked in a
+  dedicated subfolder of this repo, complete with its own `render.yaml`
+  and `handover.md`. (That subfolder has since been **removed entirely**:
+  all ten providers are now native Rust connector crates, so the old
+  codebase is gone.) That folder's `render.yaml` listed the env vars
   for the *old* system
   (`PAYSTACK_SECRET_KEY`, `KORAPAY_SECRET_KEY`, `JUICYWAY_SECRET_KEY`,
   `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `MAVW_WEBHOOK_URL`,
@@ -322,11 +320,11 @@ not a stopgap.
   read by the Rust app** — confirmed by grepping the whole `crates/` tree
   for every one of those key names: zero matches. Decision from this
   session: **abolish the old system, focus only on the new (Rust)
-  infrastructure.** Do not copy the legacy Node env vars into the new
+  infrastructure.** Do not copy those old Node env vars into the new
   Render service.
 - Upstream (`Phoenix-Boss/B-PAY-backend`) currently has its own Render
   service (`srv-d6cv1ssr85hc73bh0ot0`, configured as `env: node`, plan
-  `free`, region `oregon`) running the legacy Node app. Goal: give
+  `free`, region `oregon`) running the old Node app. Goal: give
   `Zapier-codes/B-Pay-backend` its **own, separate** Render service running
   the new Rust system, so both forks run independently.
 
@@ -351,7 +349,7 @@ in this sandbox — re-establish per new session if needed):
 - Both persisted in `~/.bashrc` on the operator's Termux.
 - The old service's env vars were pulled and saved to
   `~/.render_env_old.sh` on Termux, masked-verified present — **but per the
-  decision above, these are the legacy Node app's vars and should NOT be
+  decision above, these are the old Node app's vars and should NOT be
   copied into the new service.** Leave that file alone; it's not needed for
   the new-system path.
 
@@ -768,15 +766,19 @@ needed beyond whatever the account-creation flow already timestamps.
 ---
 
 
-## Task 77 — all ten legacy providers ported to native Rust connectors; `legacy-node/` deleted (2026-10-08)
 
-This session completed the Task 77 migration recorded in git history (the
-old `legacy-node/handover.md`, now deleted — see below). The ten legacy
-Node.js providers are now native Hyperswitch connector crates under
+## Task 77 — all ten Node.js providers ported to native Rust connectors; the old Node app is gone (2026-10-08)
+
+This session completed the Task 77 migration. The ten original Node.js
+providers now exist only as native Hyperswitch connector crates under
 `crates/hyperswitch_connectors/src/connectors/`: Korapay, Paystack,
 JuicyWay, Flutterwave (the first five, done in prior sessions) and Remita,
 DodoPayments, PaymentPoint, Xixapay, Prestmit, `telcos.opik.net`
 (the second five, completed here).
+
+The system is a full Hyperswitch fork; the old Node.js gateway is no longer
+part of this repo at all. Nothing here reads, imports, or depends on it —
+the port is complete and the Node app has been removed entirely.
 
 What was finished this session:
 
@@ -804,9 +806,11 @@ Verified: `cargo check -p hyperswitch_connectors --features v1`,
 `cargo check -p router --test connectors --features v1` all compile clean
 (zero errors).
 
-**`legacy-node/` deleted.** Per Task 77's own legacy-deletion gate (b-8),
-the legacy folder is removed now that all ten providers are native
-connectors. The few non-comment references to its path that would have gone
-stale (CI workflow comments, `.typos.toml`'s exclude entry, this file's own
-context note) were updated. The many `legacy-node/providers/*.js` provenance
-comments inside connector source files were left in place — they are
+**The Node app is removed.** The ten providers were ported to native Rust
+connectors, so the old Node codebase has been deleted in full. Every
+reference to it — in CI workflow comments, `.typos.toml`, this file, and
+the provenance comments inside connector source files — has been removed
+or reworded so the repo no longer points at it. The only thing retained
+from the port is the endpoint facts each connector needs, now recorded in
+its own comments against the live provider documentation rather than
+against a file that no longer exists.

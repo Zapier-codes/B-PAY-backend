@@ -2378,3 +2378,186 @@ non_mandate = [
 common = []
 mandate = []
 non_mandate = []
+
+# ---------------------------------------------------------------------------
+# Hyperpay legacy providers (Task 77/b-3)
+# ---------------------------------------------------------------------------
+# One block per (payment method, payment method type, connector) for the ten
+# providers ported to native connector crates in Task 77. Field paths and
+# "required" vs "non-mandate" classification mirror what each connector's own
+# Authorize transformer actually reads (crates/hyperswitch_connectors/src/
+# connectors/<provider>/transformers.rs), not a guess:
+#   * `common`      — read unconditionally by that transformer (a missing value
+#                     fails Authorize with MissingRequiredField).
+#   * `non_mandate` — the card data a Card payment carries; reused from a stored
+#                     mandate, so not required on a mandate charge.
+# Note the section keys: config-rs lowercases every table key and the enums
+# deserialize with `snake_case`, so the connector segment must be lowercase
+# (e.g. `korapay`, not `Korapay`). `Card`/`Credit`/`Ach`/`Eft` are single words
+# and therefore unaffected.
+# Prestmit is a gift-card SELL rail: its Authorize reads only request metadata
+# (`giftcard_id`, `payoutMethod`, ...), so no `payment_method_data` field is
+# required for it and its blocks are intentionally empty.
+
+# --- Korapay (Authorize: email required; billing name optional) ---
+[required_fields.Card.Credit.fields.korapay]
+common = [
+  { required_field = "email", display_name = "email", field_type = "user_email_address" }
+]
+non_mandate = [
+  { required_field = "payment_method_data.card.card_number", display_name = "card_number", field_type = "user_card_number" },
+  { required_field = "payment_method_data.card.card_exp_month", display_name = "card_exp_month", field_type = "user_card_expiry_month" },
+  { required_field = "payment_method_data.card.card_exp_year", display_name = "card_exp_year", field_type = "user_card_expiry_year" },
+  { required_field = "payment_method_data.card.card_cvc", display_name = "card_cvc", field_type = "user_card_cvc" }
+]
+
+[required_fields.bank_transfer.ach.fields.korapay]
+common = [
+  { required_field = "email", display_name = "email", field_type = "user_email_address" }
+]
+
+# --- Juicyway (Authorize: email, first/last name, phone all required) ---
+[required_fields.Card.Credit.fields.juicyway]
+common = [
+  { required_field = "email", display_name = "email", field_type = "user_email_address" },
+  { required_field = "payment_method_data.billing.address.first_name", display_name = "first_name", field_type = "user_full_name" },
+  { required_field = "payment_method_data.billing.address.last_name", display_name = "last_name", field_type = "user_full_name" },
+  { required_field = "payment_method_data.billing.phone.number", display_name = "phone_number", field_type = "user_phone_number" }
+]
+non_mandate = [
+  { required_field = "payment_method_data.card.card_number", display_name = "card_number", field_type = "user_card_number" },
+  { required_field = "payment_method_data.card.card_exp_month", display_name = "card_exp_month", field_type = "user_card_expiry_month" },
+  { required_field = "payment_method_data.card.card_exp_year", display_name = "card_exp_year", field_type = "user_card_expiry_year" },
+  { required_field = "payment_method_data.card.card_cvc", display_name = "card_cvc", field_type = "user_card_cvc" }
+]
+
+# --- Flutterwave (Authorize: email required; name/phone optional) ---
+[required_fields.Card.Credit.fields.flutterwave]
+common = [
+  { required_field = "email", display_name = "email", field_type = "user_email_address" }
+]
+non_mandate = [
+  { required_field = "payment_method_data.card.card_number", display_name = "card_number", field_type = "user_card_number" },
+  { required_field = "payment_method_data.card.card_exp_month", display_name = "card_exp_month", field_type = "user_card_expiry_month" },
+  { required_field = "payment_method_data.card.card_exp_year", display_name = "card_exp_year", field_type = "user_card_expiry_year" },
+  { required_field = "payment_method_data.card.card_cvc", display_name = "card_cvc", field_type = "user_card_cvc" }
+]
+
+[required_fields.bank_transfer.ach.fields.flutterwave]
+common = [
+  { required_field = "email", display_name = "email", field_type = "user_email_address" }
+]
+
+# --- Remita (Authorize: email + phone required; first/last name defaulted empty) ---
+[required_fields.Card.Credit.fields.remita]
+common = [
+  { required_field = "email", display_name = "email", field_type = "user_email_address" },
+  { required_field = "payment_method_data.billing.phone.number", display_name = "phone_number", field_type = "user_phone_number" }
+]
+non_mandate = [
+  { required_field = "payment_method_data.card.card_number", display_name = "card_number", field_type = "user_card_number" },
+  { required_field = "payment_method_data.card.card_exp_month", display_name = "card_exp_month", field_type = "user_card_expiry_month" },
+  { required_field = "payment_method_data.card.card_exp_year", display_name = "card_exp_year", field_type = "user_card_expiry_year" },
+  { required_field = "payment_method_data.card.card_cvc", display_name = "card_cvc", field_type = "user_card_cvc" }
+]
+
+[required_fields.bank_transfer.ach.fields.remita]
+common = [
+  { required_field = "email", display_name = "email", field_type = "user_email_address" },
+  { required_field = "payment_method_data.billing.phone.number", display_name = "phone_number", field_type = "user_phone_number" }
+]
+
+# --- DodoPayments (Authorize: email required; product catalog via metadata) ---
+[required_fields.Card.Credit.fields.dodopayments]
+common = [
+  { required_field = "email", display_name = "email", field_type = "user_email_address" }
+]
+non_mandate = [
+  { required_field = "payment_method_data.card.card_number", display_name = "card_number", field_type = "user_card_number" },
+  { required_field = "payment_method_data.card.card_exp_month", display_name = "card_exp_month", field_type = "user_card_expiry_month" },
+  { required_field = "payment_method_data.card.card_exp_year", display_name = "card_exp_year", field_type = "user_card_expiry_year" },
+  { required_field = "payment_method_data.card.card_cvc", display_name = "card_cvc", field_type = "user_card_cvc" }
+]
+
+[required_fields.bank_transfer.ach.fields.dodopayments]
+common = [
+  { required_field = "email", display_name = "email", field_type = "user_email_address" }
+]
+
+# --- PaymentPoint (Authorize: email, full name, phone required) ---
+[required_fields.Card.Credit.fields.paymentpoint]
+common = [
+  { required_field = "email", display_name = "email", field_type = "user_email_address" },
+  { required_field = "payment_method_data.billing.address.first_name", display_name = "first_name", field_type = "user_full_name" },
+  { required_field = "payment_method_data.billing.address.last_name", display_name = "last_name", field_type = "user_full_name" },
+  { required_field = "payment_method_data.billing.phone.number", display_name = "phone_number", field_type = "user_phone_number" }
+]
+non_mandate = [
+  { required_field = "payment_method_data.card.card_number", display_name = "card_number", field_type = "user_card_number" },
+  { required_field = "payment_method_data.card.card_exp_month", display_name = "card_exp_month", field_type = "user_card_expiry_month" },
+  { required_field = "payment_method_data.card.card_exp_year", display_name = "card_exp_year", field_type = "user_card_expiry_year" },
+  { required_field = "payment_method_data.card.card_cvc", display_name = "card_cvc", field_type = "user_card_cvc" }
+]
+
+[required_fields.bank_transfer.ach.fields.paymentpoint]
+common = [
+  { required_field = "email", display_name = "email", field_type = "user_email_address" },
+  { required_field = "payment_method_data.billing.address.first_name", display_name = "first_name", field_type = "user_full_name" },
+  { required_field = "payment_method_data.billing.address.last_name", display_name = "last_name", field_type = "user_full_name" },
+  { required_field = "payment_method_data.billing.phone.number", display_name = "phone_number", field_type = "user_phone_number" }
+]
+
+# --- Xixapay (Authorize: email, full name, phone required) ---
+[required_fields.Card.Credit.fields.xixapay]
+common = [
+  { required_field = "email", display_name = "email", field_type = "user_email_address" },
+  { required_field = "payment_method_data.billing.address.first_name", display_name = "first_name", field_type = "user_full_name" },
+  { required_field = "payment_method_data.billing.address.last_name", display_name = "last_name", field_type = "user_full_name" },
+  { required_field = "payment_method_data.billing.phone.number", display_name = "phone_number", field_type = "user_phone_number" }
+]
+non_mandate = [
+  { required_field = "payment_method_data.card.card_number", display_name = "card_number", field_type = "user_card_number" },
+  { required_field = "payment_method_data.card.card_exp_month", display_name = "card_exp_month", field_type = "user_card_expiry_month" },
+  { required_field = "payment_method_data.card.card_exp_year", display_name = "card_exp_year", field_type = "user_card_expiry_year" },
+  { required_field = "payment_method_data.card.card_cvc", display_name = "card_cvc", field_type = "user_card_cvc" }
+]
+
+[required_fields.bank_transfer.ach.fields.xixapay]
+common = [
+  { required_field = "email", display_name = "email", field_type = "user_email_address" },
+  { required_field = "payment_method_data.billing.address.first_name", display_name = "first_name", field_type = "user_full_name" },
+  { required_field = "payment_method_data.billing.address.last_name", display_name = "last_name", field_type = "user_full_name" },
+  { required_field = "payment_method_data.billing.phone.number", display_name = "phone_number", field_type = "user_phone_number" }
+]
+
+# --- opik (Authorize: phone required; VTU network via metadata.network) ---
+[required_fields.Card.Credit.fields.opik]
+common = [
+  { required_field = "payment_method_data.billing.phone.number", display_name = "phone_number", field_type = "user_phone_number" }
+]
+non_mandate = [
+  { required_field = "payment_method_data.card.card_number", display_name = "card_number", field_type = "user_card_number" },
+  { required_field = "payment_method_data.card.card_exp_month", display_name = "card_exp_month", field_type = "user_card_expiry_month" },
+  { required_field = "payment_method_data.card.card_exp_year", display_name = "card_exp_year", field_type = "user_card_expiry_year" },
+  { required_field = "payment_method_data.card.card_cvc", display_name = "card_cvc", field_type = "user_card_cvc" }
+]
+
+[required_fields.bank_transfer.ach.fields.opik]
+common = [
+  { required_field = "payment_method_data.billing.phone.number", display_name = "phone_number", field_type = "user_phone_number" }
+]
+
+# --- Prestmit (gift-card sell: no payment_method_data field required) ---
+[required_fields.Card.Credit.fields.prestmit]
+common = []
+mandate = []
+non_mandate = []
+
+[required_fields.bank_transfer.ach.fields.prestmit]
+common = []
+
+# --- Paystack (Authorize: BankRedirect/EFT only; email required) ---
+[required_fields.bank_redirect.eft.fields.paystack]
+common = [
+  { required_field = "email", display_name = "email", field_type = "user_email_address" }
+]

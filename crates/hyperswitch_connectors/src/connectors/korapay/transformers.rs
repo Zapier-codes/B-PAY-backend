@@ -10,8 +10,8 @@ use hyperswitch_domain_models::{
     payment_method_data::PaymentMethodData,
     router_data::{ConnectorAuthType, RouterData},
     router_request_types::ResponseId,
-    router_response_types::{PaymentsResponseData, RedirectForm},
-    types::PaymentsAuthorizeRouterData,
+    router_response_types::{PaymentsResponseData, RedirectForm, RefundsResponseData},
+    types::{PaymentsAuthorizeRouterData, RefundsRouterData},
 };
 use hyperswitch_interfaces::errors;
 #[cfg(feature = "payouts")]
@@ -22,7 +22,7 @@ use serde::{Deserialize, Serialize};
 #[cfg(feature = "payouts")]
 use crate::types::PayoutsResponseRouterData;
 use crate::{
-    types::ResponseRouterData,
+    types::{RefundsResponseRouterData, ResponseRouterData},
     // `OtherRouterData` (the crate's own `utils::RouterData` extension
     // trait) is also where `get_payout_method_data()` lives -- one
     // import covers both the Payments helpers already used below and
@@ -204,6 +204,47 @@ pub struct KorapayChargeData {
     pub reference: String,
     pub status: KorapayTransactionStatus,
     pub checkout_url: Option<String>,
+}
+
+/// Raw Korapay webhook envelope, `{ event, data }`.
+///
+/// `data` is kept as an untyped [`serde_json::Value`] rather than a typed
+/// struct for two reasons: (1) the signature is computed over Korapay's exact
+/// serialization of `data`, so the bytes must be reproduced verbatim rather
+/// than round-tripped through a narrower type that would drop unknown fields;
+/// and (2) `data` is shaped differently per event (a charge, a transfer and a
+/// refund do not share a schema), so the fields this connector actually reads
+/// (`reference`, `status`) are pulled out defensively at the call site.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct KorapayWebhookData {
+    pub event: String,
+    pub data: serde_json::Value,
+}
+
+/// The subset of `data` this connector reads. Every field is optional because
+/// the shape depends on `event` and Korapay does not guarantee them on every
+/// event type; a missing `reference` simply means "cannot route this event"
+/// and is reported as [`IncomingWebhookEvent::EventNotSupported`].
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct KorapayWebhookCharge {
+    pub reference: Option<String>,
+    pub status: Option<KorapayTransactionStatus>,
+}
+
+impl From<KorapayWebhookData> for api_models::webhooks::IncomingWebhookEvent {
+    fn from(item: KorapayWebhookData) -> Self {
+        match item.event.as_str() {
+            "charge.success" => Self::PaymentIntentSuccess,
+            "charge.failed" => Self::PaymentIntentFailure,
+            #[cfg(feature = "payouts")]
+            "transfer.success" => Self::PayoutSuccess,
+            #[cfg(feature = "payouts")]
+            "transfer.failed" => Self::PayoutFailure,
+            "refund.success" => Self::RefundSuccess,
+            "refund.failed" => Self::RefundFailure,
+            _ => Self::EventNotSupported,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
@@ -556,6 +597,160 @@ impl<F> TryFrom<PayoutsResponseRouterData<F, KorapayPayoutResponse>> for Payouts
                 error_message,
                 payout_connector_metadata: None,
                 connector_eligibility_reference_id: None,
+            }),
+            ..item.data
+        })
+    }
+}
+
+// ---------------------------------------------------------------------
+// Refund Execute — POST /api/v1/refunds/initiate
+// Refund Sync    — GET  /api/v1/refunds/:reference
+// ---------------------------------------------------------------------
+//
+// Confirmed against developers.korapay.com/docs/refunds-api (fetched fresh
+// while writing this): the initiate endpoint takes a flat body of
+// `{ payment_reference, reference, amount?, reason?, webhook_url? }` and
+// returns the two-level `{ status, message, data }` envelope shared by the
+// rest of Korapay's API, where `data` carries `refund_reference` and a
+// `status` of `processing` | `failed` | `success`. The retrieve endpoint is
+// GET by the *refund* reference (the merchant-generated one, echoed back as
+// `data.reference`), not by the payment reference.
+//
+// Amount unit: Korapay refunds, like every other Korapay money field, are in
+// the currency's base/major unit (their own docs show a NGN 100 minimum and
+// a returned `amount_returned: 120`, not kobo), so the refund amount is
+// converted through the same `FloatMajorUnitForConnector` the Authorize and
+// payout flows use.
+#[derive(Debug, Serialize)]
+pub struct KorapayRefundRequest {
+    pub payment_reference: String,
+    pub reference: String,
+    pub amount: FloatMajorUnit,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub webhook_url: Option<String>,
+}
+
+impl<F> TryFrom<&KorapayRouterData<&RefundsRouterData<F>>> for KorapayRefundRequest {
+    type Error = error_stack::Report<errors::ConnectorError>;
+    fn try_from(item: &KorapayRouterData<&RefundsRouterData<F>>) -> Result<Self, Self::Error> {
+        // The refund is bound to the *payment's* merchant reference, not the
+        // connector transaction id and not the refund's own reference --
+        // Korapay's `payment_reference` is the `reference` sent at
+        // `/charges/initialize`. Fall back to the connector transaction id
+        // only if the caller did not thread the payment reference through.
+        let payment_reference = item
+            .router_data
+            .request
+            .payment_connector_request_reference_id
+            .clone()
+            .unwrap_or_else(|| item.router_data.request.connector_transaction_id.clone());
+
+        Ok(Self {
+            payment_reference,
+            reference: item.router_data.request.refund_id.clone(),
+            amount: item.amount,
+            reason: item.router_data.request.reason.clone(),
+            webhook_url: item.router_data.request.webhook_url.clone(),
+        })
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum KorapayRefundStatus {
+    Success,
+    Failed,
+    #[default]
+    Processing,
+    #[serde(other)]
+    Unknown,
+}
+
+impl From<KorapayRefundStatus> for enums::RefundStatus {
+    fn from(status: KorapayRefundStatus) -> Self {
+        match status {
+            KorapayRefundStatus::Success => Self::Success,
+            KorapayRefundStatus::Failed => Self::Failure,
+            // `processing` (and any unrecognised future state) is a genuine
+            // non-terminal refund state in Hyperswitch, unlike the JS
+            // integration which had nowhere typed to put it -- same reasoning
+            // as KorapayPayoutTransactionStatus above.
+            KorapayRefundStatus::Processing | KorapayRefundStatus::Unknown => Self::Pending,
+        }
+    }
+}
+
+/// `data` of the initiate response: the refund's own reference plus status.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct KorapayRefundData {
+    pub refund_reference: String,
+    pub status: KorapayRefundStatus,
+}
+
+/// `data` of the retrieve response: same reference under a different key
+/// (`reference`), plus the status. Kept as its own struct rather than one
+/// shared type because Korapay's two endpoints genuinely name the field
+/// differently (`refund_reference` vs `reference`).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct KorapayRefundDetailsData {
+    pub reference: String,
+    pub status: KorapayRefundStatus,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KorapayRefundResponse {
+    pub status: bool,
+    pub message: String,
+    pub data: KorapayRefundData,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KorapayRefundSyncResponse {
+    pub status: bool,
+    pub message: String,
+    pub data: KorapayRefundDetailsData,
+}
+
+impl<F> TryFrom<RefundsResponseRouterData<F, KorapayRefundResponse>> for RefundsRouterData<F> {
+    type Error = error_stack::Report<errors::ConnectorError>;
+    fn try_from(
+        item: RefundsResponseRouterData<F, KorapayRefundResponse>,
+    ) -> Result<Self, Self::Error> {
+        // A 2xx with `status: false` is Korapay rejecting the call (bad
+        // reference, amount below the currency minimum, etc.) -- treated as a
+        // real failure, same posture as the charge/payout responses.
+        if !item.response.status {
+            return Err(errors::ConnectorError::ResponseHandlingFailed.into());
+        }
+
+        Ok(Self {
+            response: Ok(RefundsResponseData {
+                connector_refund_id: item.response.data.refund_reference.clone(),
+                refund_status: enums::RefundStatus::from(item.response.data.status),
+            }),
+            ..item.data
+        })
+    }
+}
+
+impl<F> TryFrom<RefundsResponseRouterData<F, KorapayRefundSyncResponse>>
+    for RefundsRouterData<F>
+{
+    type Error = error_stack::Report<errors::ConnectorError>;
+    fn try_from(
+        item: RefundsResponseRouterData<F, KorapayRefundSyncResponse>,
+    ) -> Result<Self, Self::Error> {
+        if !item.response.status {
+            return Err(errors::ConnectorError::ResponseHandlingFailed.into());
+        }
+
+        Ok(Self {
+            response: Ok(RefundsResponseData {
+                connector_refund_id: item.response.data.reference.clone(),
+                refund_status: enums::RefundStatus::from(item.response.data.status),
             }),
             ..item.data
         })

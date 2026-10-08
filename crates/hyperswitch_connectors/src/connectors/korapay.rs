@@ -4,8 +4,9 @@ use std::sync::LazyLock;
 
 use common_enums::enums;
 use common_utils::{
+    crypto,
     errors::CustomResult,
-    ext_traits::BytesExt,
+    ext_traits::{ByteSliceExt, BytesExt},
     request::{Method, Request, RequestBuilder, RequestContent},
     types::{AmountConvertor, FloatMajorUnit, FloatMajorUnitForConnector},
 };
@@ -28,7 +29,7 @@ use hyperswitch_domain_models::{
     },
     types::{
         PaymentsAuthorizeRouterData, PaymentsCaptureRouterData, PaymentsSyncRouterData,
-        RefundsRouterData,
+        RefundExecuteRouterData, RefundSyncRouterData,
     },
 };
 #[cfg(feature = "payouts")]
@@ -46,13 +47,17 @@ use hyperswitch_interfaces::{
     configs::Connectors,
     consts, errors,
     events::connector_api_logs::ConnectorEvent,
-    types::{PaymentsAuthorizeType, PaymentsSyncType, Response},
+    types::{
+        PaymentsAuthorizeType, PaymentsSyncType, RefundExecuteType, RefundSyncType, Response,
+    },
     webhooks,
 };
 use hyperswitch_masking::{ExposeInterface, Mask, Maskable};
 use transformers as korapay;
 
-use crate::{constants::headers, types::ResponseRouterData, utils::convert_amount};
+use crate::{
+    constants::headers, types::ResponseRouterData, utils, utils::convert_amount,
+};
 
 #[derive(Clone)]
 pub struct Korapay {
@@ -426,30 +431,167 @@ impl ConnectorIntegration<Void, PaymentsCancelData, PaymentsResponseData> for Ko
     }
 }
 
-// No refund method exists anywhere in
-// the original Node "korapay" integration — this connector does not guess at an
-// unconfirmed `/refunds` endpoint the way Task 42's payout-shape bug taught
-// this codebase not to. Flagged in handover.md as open follow-up work
-// (confirm against developers.korapay.com/docs/refunds or Korapay support
-// before wiring), same discipline as `getCardEvents()`'s own "needs a
-// direct answer before this is written" note in the original Node integration.
+// Refund Execute — POST /api/v1/refunds/initiate
+// Refund Sync    — GET  /api/v1/refunds/:reference
+// Endpoints and request/response shapes confirmed against
+// developers.korapay.com/docs/refunds-api (see the transformers section's own
+// note for the exact contract).
 impl ConnectorIntegration<Execute, RefundsData, RefundsResponseData> for Korapay {
+    fn get_headers(
+        &self,
+        req: &RefundExecuteRouterData,
+        connectors: &Connectors,
+    ) -> CustomResult<Vec<(String, Maskable<String>)>, errors::ConnectorError> {
+        self.build_headers(req, connectors)
+    }
+
+    fn get_content_type(&self) -> &'static str {
+        self.common_get_content_type()
+    }
+
+    fn get_url(
+        &self,
+        _req: &RefundExecuteRouterData,
+        connectors: &Connectors,
+    ) -> CustomResult<String, errors::ConnectorError> {
+        Ok(format!(
+            "{}api/v1/refunds/initiate",
+            self.base_url(connectors)
+        ))
+    }
+
+    fn get_request_body(
+        &self,
+        req: &RefundExecuteRouterData,
+        _connectors: &Connectors,
+    ) -> CustomResult<RequestContent, errors::ConnectorError> {
+        let refund_amount = convert_amount(
+            self.amount_converter,
+            req.request.minor_refund_amount,
+            req.request.currency,
+        )?;
+
+        let connector_router_data = korapay::KorapayRouterData::from((refund_amount, req));
+        let connector_req = korapay::KorapayRefundRequest::try_from(&connector_router_data)?;
+        Ok(RequestContent::Json(Box::new(connector_req)))
+    }
+
     fn build_request(
         &self,
-        _req: &RefundsRouterData<Execute>,
-        _connectors: &Connectors,
+        req: &RefundExecuteRouterData,
+        connectors: &Connectors,
     ) -> CustomResult<Option<Request>, errors::ConnectorError> {
-        Err(errors::ConnectorError::NotImplemented("Refund flow for Korapay".to_string()).into())
+        Ok(Some(
+            RequestBuilder::new()
+                .method(Method::Post)
+                .url(&RefundExecuteType::get_url(self, req, connectors)?)
+                .attach_default_headers()
+                .headers(RefundExecuteType::get_headers(self, req, connectors)?)
+                .set_body(RefundExecuteType::get_request_body(self, req, connectors)?)
+                .build(),
+        ))
+    }
+
+    fn handle_response(
+        &self,
+        data: &RefundExecuteRouterData,
+        event_builder: Option<&mut ConnectorEvent>,
+        res: Response,
+    ) -> CustomResult<RefundExecuteRouterData, errors::ConnectorError> {
+        let response: korapay::KorapayRefundResponse = res
+            .response
+            .parse_struct("Korapay RefundResponse")
+            .change_context(errors::ConnectorError::ResponseDeserializationFailed)?;
+        event_builder.map(|i| i.set_response_body(&response));
+        router_env::logger::info!(connector_response=?response);
+        RouterData::try_from(ResponseRouterData {
+            response,
+            data: data.clone(),
+            http_code: res.status_code,
+        })
+        .change_context(errors::ConnectorError::ResponseHandlingFailed)
+    }
+
+    fn get_error_response(
+        &self,
+        res: Response,
+        event_builder: Option<&mut ConnectorEvent>,
+    ) -> CustomResult<ErrorResponse, errors::ConnectorError> {
+        self.build_error_response(res, event_builder)
     }
 }
 
 impl ConnectorIntegration<RSync, RefundsData, RefundsResponseData> for Korapay {
+    fn get_headers(
+        &self,
+        req: &RefundSyncRouterData,
+        connectors: &Connectors,
+    ) -> CustomResult<Vec<(String, Maskable<String>)>, errors::ConnectorError> {
+        self.build_headers(req, connectors)
+    }
+
+    fn get_content_type(&self) -> &'static str {
+        self.common_get_content_type()
+    }
+
+    fn get_url(
+        &self,
+        req: &RefundSyncRouterData,
+        connectors: &Connectors,
+    ) -> CustomResult<String, errors::ConnectorError> {
+        let connector_refund_id = req
+            .request
+            .connector_refund_id
+            .clone()
+            .ok_or(errors::ConnectorError::MissingConnectorRefundID)?;
+        Ok(format!(
+            "{}api/v1/refunds/{}",
+            self.base_url(connectors),
+            connector_refund_id
+        ))
+    }
+
     fn build_request(
         &self,
-        _req: &RefundsRouterData<RSync>,
-        _connectors: &Connectors,
+        req: &RefundSyncRouterData,
+        connectors: &Connectors,
     ) -> CustomResult<Option<Request>, errors::ConnectorError> {
-        Err(errors::ConnectorError::NotImplemented("Refund flow for Korapay".to_string()).into())
+        Ok(Some(
+            RequestBuilder::new()
+                .method(Method::Get)
+                .url(&RefundSyncType::get_url(self, req, connectors)?)
+                .attach_default_headers()
+                .headers(RefundSyncType::get_headers(self, req, connectors)?)
+                .build(),
+        ))
+    }
+
+    fn handle_response(
+        &self,
+        data: &RefundSyncRouterData,
+        event_builder: Option<&mut ConnectorEvent>,
+        res: Response,
+    ) -> CustomResult<RefundSyncRouterData, errors::ConnectorError> {
+        let response: korapay::KorapayRefundSyncResponse = res
+            .response
+            .parse_struct("Korapay RefundSyncResponse")
+            .change_context(errors::ConnectorError::ResponseDeserializationFailed)?;
+        event_builder.map(|i| i.set_response_body(&response));
+        router_env::logger::info!(connector_response=?response);
+        RouterData::try_from(ResponseRouterData {
+            response,
+            data: data.clone(),
+            http_code: res.status_code,
+        })
+        .change_context(errors::ConnectorError::ResponseHandlingFailed)
+    }
+
+    fn get_error_response(
+        &self,
+        res: Response,
+        event_builder: Option<&mut ConnectorEvent>,
+    ) -> CustomResult<ErrorResponse, errors::ConnectorError> {
+        self.build_error_response(res, event_builder)
     }
 }
 
@@ -635,40 +777,108 @@ impl ConnectorIntegration<PoSync, PayoutsData, PayoutsResponseData> for Korapay 
 
 #[async_trait::async_trait]
 impl webhooks::IncomingWebhook for Korapay {
-    // Korapay webhook signature verification (hex HMAC-SHA256 of only the
-    // `data` object, per the original Node "korapay" integration's
-    // `verifyWebhookSignature`) is real, working logic in the original Node stack
-    // but genuinely out of scope for this leaf (a-1-ii-X covers
-    // ConnectorIntegration, not IncomingWebhook) — left as
-    // WebhooksNotImplemented and flagged in handover.md as the next natural
-    // follow-up, rather than half-ported here.
-    fn get_webhook_object_reference_id(
+    // Korapay signs with hex HMAC-SHA256 over ONLY the `data` object of the
+    // webhook body (not the whole body, and not `{event, data}`) — see
+    // developers.korapay.com's webhook-signature note.
+    fn get_webhook_source_verification_algorithm(
         &self,
         _request: &webhooks::IncomingWebhookRequestDetails<'_>,
+    ) -> CustomResult<Box<dyn crypto::VerifySignature + Send>, errors::ConnectorError> {
+        Ok(Box::new(crypto::HmacSha256))
+    }
+
+    fn get_webhook_source_verification_signature(
+        &self,
+        request: &webhooks::IncomingWebhookRequestDetails<'_>,
+        _connector_webhook_secrets: &api_models::webhooks::ConnectorWebhookSecrets,
+    ) -> CustomResult<Vec<u8>, errors::ConnectorError> {
+        let signature = utils::get_header_key_value("x-korapay-signature", request.headers)
+            .change_context(errors::ConnectorError::WebhookSignatureNotFound)?;
+
+        hex::decode(signature)
+            .change_context(errors::ConnectorError::WebhookVerificationSecretInvalid)
+    }
+
+    fn get_webhook_source_verification_message(
+        &self,
+        request: &webhooks::IncomingWebhookRequestDetails<'_>,
+        _merchant_id: &common_utils::id_type::MerchantId,
+        _connector_webhook_secrets: &api_models::webhooks::ConnectorWebhookSecrets,
+    ) -> CustomResult<Vec<u8>, errors::ConnectorError> {
+        let webhook_body = request
+            .body
+            .parse_struct::<korapay::KorapayWebhookData>("KorapayWebhookData")
+            .change_context(errors::ConnectorError::WebhookBodyDecodingFailed)?;
+
+        // Re-serialize only the `data` object. `serde_json` is built with
+        // `preserve_order` across this workspace (via `utoipa`), so key order
+        // matches the order Korapay sent; the digest is taken over the exact
+        // bytes of `data`, mirroring `JSON.stringify(body.data)`.
+        serde_json::to_vec(&webhook_body.data)
+            .change_context(errors::ConnectorError::WebhookSourceVerificationFailed)
+    }
+
+    fn get_webhook_object_reference_id(
+        &self,
+        request: &webhooks::IncomingWebhookRequestDetails<'_>,
     ) -> CustomResult<api_models::webhooks::ObjectReferenceId, errors::ConnectorError> {
-        Err(error_stack::report!(
-            errors::ConnectorError::WebhooksNotImplemented
-        ))
+        let webhook_body = request
+            .body
+            .parse_struct::<korapay::KorapayWebhookData>("KorapayWebhookData")
+            .change_context(errors::ConnectorError::WebhookBodyDecodingFailed)?;
+
+        let charge: korapay::KorapayWebhookCharge =
+            serde_json::from_value(webhook_body.data.clone())
+                .change_context(errors::ConnectorError::WebhookBodyDecodingFailed)?;
+
+        let reference = charge
+            .reference
+            .ok_or(errors::ConnectorError::WebhookReferenceIdNotFound)?;
+
+        Ok(match webhook_body.event.as_str() {
+            "refund.success" | "refund.failed" => {
+                api_models::webhooks::ObjectReferenceId::RefundId(
+                    api_models::webhooks::RefundIdType::ConnectorRefundId(reference),
+                )
+            }
+            #[cfg(feature = "payouts")]
+            "transfer.success" | "transfer.failed" => {
+                api_models::webhooks::ObjectReferenceId::PayoutId(
+                    api_models::webhooks::PayoutIdType::ConnectorPayoutId(reference),
+                )
+            }
+            _ => api_models::webhooks::ObjectReferenceId::PaymentId(
+                api_models::payments::PaymentIdType::ConnectorTransactionId(reference),
+            ),
+        })
     }
 
     fn get_webhook_event_type(
         &self,
-        _request: &webhooks::IncomingWebhookRequestDetails<'_>,
+        request: &webhooks::IncomingWebhookRequestDetails<'_>,
         _context: Option<&webhooks::WebhookContext>,
     ) -> CustomResult<api_models::webhooks::IncomingWebhookEvent, errors::ConnectorError> {
-        Err(error_stack::report!(
-            errors::ConnectorError::WebhooksNotImplemented
+        let webhook_body = request
+            .body
+            .parse_struct::<korapay::KorapayWebhookData>("KorapayWebhookData")
+            .change_context(errors::ConnectorError::WebhookBodyDecodingFailed)?;
+
+        Ok(api_models::webhooks::IncomingWebhookEvent::from(
+            webhook_body,
         ))
     }
 
     fn get_webhook_resource_object(
         &self,
-        _request: &webhooks::IncomingWebhookRequestDetails<'_>,
+        request: &webhooks::IncomingWebhookRequestDetails<'_>,
     ) -> CustomResult<Box<dyn hyperswitch_masking::ErasedMaskSerialize>, errors::ConnectorError>
     {
-        Err(error_stack::report!(
-            errors::ConnectorError::WebhooksNotImplemented
-        ))
+        let webhook_body = request
+            .body
+            .parse_struct::<korapay::KorapayWebhookData>("KorapayWebhookData")
+            .change_context(errors::ConnectorError::WebhookBodyDecodingFailed)?;
+
+        Ok(Box::new(webhook_body))
     }
 }
 

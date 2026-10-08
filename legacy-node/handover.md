@@ -26933,3 +26933,145 @@ git pull
 git am ~/storage/downloads/b-pay-backend-router-db-field-and-pg-lint.patch
 git push
 ```
+
+## Session 16 — Remita connector (Task 77/a-5); the toolchain genuinely exists (2026-10-07)
+
+**The "no rustc" claim in the New-Clone Checklist is now confirmed WRONG, not
+just suspected.** This session installed real Rust in the sandbox with no
+network workarounds: the `sh.rustup.rs` / `static.rust-lang.org` probes that
+the checklist records as `HTTP 403 host_not_allowed` now return **HTTP 200** —
+the sandbox allowlist has changed since 2026-09-11. Installed `rustup` +
+`rustc`/`cargo 1.86.0` (the repo's own pinned `package.rust-version`), plus
+`protobuf-compiler`, `pkg-config`, and OpenSSL dev headers (needed by
+`grpc-api-types` and `openssl-sys`). Correct the checklist's step-2/step-3
+text: the "don't spend a session re-confirming" advice still stands, but any
+session that *does* find a toolchain is right and this is that session.
+
+**Task 77/a-5 — remita connector, done and actually compiled.** Scaffolded
+`crates/hyperswitch_connectors/src/connectors/remita{.rs,/transformers.rs}`
+from the Flutterwave/Korapay template (Authorize + PSync only, no payouts —
+Remita's Checkout Solutions surface has no payout flows), wired through the
+full 26-file registration set, and verified for real:
+
+```
+cargo check -p hyperswitch_connectors --features v1          -> clean
+cargo check -p hyperswitch_connectors --features v1,payouts  -> clean
+cargo check -p router --features v1,payouts                  -> EXIT=0
+```
+
+Three real integration bugs that only surfaced *because* it compiled (each
+was an exhaustive match on `Connector` that a re-read would not have caught —
+this is the standing argument for compiling every connector before handoff):
+`euclid::enums` `TryFrom<Connector> for RoutableConnectors`, `router/
+core/connector_validation.rs::validate_auth_and_metadata_type_with_connector`,
+and `router::types::api::feature_matrix` each needed a `Remita` arm; plus
+Remita needed to be added to the four `default_imp_for_*_authenticate_steps`/
+`complete_authorize` macro lists (Redsys is in exactly one of them, not four —
+which is why the mechanical "copy the neighbour" approach left Remita with
+missing `PaymentsPreAuthenticate`/`PaymentsAuthenticate` supertrait impls,
+E0277, until fixed).
+
+**Also fixed:** `JuicywayCreateBeneficiaryRequest`'s manual `impl Serialize`
+was not gated behind `#[cfg(feature = "payouts")]` while its own struct was —
+`cargo check -p hyperswitch_connectors --features v1` (default) failed E0412
+until the gate was added.
+
+**Still open on Remita, flagged in-code rather than guessed:** the amount unit
+(`FloatMajorUnit` chosen to match Korapay/Paystack on NGN, unconfirmed — Task
+50/c's one worked example states no unit rule), the charge endpoint's
+prose-vs-curl path inconsistency *within* Remita's own doc, and the PSync
+verify response shape. All three need a live sandbox call to settle. Refunds,
+Capture/Void, mandates, and webhooks are deliberately unwired
+(`NotImplemented`/`FlowNotSupported`/`WebhooksNotImplemented`) — no
+confirmed endpoint/signature exists in any supplied source.
+
+**Base URL:** `https://api-demo.systemspecsng.com/` in all 7 config files
+(demo host from Task 50/c's worked example); the production host is not yet
+confirmed.
+
+**Delivery:** one squashed commit on branch `feat/task-77-a5-remita-connector`
+(9a4d344a6), one `git format-patch` (this repo's share of the cross-repo
+`apply-all` bundle). Note the branch you build it on must be `main`, not the
+older `task-77-a5-remita-scaffold` branch — that branch name is misleading;
+it holds only toolchain/scaffold-tooling fixes and contains **no** Remita
+files.
+
+
+## Session 17 — the other five legacy providers, scaffolded (Task 77/a-1, a-3, a-4, a-7, a-9, a-10) (2026-10-07)
+
+**The five unscaffolded legacy providers are now scaffolded and compiled,
+closing out the Task 77 connector set.** Sessions 15–16 scaffolded
+Korapay, Paystack, JuicyWay, Flutterwave, and Remita (a-1, a-2, a-3, a-5,
+a-6). This session takes the remaining five — DodoPayments (a-4),
+PaymentPoint (a-8), Xixapay (a-7), Prestmit (a-9), and `telcos.opik.net`
+(a-10) — and wires each through the same full registration set Remita
+established, so all ten legacy providers now have connector crates.
+
+**What each scaffold is.** Not one of these five had a confirmed
+provider-specific collection endpoint, and (per their own Task 0 audits)
+each carries at least one unresolved blocking item. So, exactly as with
+Remita, each connector wires its identity (id, base URL, auth header,
+Authorize + PSync) so it compiles and registers as a real engine
+connector, and leaves every other flow `NotImplemented` /
+`FlowNotSupported` / `WebhooksNotImplemented` rather than guessing at an
+endpoint. **The Authorize/PSync request + response shapes are generic
+hosted-checkout placeholders that reuse the Remita envelope** — they are
+the one thing that must be replaced against each provider's real docs
+before any of these touches real money. Each file's header comment says so.
+
+Provider-by-provider, the confirmed identity and the flagged gap:
+
+- **DodoPayments** (`dodopayments`) — Merchant-of-Record platform;
+  `https://test.dodopayments.com/` (live host is a second URL,
+  `https://live.dodopayments.com`, per a-4 — hyperswitch's one-base-URL
+  `Connectors` model uses the test host here). Auth: `Authorization:
+  Bearer`. Recommended surface `POST /checkout-sessions` (a-4; the legacy
+  `POST /payments` is deprecated). Flagged: product-catalog-driven model
+  (needs pre-provisioned `product_id`s, not an arbitrary amount), the
+  USD/INR-vs-EUR/GBP settlement-currency doc conflict, and the Standard
+  Webhooks signature scheme.
+- **PaymentPoint** (`paymentpoint`) — `https://api.paymentpoint.co/`.
+  Auth (a-8): three simultaneous credentials — `Authorization: Bearer`
+  **plus** a separate `api-key` header **plus** a body `businessId`; the
+  scaffold emits the single Bearer header (framework `HeaderKey`) and
+  flags the two it cannot carry. Only documented surface is
+  `POST /api/v1/createVirtualAccount` (collection-adjacent), so that is
+  the placeholder Authorize path. Flagged: no documented
+  charge/collection endpoint, a live-looking Bearer+api-key pair in
+  PaymentPoint's own public docs (rotate if real), and no machine-readable
+  error codes.
+- **Xixapay** (`xixapay`) — `https://api.xixapay.com/`. Auth (a-7): same
+  three-credential shape as PaymentPoint. No documented sandbox host.
+  Placeholder paths mirror the virtual-account surface. Flagged: no
+  documented charge endpoint, the boolean-vs-`"success"`-string `status`
+  inconsistency across endpoints, the docs-wide `Beaerer` typo, and a
+  webhook scheme with no replay protection.
+- **Prestmit** (`prestmit`) — `https://dev-api.prestmit.io/`. Auth (a-9):
+  `API-KEY` header plus an `API-Hash` request signature the scaffold does
+  not yet model. **Not a charge-a-customer processor** — it is a gift-card
+  / crypto off-ramp; there is no payin endpoint, so the scaffold maps onto
+  the gift-card sell/lookup shape. Flagged: the scope question (a-9 — was
+  Prestmit's inclusion intentional?), three mutually inconsistent
+  base-URL sources in Prestmit's own docs, and the request-signature gap.
+- **`telcos.opik.net`** (`opik`) — `https://telco.opik.net/` (the
+  operator-owned VTU rail; also present as `https://telco.opik.net/api/v1`
+  in `docs/openapi/openapi.yaml`). a-10 recorded as **not started** — no
+  request/response contract, auth scheme, or uptime posture confirmed. So
+  this scaffold is the thinnest of the five: identity + base URL + a
+  Bearer placeholder, with every endpoint flagged unconfirmed.
+
+**What this session deliberately did NOT do.** No provider's
+`providers/*.js` was written, and no flow beyond Authorize+PSync was
+wired. Fleet/registry work (Zealot `tenant_registry`, `dev.integrator`,
+`sign7`/libasn1, `keyring`) and the pre-existing Dirty tests remain open.
+
+**Verification (real toolchain, rustc/cargo 1.86.0):**
+```
+cargo check -p hyperswitch_connectors --features v1          -> EXIT=0
+cargo check -p hyperswitch_connectors --features v1,payouts  -> EXIT=0
+cargo check -p router --features v1,payouts                  -> EXIT=0
+```
+
+**Delivery:** one squashed commit + `git format-patch` for this repo; no
+public repo pushed (patch-handoff convention).
+

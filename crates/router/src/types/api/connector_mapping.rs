@@ -426,6 +426,24 @@ impl ConnectorData {
                 enums::Connector::Redsys => {
                     Ok(ConnectorEnum::Old(Box::new(connector::Redsys::new())))
                 }
+                enums::Connector::Remita => {
+                    Ok(ConnectorEnum::Old(Box::new(connector::Remita::new())))
+                }
+                enums::Connector::Dodopayments => {
+                    Ok(ConnectorEnum::Old(Box::new(connector::Dodopayments::new())))
+                }
+                enums::Connector::Paymentpoint => {
+                    Ok(ConnectorEnum::Old(Box::new(connector::Paymentpoint::new())))
+                }
+                enums::Connector::Xixapay => {
+                    Ok(ConnectorEnum::Old(Box::new(connector::Xixapay::new())))
+                }
+                enums::Connector::Prestmit => {
+                    Ok(ConnectorEnum::Old(Box::new(connector::Prestmit::new())))
+                }
+                enums::Connector::Opik => {
+                    Ok(ConnectorEnum::Old(Box::new(connector::Opik::new())))
+                }
                 enums::Connector::Revolv3 => {
                     Ok(ConnectorEnum::Old(Box::new(connector::Revolv3::new())))
                 }

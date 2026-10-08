@@ -9247,3 +9247,27 @@ api_key = "API Key"
 [flutterwave]
 [flutterwave.connector_auth.HeaderKey]
 api_key = "API Key"
+
+[remita]
+[remita.connector_auth.HeaderKey]
+api_key = "API Key"
+
+[dodopayments]
+[dodopayments.connector_auth.HeaderKey]
+api_key = "API Key"
+
+[paymentpoint]
+[paymentpoint.connector_auth.HeaderKey]
+api_key = "API Key"
+
+[xixapay]
+[xixapay.connector_auth.HeaderKey]
+api_key = "API Key"
+
+[prestmit]
+[prestmit.connector_auth.HeaderKey]
+api_key = "API Key"
+
+[opik]
+[opik.connector_auth.HeaderKey]
+api_key = "API Key"

@@ -45,7 +45,7 @@ pub use hyperswitch_connectors::connectors::{
     peachpayments, peachpayments::Peachpayments, phonepe, phonepe::Phonepe, placetopay,
     placetopay::Placetopay, plaid, plaid::Plaid, powertranz, powertranz::Powertranz, prophetpay,
     prophetpay::Prophetpay, rapyd, rapyd::Rapyd, razorpay, razorpay::Razorpay, recurly,
-    recurly::Recurly, redsys, redsys::Redsys, revolv3, revolv3::Revolv3, riskified,
+    recurly::Recurly, redsys, redsys::Redsys, remita, remita::Remita, dodopayments, dodopayments::Dodopayments, paymentpoint, paymentpoint::Paymentpoint, xixapay, xixapay::Xixapay, prestmit, prestmit::Prestmit, opik, opik::Opik, revolv3, revolv3::Revolv3, riskified,
     riskified::Riskified, santander, santander::Santander, shift4, shift4::Shift4, sift,
     sift::Sift, signifyd, signifyd::Signifyd, silverflow, silverflow::Silverflow, square,
     square::Square, stax, stax::Stax, stripe, stripe::Stripe, stripebilling,

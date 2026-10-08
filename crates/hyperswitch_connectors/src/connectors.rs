@@ -117,6 +117,12 @@ pub mod rapyd;
 pub mod razorpay;
 pub mod recurly;
 pub mod redsys;
+pub mod remita;
+pub mod dodopayments;
+pub mod paymentpoint;
+pub mod xixapay;
+pub mod prestmit;
+pub mod opik;
 pub mod revolv3;
 pub mod riskified;
 pub mod santander;
@@ -187,7 +193,7 @@ pub use self::{
     payone::Payone, paypal::Paypal, paysafe::Paysafe, paystack::Paystack, paytm::Paytm, payu::Payu,
     peachpayments::Peachpayments, phonepe::Phonepe, placetopay::Placetopay, plaid::Plaid,
     powertranz::Powertranz, prophetpay::Prophetpay, rapyd::Rapyd, razorpay::Razorpay,
-    recurly::Recurly, redsys::Redsys, revolv3::Revolv3, riskified::Riskified, santander::Santander,
+    recurly::Recurly, redsys::Redsys, remita::Remita, dodopayments::Dodopayments, paymentpoint::Paymentpoint, xixapay::Xixapay, prestmit::Prestmit, opik::Opik, revolv3::Revolv3, riskified::Riskified, santander::Santander,
     shift4::Shift4, sift::Sift, signifyd::Signifyd, silverflow::Silverflow, square::Square,
     stax::Stax, stripe::Stripe, stripebilling::Stripebilling, taxjar::Taxjar, tesouro::Tesouro,
     threedsecureio::Threedsecureio, thunes::Thunes, tokenex::Tokenex, tokenio::Tokenio,

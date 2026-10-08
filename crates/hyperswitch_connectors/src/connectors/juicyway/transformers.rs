@@ -613,6 +613,7 @@ pub enum JuicywayBeneficiaryRequest {
 #[cfg(feature = "payouts")]
 pub struct JuicywayCreateBeneficiaryRequest(pub JuicywayBeneficiaryRequest);
 
+#[cfg(feature = "payouts")]
 impl Serialize for JuicywayCreateBeneficiaryRequest {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where

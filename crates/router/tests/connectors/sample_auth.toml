@@ -414,3 +414,21 @@ api_key="API Key"
 
 [juicyway]
 api_key="API Key"
+
+[remita]
+api_key="API Key"
+
+[dodopayments]
+api_key="API Key"
+
+[paymentpoint]
+api_key="API Key"
+
+[xixapay]
+api_key="API Key"
+
+[prestmit]
+api_key="API Key"
+
+[opik]
+api_key="API Key"

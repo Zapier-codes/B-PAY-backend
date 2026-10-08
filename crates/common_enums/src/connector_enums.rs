@@ -178,6 +178,12 @@ pub enum Connector {
     Razorpay,
     Recurly,
     Redsys,
+    Remita,
+    Dodopayments,
+    Paymentpoint,
+    Xixapay,
+    Prestmit,
+    Opik,
     Revolv3,
     Santander,
     Shift4,
@@ -423,6 +429,12 @@ impl Connector {
             | Self::Rapyd
             | Self::Recurly
             | Self::Redsys
+            | Self::Remita
+            | Self::Dodopayments
+            | Self::Paymentpoint
+            | Self::Xixapay
+            | Self::Prestmit
+            | Self::Opik
             | Self::Revolv3
             | Self::Santander
             | Self::Shift4

@@ -525,6 +525,30 @@ impl ConnectorAuthTypeAndMetadataValidation<'_> {
                 redsys::transformers::RedsysAuthType::try_from(self.auth_type)?;
                 Ok(())
             }
+            api_enums::Connector::Remita => {
+                remita::transformers::RemitaAuthType::try_from(self.auth_type)?;
+                Ok(())
+            }
+            api_enums::Connector::Dodopayments => {
+                dodopayments::transformers::DodopaymentsAuthType::try_from(self.auth_type)?;
+                Ok(())
+            }
+            api_enums::Connector::Paymentpoint => {
+                paymentpoint::transformers::PaymentpointAuthType::try_from(self.auth_type)?;
+                Ok(())
+            }
+            api_enums::Connector::Xixapay => {
+                xixapay::transformers::XixapayAuthType::try_from(self.auth_type)?;
+                Ok(())
+            }
+            api_enums::Connector::Prestmit => {
+                prestmit::transformers::PrestmitAuthType::try_from(self.auth_type)?;
+                Ok(())
+            }
+            api_enums::Connector::Opik => {
+                opik::transformers::OpikAuthType::try_from(self.auth_type)?;
+                Ok(())
+            }
             api_enums::Connector::Revolv3 => {
                 revolv3::transformers::Revolv3AuthType::try_from(self.auth_type)?;
                 Ok(())

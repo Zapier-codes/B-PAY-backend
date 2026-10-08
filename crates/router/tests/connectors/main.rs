@@ -39,6 +39,7 @@ mod cybersourcedecisionmanager;
 mod datatrans;
 mod deutschebank;
 mod dlocal;
+mod dodopayments;
 #[cfg(feature = "dummy_connector")]
 mod dummyconnector;
 mod dwolla;
@@ -94,6 +95,7 @@ mod nuvei;
 #[cfg(feature = "dummy_connector")]
 mod opayo;
 mod opennode;
+mod opik;
 mod paybox;
 mod payconex;
 #[cfg(feature = "dummy_connector")]
@@ -102,6 +104,7 @@ mod payjustnow;
 mod payjustnowinstore;
 mod payload;
 mod payme;
+mod paymentpoint;
 mod payone;
 mod paypal;
 mod paysafe;
@@ -113,17 +116,13 @@ mod phonepe;
 mod placetopay;
 mod plaid;
 mod powertranz;
+mod prestmit;
 #[cfg(feature = "dummy_connector")]
 mod prophetpay;
 mod rapyd;
 mod razorpay;
 mod redsys;
 mod remita;
-mod dodopayments;
-mod paymentpoint;
-mod xixapay;
-mod prestmit;
-mod opik;
 mod revolv3;
 mod santander;
 mod shift4;
@@ -149,6 +148,7 @@ mod volt;
 mod wellsfargo;
 mod worldpaymodular;
 mod worldpayvantiv;
+mod xixapay;
 mod zift;
 // mod wellsfargopayout;
 #[cfg(feature = "payouts")]

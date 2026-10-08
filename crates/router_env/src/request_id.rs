@@ -148,6 +148,7 @@ pub(crate) mod boundary {
             return None;
         }
         let recorded = hook.try_replay_with_context(deja::ReplayLookup {
+            miss_policy: deja::MissPolicy::FailStop,
             boundary: "id_generation",
             trait_name: "router_env::request_id",
             method_name,

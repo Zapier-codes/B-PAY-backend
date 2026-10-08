@@ -441,9 +441,7 @@ impl ConnectorData {
                 enums::Connector::Prestmit => {
                     Ok(ConnectorEnum::Old(Box::new(connector::Prestmit::new())))
                 }
-                enums::Connector::Opik => {
-                    Ok(ConnectorEnum::Old(Box::new(connector::Opik::new())))
-                }
+                enums::Connector::Opik => Ok(ConnectorEnum::Old(Box::new(connector::Opik::new()))),
                 enums::Connector::Revolv3 => {
                     Ok(ConnectorEnum::Old(Box::new(connector::Revolv3::new())))
                 }

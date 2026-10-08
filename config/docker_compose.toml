@@ -1449,6 +1449,17 @@ port = 1025 # SMTP port
 timeout = 10 # Timeout for SMTP connection in seconds
 connection = "plaintext" #currently plaintext and starttls are supported
 
+# Configuration for Novu, applicable when the active email client is NOVU.
+# Novu is a notification-routing service: mail is sent by triggering a workflow
+# defined in Novu (with the real provider configured behind it). The workflow's
+# email step should reference {{payload.subject}} and {{payload.body}} so that
+# every transactional template this app emits renders without per-template setup.
+[email.novu]
+api_key = ""                              # Novu API key (Settings -> API Keys); sent as "Authorization: ApiKey <key>"
+base_url = "https://api.novu.co"          # Novu API base URL; point at a self-hosted instance to avoid the hosted service
+workflow_id = ""                          # Identifier of the Novu workflow to trigger for every outbound email
+timeout = 30                              # Request timeout in seconds
+
 [theme.email_config]
 entity_name = "Hyperswitch"                                                      # Display name in emails
 entity_logo_url = "https://app.hyperswitch.io/email-assets/HyperswitchLogo.png"  # Logo URL for emails

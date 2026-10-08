@@ -13,6 +13,9 @@ pub mod smtp;
 /// Implementation of Email client when email support is disabled
 pub mod no_email;
 
+/// Implementation of Novu notification-service client
+pub mod novu;
+
 /// Custom Result type alias for Email operations.
 pub type EmailResult<T> = CustomResult<T, EmailError>;
 
@@ -138,6 +141,11 @@ pub enum EmailClientConfigs {
         /// SMTP server configuration
         smtp: smtp::SmtpServerConfig,
     },
+    /// Novu notification-service client
+    Novu {
+        /// Novu client configuration
+        novu: novu::NovuConfig,
+    },
 }
 
 /// Struct that contains the settings required to construct an EmailClient.
@@ -170,6 +178,7 @@ impl EmailSettings {
         match &self.client_config {
             EmailClientConfigs::Ses { ref aws_ses } => aws_ses.validate(),
             EmailClientConfigs::Smtp { ref smtp } => smtp.validate(),
+            EmailClientConfigs::Novu { ref novu } => novu.validate(),
             EmailClientConfigs::NoEmailClient => Ok(()),
         }
     }

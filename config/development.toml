@@ -511,6 +511,12 @@ prod_intent_recipient_email = "business@example.com"
 email_role_arn = ""
 sts_role_session_name = ""
 
+[email.novu]
+api_key = ""
+base_url = "https://api.novu.co"
+workflow_id = ""
+timeout = 30
+
 [user]
 password_validity_in_days = 90
 two_factor_auth_expiry_in_secs = 300

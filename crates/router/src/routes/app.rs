@@ -14,7 +14,8 @@ use common_utils::{
 };
 #[cfg(feature = "email")]
 use external_services::email::{
-    no_email::NoEmailClient, ses::AwsSes, smtp::SmtpServer, EmailClientConfigs, EmailService,
+    no_email::NoEmailClient, novu::NovuClient, ses::AwsSes, smtp::SmtpServer, EmailClientConfigs,
+    EmailService,
 };
 #[cfg(all(feature = "revenue_recovery", feature = "v2"))]
 use external_services::grpc_client::revenue_recovery::GrpcRecoveryHeaders;
@@ -422,6 +423,9 @@ pub async fn create_email_client(
         ),
         EmailClientConfigs::Smtp { smtp } => {
             Box::new(SmtpServer::create(&settings.email, smtp.clone()).await)
+        }
+        EmailClientConfigs::Novu { novu } => {
+            Box::new(NovuClient::create(&settings.email, novu.clone()).await)
         }
         EmailClientConfigs::NoEmailClient => Box::new(NoEmailClient::create().await),
     }

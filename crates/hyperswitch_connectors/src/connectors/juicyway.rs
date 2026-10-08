@@ -4,8 +4,9 @@ use std::sync::LazyLock;
 
 use common_enums::enums;
 use common_utils::{
+    crypto,
     errors::CustomResult,
-    ext_traits::BytesExt,
+    ext_traits::{ByteSliceExt, BytesExt},
     request::{Method, Request, RequestBuilder, RequestContent},
     types::{AmountConvertor, MinorUnit, MinorUnitForConnector},
 };
@@ -753,44 +754,138 @@ impl ConnectorIntegration<PoSync, PayoutsData, PayoutsResponseData> for Juicyway
     }
 }
 
+/// Reproduces the canonical JSON encoding JuicyWay's webhook checksum is
+/// computed over: object keys sorted alphabetically at every nesting level,
+/// with no insignificant whitespace. This is deliberately NOT
+/// `serde_json::to_string` (which preserves insertion order); it mirrors
+/// JuicyWay's documented `stable_stringify` exactly.
+fn stable_stringify(value: &serde_json::Value) -> String {
+    match value {
+        serde_json::Value::Null
+        | serde_json::Value::Bool(_)
+        | serde_json::Value::Number(_)
+        | serde_json::Value::String(_) => value.to_string(),
+        serde_json::Value::Array(items) => {
+            let parts: Vec<String> = items.iter().map(stable_stringify).collect();
+            format!("[{}]", parts.join(","))
+        }
+        serde_json::Value::Object(map) => {
+            let mut keys: Vec<&String> = map.keys().collect();
+            keys.sort();
+            let parts: Vec<String> = keys
+                .iter()
+                .map(|key| {
+                    format!(
+                        "{}:{}",
+                        serde_json::Value::String((*key).clone()),
+                        stable_stringify(&map[*key])
+                    )
+                })
+                .collect();
+            format!("{{{}}}", parts.join(","))
+        }
+    }
+}
+
+#[async_trait::async_trait]
 impl webhooks::IncomingWebhook for Juicyway {
-    // JuicyWay's webhook checksum scheme (checksum travels INSIDE the
-    // JSON body, keyed by the merchant's separate "business ID", over an
-    // alphabetically-key-sorted encoding of `data` — see
-    // the original Node "juicyway" integration's verifyWebhookSignature and
-    // handover.md's own webhook-scheme confirmation) is real, working,
-    // and well-documented — but genuinely out of scope for this leaf,
-    // same boundary Korapay's own a-1-ii-X drew for `IncomingWebhook`.
-    // Left as WebhooksNotImplemented and flagged as the natural next
-    // follow-up (unusually low-risk to port, since the scheme is fully
-    // confirmed already), not half-ported here.
-    fn get_webhook_object_reference_id(
+    // JuicyWay's checksum travels INSIDE the JSON body (there is no signature
+    // header) and is an uppercase-hex HMAC-SHA256 of
+    // `"{event}|{stable_stringify(data)}"`. The HMAC key is the merchant's
+    // separate "business ID", which is why the merchant webhook secret for
+    // this connector must be configured as that business ID.
+    fn get_webhook_source_verification_algorithm(
         &self,
         _request: &webhooks::IncomingWebhookRequestDetails<'_>,
+    ) -> CustomResult<Box<dyn crypto::VerifySignature + Send>, errors::ConnectorError> {
+        Ok(Box::new(crypto::HmacSha256))
+    }
+
+    fn get_webhook_source_verification_signature(
+        &self,
+        request: &webhooks::IncomingWebhookRequestDetails<'_>,
+        _connector_webhook_secrets: &api_models::webhooks::ConnectorWebhookSecrets,
+    ) -> CustomResult<Vec<u8>, errors::ConnectorError> {
+        let webhook_body = request
+            .body
+            .parse_struct::<juicyway::JuicywayWebhookData>("JuicywayWebhookData")
+            .change_context(errors::ConnectorError::WebhookBodyDecodingFailed)?;
+
+        let checksum = webhook_body
+            .checksum
+            .ok_or(errors::ConnectorError::WebhookSignatureNotFound)?;
+
+        // The checksum is uppercase hex; compare as uppercase bytes.
+        Ok(checksum.to_uppercase().into_bytes())
+    }
+
+    fn get_webhook_source_verification_message(
+        &self,
+        request: &webhooks::IncomingWebhookRequestDetails<'_>,
+        _merchant_id: &common_utils::id_type::MerchantId,
+        _connector_webhook_secrets: &api_models::webhooks::ConnectorWebhookSecrets,
+    ) -> CustomResult<Vec<u8>, errors::ConnectorError> {
+        let webhook_body = request
+            .body
+            .parse_struct::<juicyway::JuicywayWebhookData>("JuicywayWebhookData")
+            .change_context(errors::ConnectorError::WebhookBodyDecodingFailed)?;
+
+        let message = format!(
+            "{}|{}",
+            webhook_body.event,
+            stable_stringify(&webhook_body.data)
+        );
+        Ok(message.into_bytes())
+    }
+
+    fn get_webhook_object_reference_id(
+        &self,
+        request: &webhooks::IncomingWebhookRequestDetails<'_>,
     ) -> CustomResult<api_models::webhooks::ObjectReferenceId, errors::ConnectorError> {
-        Err(error_stack::report!(
-            errors::ConnectorError::WebhooksNotImplemented
+        let webhook_body = request
+            .body
+            .parse_struct::<juicyway::JuicywayWebhookData>("JuicywayWebhookData")
+            .change_context(errors::ConnectorError::WebhookBodyDecodingFailed)?;
+
+        let payment: juicyway::JuicywayWebhookPayment =
+            serde_json::from_value(webhook_body.data)
+                .change_context(errors::ConnectorError::WebhookBodyDecodingFailed)?;
+
+        let reference = payment
+            .reference
+            .ok_or(errors::ConnectorError::WebhookReferenceIdNotFound)?;
+
+        Ok(api_models::webhooks::ObjectReferenceId::PaymentId(
+            api_models::payments::PaymentIdType::ConnectorTransactionId(reference),
         ))
     }
 
     fn get_webhook_event_type(
         &self,
-        _request: &webhooks::IncomingWebhookRequestDetails<'_>,
+        request: &webhooks::IncomingWebhookRequestDetails<'_>,
         _context: Option<&webhooks::WebhookContext>,
     ) -> CustomResult<api_models::webhooks::IncomingWebhookEvent, errors::ConnectorError> {
-        Err(error_stack::report!(
-            errors::ConnectorError::WebhooksNotImplemented
+        let webhook_body = request
+            .body
+            .parse_struct::<juicyway::JuicywayWebhookData>("JuicywayWebhookData")
+            .change_context(errors::ConnectorError::WebhookBodyDecodingFailed)?;
+
+        Ok(api_models::webhooks::IncomingWebhookEvent::from(
+            webhook_body,
         ))
     }
 
     fn get_webhook_resource_object(
         &self,
-        _request: &webhooks::IncomingWebhookRequestDetails<'_>,
+        request: &webhooks::IncomingWebhookRequestDetails<'_>,
     ) -> CustomResult<Box<dyn hyperswitch_masking::ErasedMaskSerialize>, errors::ConnectorError>
     {
-        Err(error_stack::report!(
-            errors::ConnectorError::WebhooksNotImplemented
-        ))
+        let webhook_body = request
+            .body
+            .parse_struct::<juicyway::JuicywayWebhookData>("JuicywayWebhookData")
+            .change_context(errors::ConnectorError::WebhookBodyDecodingFailed)?;
+
+        Ok(Box::new(webhook_body))
     }
 }
 

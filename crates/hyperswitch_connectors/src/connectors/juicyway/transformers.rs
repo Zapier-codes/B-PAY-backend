@@ -956,3 +956,41 @@ impl<F> TryFrom<PayoutsResponseRouterData<F, JuicywayPayoutResponse>> for Payout
         })
     }
 }
+
+/// Raw JuicyWay webhook envelope: `{ checksum, event, data }`.
+///
+/// Unlike Paystack/Korapay, JuicyWay's checksum is not an HTTP header — it
+/// travels inside the JSON body as the `checksum` field, and is an
+/// uppercase-hex HMAC-SHA256 of `"{event}|{stable_stringify(data)}"` keyed by
+/// the merchant's separate business ID. `data` is kept as an untyped
+/// [`serde_json::Value`] because the checksum is computed over a
+/// canonicalized re-serialization of it (see the `stable_stringify` helper in
+/// `juicyway.rs`), which a narrower typed struct could not reproduce.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct JuicywayWebhookData {
+    pub checksum: Option<String>,
+    pub event: String,
+    pub data: serde_json::Value,
+}
+
+/// The subset of a webhook's `data` object this connector reads. Per
+/// docs.juicyway.com/webhooks, `data.status` is `success`/`failed`-style
+/// lifecycle state alongside the payment `reference`; unknown extra fields
+/// are ignored. Mirrors [`JuicywayPaymentObject`] but is separate because the
+/// webhook payload is not guaranteed to carry the same `id` the
+/// `/payments/{id}` endpoint uses.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct JuicywayWebhookPayment {
+    pub reference: Option<String>,
+    pub status: Option<JuicywayPaymentStatus>,
+}
+
+impl From<JuicywayWebhookData> for api_models::webhooks::IncomingWebhookEvent {
+    fn from(item: JuicywayWebhookData) -> Self {
+        match item.event.as_str() {
+            "payment.session.succeeded" => Self::PaymentIntentSuccess,
+            "payment.session.failed" => Self::PaymentIntentFailure,
+            _ => Self::EventNotSupported,
+        }
+    }
+}

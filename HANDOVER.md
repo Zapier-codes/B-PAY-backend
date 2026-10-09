@@ -1123,13 +1123,52 @@ Five more byte-exact ports (10 total so far), same verification bar:
 ### Remaining byte-exact ports (for a future session)
 
 Still unported from the 13-commit byte-exact set, all connector/CI/version
-work the fork does not need as-is: `5993ffeda` is now taken; `da2ff3752`,
-`2b1fa36f9` (CODEOWNERS), `e397be3be` (Postman sandbox keys), `ac4083cb2`
-(Cypress config), `215423c2a` (version bump), `d483971dc` (analytics intent
-fields, 21 files — large, review before taking). Non-byte-exact but
-context-clean candidates worth a human read: `9689f477b` (router URL
-validation), `3388ba6e6` (return saved connector mandate ID), `3f4a0c7ba`
-(UCS dispute lookup), `8435a33d2` (skip vault delete when never stored).
+work the fork does not need as-is: `da2ff3752`, `2b1fa36f9` (CODEOWNERS),
+`e397be3be` (Postman sandbox keys), `ac4083cb2` (Cypress config), `215423c2a`
+(version bump), `d483971dc` (analytics intent fields, 21 files — large,
+review before taking). Non-byte-exact but context-clean candidates worth a
+human read: `9689f477b` (router URL validation), `3388ba6e6` (return saved
+connector mandate ID), `3f4a0c7ba` (UCS dispute lookup), `8435a33d2` (skip
+vault delete when never stored).
+
+### Ported from upstream, third batch (2026-10-09, part 6)
+
+Eleven more ports — the payments / disputes / webhooks / security / perf
+backlog from part 3 — bringing the total to **21 commits** on top of
+`604158e32`. Unlike batches 1–2, these are **context-clean** (the diff
+applies), not byte-exact; each was still applied with `git apply` rather than
+edited by hand, and all eleven were first dry-run applied in sequence in a
+throwaway worktree to catch inter-commit conflicts before committing.
+
+- **`fix(core)`: return saved connector mandate ID in payment responses**
+  (`3388ba6e6`): fall back to the payment attempt's saved connector mandate
+  reference when a retrieve skipped the connector call.
+- **`fix(webhooks)`: prefer parent payment reference for UCS dispute lookups**
+  (`3f4a0c7ba`): use `connector_transaction_id` first, `connector_dispute_id`
+  as fallback.
+- **`fix(webhooks)`: prefer merchant txn id over connector id in UCS webhook
+  bridge** (`e8c465e22`).
+- **`fix(payment_methods)`: skip vault delete for PMs never stored in vault**
+  (`8435a33d2`): guard on `locker_id`/`external_vault_source`.
+- **`fix(email)`: route SMTP sends through the configured proxy** (`23a744fb9`).
+- **`fix(core)`: defer bank redirect payment method creation until terminal
+  status** (`5dd17494a`).
+- **`fix(core)`: update existing PAYMENTS_SYNC tracker instead of creating a
+  duplicate** (`39e345ed6`).
+- **`fix(payments)`: sum connector latency across retry attempts** (`9b3b15f84`).
+- **`fix(scheduler)`: reuse redis consumer across polls** (`ba71bc66a`).
+- **`fix(core)`: schedule Payment Sync workflow after PaymentsCapture**
+  (`6fd72e5e6`).
+- **`refactor(metrics)`: refine API latency histogram buckets** (`d108440e4`).
+
+Two candidates from the backlog were **not** portable and were skipped:
+`468ed8d5e` (connector mandate id irrespective of active/inactive) and
+`306f49775` (align refund connector error mapping) — both touch files we have
+substantially rewritten (`payment_response.rs`, `errors/utils.rs`), so the
+upstream hunks no longer apply and they need a human read rather than a
+mechanical port. `e08e085ea` (DB connection leases) and the `perf/refactor
+(cache)` series are large and deeply entangled with upstream-only
+infrastructure — left for a review session.
 
 
 

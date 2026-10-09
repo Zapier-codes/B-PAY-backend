@@ -12,7 +12,11 @@ counter_metric!(KV_MISS, GLOBAL_METER); // No. of KV misses
 
 // API Level Metrics
 counter_metric!(REQUESTS_RECEIVED, GLOBAL_METER);
-histogram_metric_f64!(REQUEST_TIME, GLOBAL_METER);
+histogram_metric_f64!(
+    REQUEST_TIME,
+    GLOBAL_METER,
+    boundaries: router_env::metrics::exponential_histogram_buckets(),
+);
 
 histogram_metric_f64!(
     PAYMENT_OPERATION_DURATION,

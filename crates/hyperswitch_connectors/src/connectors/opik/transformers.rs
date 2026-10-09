@@ -29,7 +29,7 @@ use hyperswitch_domain_models::{
     router_flow_types::payments::PSync,
     router_request_types::{PaymentsSyncData, ResponseId},
     router_response_types::PaymentsResponseData,
-    types::{PaymentsAuthorizeRouterData, PaymentsSyncRouterData},
+    types::PaymentsAuthorizeRouterData,
 };
 use hyperswitch_interfaces::errors;
 use hyperswitch_masking::Secret;

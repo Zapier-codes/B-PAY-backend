@@ -80,7 +80,7 @@ macro_rules! fallback_reverse_lookup_not_found {
                     _=> return Err(err)
                 }
             }
-        };
+        }
     };
 }
 

@@ -25,21 +25,12 @@ use serde::Serialize;
 use crate::email::{EmailClient, EmailError, EmailResult, EmailSettings, IntermediateString};
 
 /// Client for sending email through a Novu workflow trigger.
-#[derive(Debug, Clone, serde::Deserialize)]
+#[derive(Debug, Clone, Default, serde::Deserialize)]
 pub struct NovuClient {
     /// Sender email id, surfaced to the Novu workflow as the trigger `from`.
     pub sender: pii::Email,
     /// Novu-specific configuration.
     pub novu_config: NovuConfig,
-}
-
-impl Default for NovuClient {
-    fn default() -> Self {
-        Self {
-            sender: pii::Email::default(),
-            novu_config: NovuConfig::default(),
-        }
-    }
 }
 
 /// Configuration for the Novu email client.

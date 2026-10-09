@@ -212,6 +212,9 @@ impl Feature<api::ExternalVaultProxy, types::ExternalVaultProxyPaymentsData>
         .await
     }
 
+    // The only caller of `postprocessing_steps` is the OpenBanking/Plaid
+    // post-processing path, which the external-vault-proxy flow never takes.
+    #[allow(clippy::todo)]
     async fn postprocessing_steps<'a>(
         self,
         _state: &SessionState,

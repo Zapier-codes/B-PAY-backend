@@ -5902,16 +5902,15 @@ where
     )
     .await?;
 
-    if let Some(connector_customer_id) = {
-        core_utils::get_connector_customer_id(
-            &state.conf,
-            &connector.connector_name.to_string(),
-            payment_data.get_connector_customer_id(),
-            &payment_data.get_payment_intent().customer_id,
-            &payment_data.get_payment_method_info().cloned(),
-            payment_data.get_payment_attempt(),
-        )?
-    } {
+    let connector_customer_id = core_utils::get_connector_customer_id(
+        &state.conf,
+        &connector.connector_name.to_string(),
+        payment_data.get_connector_customer_id(),
+        &payment_data.get_payment_intent().customer_id,
+        &payment_data.get_payment_method_info().cloned(),
+        payment_data.get_payment_attempt(),
+    )?;
+    if let Some(connector_customer_id) = connector_customer_id {
         router_data.connector_customer = Some(connector_customer_id);
     }
 
@@ -13514,11 +13513,13 @@ pub async fn payment_external_authentication<F: Clone + Sync>(
             .change_context(errors::ApiErrorResponse::InternalServerError)
             .attach_printable("Failed to call authentication authenticate flow")?
         } else {
-            crate::core::unified_authentication_service::authentication_authenticate_core(
-                state.clone(),
-                platform.clone(),
-                authenticate_req,
-                services::api::AuthFlow::Client,
+            Box::pin(
+                crate::core::unified_authentication_service::authentication_authenticate_core(
+                    state.clone(),
+                    platform.clone(),
+                    authenticate_req,
+                    services::api::AuthFlow::Client,
+                ),
             )
             .await?
             .get_json_body()

@@ -154,9 +154,8 @@ impl MerchantVerification {
     ) -> i128 {
         // A window that cannot be represented reaches back forever, so nothing
         // is excluded on the low end.
-        let window_start = now.checked_sub(time::Duration::days(
-            policy.general_threshold_window_days,
-        ));
+        let window_start =
+            now.checked_sub(time::Duration::days(policy.general_threshold_window_days));
         collected
             .iter()
             .filter(|(timestamp, _)| {

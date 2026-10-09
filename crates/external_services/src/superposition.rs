@@ -211,6 +211,9 @@ mod deja_boundary {
             run,
             reconstruct::<T>,
             capture::<T>,
+            // A miss here is absorbed by design: the caller falls back to the
+            // DB/default, so the request continues rather than fail-stopping.
+            deja::MissPolicy::Absorb,
             move || {
                 Err(report!(SuperpositionError::NotFound(format!(
                     "deja replay: no recorded Superposition value for `{operation}` (novel \

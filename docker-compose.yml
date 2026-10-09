@@ -76,6 +76,10 @@ services:
     environment:
       # format -> postgresql://DB_USER:DB_PASSWORD@HOST:PORT/DATABASE_NAME
       - DATABASE_URL=postgresql://db_user:db_pass@pg:5432/hyperswitch_db
+      # Optional: a session-mode/direct connection string for migrations, which
+      # take session-scoped advisory locks and run DDL and so are unsafe through
+      # a transaction-mode pooler. Falls back to DATABASE_URL when unset.
+      - MIGRATION_DATABASE_URL=${MIGRATION_DATABASE_URL:-postgresql://db_user:db_pass@pg:5432/hyperswitch_db}
 
   superposition:
     image: ghcr.io/juspay/superposition-demo:0.113.0

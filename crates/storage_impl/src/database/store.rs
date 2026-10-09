@@ -289,7 +289,7 @@ struct ConnectionSetup {
 }
 
 impl ConnectionSetup {
-    const fn is_needed(&self) -> bool {
+    const fn is_needed(self) -> bool {
         self.test_transaction || self.disable_prepared_statement_cache
     }
 }

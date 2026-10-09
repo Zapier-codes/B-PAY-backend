@@ -281,15 +281,17 @@ mode tears the backend connection down between transactions, which breaks
 the statement cache would not fix this one; it needs an actual pinned
 session, so it's not a candidate for the transaction pooler at all.
 
-**Also needs session mode or a direct connection (not yet wired, flag for
-next session):** schema migrations. Diesel migrations typically take
-advisory locks and run DDL, both of which are session-scoped and will not
-work reliably through a transaction-mode pooler. Whatever runs migrations
-against this database (`diesel migration run`, or an embedded harness at
-startup) should point at a session-mode/direct URL even though the app's
-steady-state pools are on 6543 — this repo doesn't yet have that wired up
-as a distinct migration-only connection string; don't assume the
-`MASTER_DATABASE` env vars are safe to reuse for migrations as-is.
+**Wired (2026-10-09):** schema migrations need session mode or a direct
+connection. Diesel migrations take advisory locks and run DDL, both of which
+are session-scoped and will not work reliably through a transaction-mode
+pooler. A distinct migration-only connection string now exists:
+`MIGRATION_DATABASE_URL` (falls back to `DATABASE_URL` when unset, so
+single-URL setups are unaffected). `just migrate` / `migrate_v2` /
+`migrate_v2_compatible` use it, `scripts/migration_runner_entrypoint.sh`
+prefers it over `DATABASE_URL`, and both compose files forward it to the
+`migration_runner` service. Point it at a session-mode/direct URL (port
+5432, `?sslmode=require`) while the app's steady-state pools stay on 6543;
+don't reuse the `MASTER_DATABASE` env vars for migrations as-is.
 
 If a future session needs to raise the session-mode connection ceiling
 directly instead of splitting by pooler mode (e.g. a paid Supabase tier
@@ -605,7 +607,47 @@ Picked as the next task (landing page lives in another repo): the only remaining
 **Consequences for deployment**
 - `ROUTER__*_DATABASE__DISABLE_PREPARED_STATEMENT_CACHE=true` now has an effect, so the four Diesel pools can go on the 6543 transaction pooler safely; `ROUTER__REDIS__POSTGRES_URL` must stay on 5432 (LISTEN/NOTIFY).
 - Open: `get_database_url` sends `options=-c search_path=<schema>`. PgBouncer rejects it unless `ignore_startup_parameters = options`; not checked against Supabase's pooler (`public` is the default schema, so possibly harmless — test it).
-- Still open: a distinct session-mode/direct URL for migrations.
+- Resolved (2026-10-09): a distinct session-mode/direct URL for migrations is
+  now wired as `MIGRATION_DATABASE_URL` (falls back to `DATABASE_URL`). See the
+  2026-10-09 session update below.
+
+---
+
+## Session update (2026-10-09): `main` CI actually failed on five jobs, not one
+
+The previous section's "already understood/fixed pre-session" note only covered
+`build-and-push` / the Render deploy hook. The real `main` run
+(`37849716352`) failed **five** jobs, all but the first caused by a single
+`juspay/deja` API change not yet threaded through:
+
+1. `Run tests on stable toolchain` (`just clippy`) — the gating job.
+2. `Check compilation on MSRV toolchain` (`ci_hack`).
+3. `Check compilation for V2 features`.
+4. `Check formatting`.
+5. `build-and-push` — unchanged cause (missing `RENDER_DEPLOY_HOOK_URL`).
+
+**Fixes applied**
+- **E0061 (7 args vs 6)** — `deja`'s `replay` gained a 7th argument; added it at
+  the two (three call paths) sites: `external_services/src/grpc_client/
+  deja_transport.rs` and `external_services/src/superposition.rs`. Clears jobs
+  1–3.
+- **`clippy::trivially_copy_pass_by_ref`** — `storage_impl/src/database/store.rs`.
+- **`semicolon_in_expressions_from_non_local_macros`** — the `type_name!` macro
+  in `common_utils/src/macros.rs` ended in `;`, which is a future-compat hard
+  error in expression position. E0061 had previously aborted the build before
+  this lint was reached, so it surfaced only once the above were fixed. Removed
+  the stray semicolon (semantically neutral at all 178 call sites).
+- **Formatting** — `cargo +nightly fmt --all` over `korapay.rs` and
+  `korapay/transformers.rs`.
+- **Migration URL** — new `migration_database_url` in `justfile` (default
+  `env_var_or_default('MIGRATION_DATABASE_URL', database_url)`) used by
+  `migrate` / `migrate_v2` / `migrate_v2_compatible`; `MIGRATION_DATABASE_URL`
+  forwarded by both compose files' `migration_runner`; and
+  `scripts/migration_runner_entrypoint.sh` prefers it over `DATABASE_URL`.
+
+**Still open:** `build-and-push` still needs `RENDER_DEPLOY_HOOK_URL` set as a
+repo secret. Also `get_database_url` sends `options=-c search_path`, which some
+poolers reject (unchanged).
 
 ---
 

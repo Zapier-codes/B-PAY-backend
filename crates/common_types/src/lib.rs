@@ -17,5 +17,8 @@ pub mod three_ds_decision_rule_engine;
 ///types for callback mapper
 pub mod callback_mapper;
 
+/// platform-wide merchant verification tiers and thresholds
+pub mod merchant_verification;
+
 ///types for connector webhook configuration
 pub mod connector_webhook_configuration;

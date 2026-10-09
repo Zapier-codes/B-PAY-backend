@@ -47,17 +47,13 @@ use hyperswitch_interfaces::{
     configs::Connectors,
     consts, errors,
     events::connector_api_logs::ConnectorEvent,
-    types::{
-        PaymentsAuthorizeType, PaymentsSyncType, RefundExecuteType, RefundSyncType, Response,
-    },
+    types::{PaymentsAuthorizeType, PaymentsSyncType, RefundExecuteType, RefundSyncType, Response},
     webhooks,
 };
 use hyperswitch_masking::{ExposeInterface, Mask, Maskable};
 use transformers as korapay;
 
-use crate::{
-    constants::headers, types::ResponseRouterData, utils, utils::convert_amount,
-};
+use crate::{constants::headers, types::ResponseRouterData, utils, utils::convert_amount};
 
 #[derive(Clone)]
 pub struct Korapay {

@@ -191,6 +191,12 @@ db_port := env_var_or_default('DB_PORT', '5432')
 db_name := env_var_or_default('DB_NAME', 'hyperswitch_db')
 default_db_url := 'postgresql://' + db_user + ':' + db_password + '@' + db_host + ':' + db_port / db_name
 database_url := env_var_or_default('DATABASE_URL', default_db_url)
+# Migrations take session-scoped advisory locks and run DDL, neither of which is
+# safe through a transaction-mode pooler (Supabase Supavisor on 6543, PgBouncer
+# in transaction mode). Point MIGRATION_DATABASE_URL at a session-mode/direct
+# connection string; it falls back to DATABASE_URL so single-URL setups keep
+# working. See HANDOVER.md PRIORITY 2.
+migration_database_url := env_var_or_default('MIGRATION_DATABASE_URL', database_url)
 default_migration_params := ''
 v2_migration_dir := source_directory() / 'v2_migrations'
 v2_compatible_migrations := source_directory() / 'v2_compatible_migrations'
@@ -225,7 +231,7 @@ v1_config_file_dir := source_directory() / 'diesel.toml'
 default_operation := 'run'
 
 [private]
-run_migration operation=default_operation migration_dir=v1_migration_dir config_file_dir=v1_config_file_dir url=database_url *other_params=default_migration_params:
+run_migration operation=default_operation migration_dir=v1_migration_dir config_file_dir=v1_config_file_dir url=migration_database_url *other_params=default_migration_params:
     diesel migration \
         --database-url '{{ url }}' \
         {{ operation }} \
@@ -234,7 +240,7 @@ run_migration operation=default_operation migration_dir=v1_migration_dir config_
         {{ other_params }}
 
 # Run database migrations for v1
-migrate operation=default_operation *args='': (run_migration operation v1_migration_dir v1_config_file_dir database_url args)
+migrate operation=default_operation *args='': (run_migration operation v1_migration_dir v1_config_file_dir migration_database_url args)
 
 v2_config_file_dir := source_directory() / 'diesel_v2.toml'
 
@@ -246,7 +252,7 @@ migrate_v2 operation=default_operation *args='':
     EXIT_CODE=0
     just prefix_and_copy_migrations {{ v1_migration_dir }} {{ v2_compatible_migrations }} 8 {{ resultant_dir }}
     just prefix_and_copy_migrations {{ resultant_dir }} {{ v2_migration_dir }} 9 {{ resultant_dir }}
-    just run_migration {{ operation }} {{ resultant_dir }} {{ v2_config_file_dir }} {{ database_url }} {{ args }} || EXIT_CODE=$?
+    just run_migration {{ operation }} {{ resultant_dir }} {{ v2_config_file_dir }} {{ migration_database_url }} {{ args }} || EXIT_CODE=$?
     just delete_dir_if_exists
     exit $EXIT_CODE
 
@@ -259,7 +265,7 @@ migrate_v2_compatible:
     just prefix_and_copy_migrations {{ v1_migration_dir }} {{ v2_compatible_migrations }} 8 {{ resultant_dir }}
 
     # Run the compatible migrations
-    just run_migration run {{ resultant_dir }} {{ database_url }} || EXIT_CODE=$?
+    just run_migration run {{ resultant_dir }} {{ migration_database_url }} || EXIT_CODE=$?
 
     just delete_dir_if_exists
     exit $EXIT_CODE

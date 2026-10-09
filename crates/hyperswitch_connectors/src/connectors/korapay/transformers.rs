@@ -736,9 +736,7 @@ impl<F> TryFrom<RefundsResponseRouterData<F, KorapayRefundResponse>> for Refunds
     }
 }
 
-impl<F> TryFrom<RefundsResponseRouterData<F, KorapayRefundSyncResponse>>
-    for RefundsRouterData<F>
-{
+impl<F> TryFrom<RefundsResponseRouterData<F, KorapayRefundSyncResponse>> for RefundsRouterData<F> {
     type Error = error_stack::Report<errors::ConnectorError>;
     fn try_from(
         item: RefundsResponseRouterData<F, KorapayRefundSyncResponse>,

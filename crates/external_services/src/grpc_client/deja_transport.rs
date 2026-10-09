@@ -310,6 +310,9 @@ where
                 move || async { Err(BoxError::from(AbsentTransportError)) },
                 reconstruct_from_recorded,
                 extract_envelope,
+                // No honest substitute exists and there is no transport to
+                // re-run, so a miss stops the request.
+                deja::MissPolicy::FailStop,
                 // The absent-EXECUTOR fail-stop, not `fail_stop_substitute_miss`:
                 // that one offers `replay_strategy = Execute` as the remedy, and
                 // with nothing beneath the boundary there is nothing to run. The

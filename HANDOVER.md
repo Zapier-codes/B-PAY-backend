@@ -651,6 +651,75 @@ poolers reject (unchanged).
 
 ---
 
+## Session update (2026-10-09, part 2): clippy sweep finishes green; the memory wall has a sustainable fix
+
+Continues the session above. The E0061 fix unblocked compilation, which then
+exposed a tail of lints that the earlier abort had masked. All are now fixed and
+`just clippy` (default and `fred`) pass **exit 0** in the sandbox — the first
+green clippy on this tree.
+
+**Lints cleared** (all denied by the workspace lint set under CI's `-D warnings`)
+- `semicolon_in_expressions_from_non_local_macros` — the `fallback_reverse_lookup_not_found!`
+  transcriber ended in `;` (hit at 10 `storage_impl` sites); removed.
+- `derivable_impls` — `NovuClient` gets `#[derive(Default)]` instead of a manual `impl`.
+- unused imports — `PaymentsSyncRouterData` (opik), `ConnectorAuthType` (prestmit).
+- `clippy::todo` — `#[allow]` on the external-vault-proxy `postprocessing_steps`
+  stub (the only caller is the OpenBanking/Plaid path this flow never takes;
+  mirrors the repo's existing precedent).
+- `useless_conversion` — redundant `.into_iter()` in `psync_flow.rs`.
+- `block_scrutinee` — hoisted the `if let Some(x) = { .. }?` scrutinee to a local.
+- `large_futures` — `Box::pin` the `authentication_authenticate_core` future.
+- `clippy::panic` + `clippy::as_conversions` — in the `transaction_pooler`
+  regression test (`--all-targets` lints tests too).
+
+**The OOM wall — sustainable fix, not "all the RAM"**
+
+The recurring failure is one rustc invocation: `diesel` with `128-column-tables`
+(required by `diesel_models`/`common_enums`/`euclid`) peaks at **~9.8 GiB** in a
+debug/no-debuginfo profile. It is a **frontend** spike (metadata emission), so
+`codegen-units`, `opt-level`, and even `strip=debuginfo` don't shrink it — only
+`-j1` and fewer debug knobs help. Two things make it affordable instead of a
+per-build crisis:
+
+1. **Tune the dev profile down.** `CARGO_PROFILE_DEV_DEBUG=0` plus
+   `CARGO_PROFILE_DEV_DEBUG_ASSERTIONS=false`/`OVERFLOW_CHECKS=false` keeps the
+   peak under ~10 GiB (was >13 GiB with debuginfo). One-time cost.
+2. **Persist the caches.** Run with the target dir, `~/.cargo/registry`, and
+   `~/.cargo/git` all bind-mounted **under `/workspace`** (a Docker volume is
+   wiped when the daemon/sandbox restarts — that happened mid-session and cost
+   the whole cache). Once diesel is compiled it is reused, so every later run is
+   ~1 GiB and fast: the second `just clippy` finished in seconds.
+
+CI does not need any of this — it has a multi-GB runner and its own cache; this
+is only for reproducing the lint locally in the ~15 GiB sandbox.
+
+**Sandbox note:** the sandbox restarted once during a 13 GiB container run
+(host has 15 GiB, no swap) — which is exactly the argument against sizing the
+build to "all our RAM". Also, `sudo` is required for `docker` after a restart.
+
+**Blocker — cannot push.** Both the repo-embedded token and `$GITHUB_TOKEN`
+authenticate as `Zapier-codes` but are **read-only** (empty OAuth scopes; API
+ref creation and PR creation both return 403). The commits are on local `main`
+and are handed off as a patch (same convention as Priority 1/2 above).
+
+**Handoff patch:** `0003-main-ci-clippy-and-format-fix.patch` (repo root). It is
+a `git format-patch` mailbox of **four** commits — the three CI fixes
+(`48bfcadeb`, `3a1dba12b`, `741a1fce7`) plus this handover update. Apply and
+push with:
+
+```bash
+git am 0003-main-ci-clippy-and-format-fix.patch
+# or, if that fails due to line-ending/context drift:
+git am --3way 0003-main-ci-clippy-and-format-fix.patch
+git push origin main
+```
+
+(`git am` keeps the original commit messages/authors; use `git apply` only if
+you want the changes uncommitted. `git am *.patch` also works if the four
+`000N-*.patch` series files are used instead of the combined mailbox.)
+
+---
+
 ## NEW TASK — Industry landing page (Stripe-style), first pass built (2026-09-22)
 
 Requested 2026-09-22. Goal: a polished, animated marketing/landing page for

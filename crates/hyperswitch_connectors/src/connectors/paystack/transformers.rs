@@ -24,12 +24,15 @@ use url::Url;
 use crate::types::PayoutsResponseRouterData;
 use crate::{
     types::{RefundsResponseRouterData, ResponseRouterData},
-    // `RouterData` here (aliased `OtherRouterData`) is the crate's own
-    // `utils::RouterData` extension trait, where `get_payout_method_data()`
-    // lives -- same import Korapay's a-1-iii transformers already needed
-    // for the same reason.
-    utils::{PaymentsAuthorizeRequestData, RouterData as OtherRouterData},
+    utils::PaymentsAuthorizeRequestData,
 };
+// `RouterData` (the crate's own `utils::RouterData` extension trait) is where
+// `get_payout_method_data()` lives. Every use of it below sits inside a
+// `#[cfg(feature = "payouts")]` section, so gate the import the same way --
+// without this it is dead code in every non-payouts build, which is exactly
+// what CI's `dummy_connector,v1` check compiles.
+#[cfg(feature = "payouts")]
+use crate::utils::RouterData as OtherRouterData;
 
 pub struct PaystackRouterData<T> {
     pub amount: MinorUnit,

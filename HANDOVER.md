@@ -1088,6 +1088,49 @@ the whole apply-able set in one pass (13 of 226 commits are currently
 byte-exact; far more apply cleanly by context but may still depend on
 upstream-only infra, so blob-exactness is the bar for an unattended port).
 
+### Ported from upstream, second batch (2026-10-09, part 5)
+
+Five more byte-exact ports (10 total so far), same verification bar:
+
+- **`fix(payouts)`: restrict client-authenticated payout confirm fields** —
+  upstream `607b15fcc` (#14547). A client-authenticated caller could set
+  merchant-owned fields (amount, currency, connector, routing, auto_fulfill)
+  on a confirmation; now rejected when the auth flow is Client.
+  `crates/router/src/routes/payouts.rs` (`d9ff774eb` → `456c6b00a`).
+- **`fix(connector)`: [tsys_transit] billing_name required** — upstream
+  `40f6aa9c5` (#14020). The connector requires a billing name that the
+  required-fields config omitted. `crates/payment_methods/src/configs/payment_connector_required_fields.rs`
+  (`778e7a3eb` → `980d9cfeb`).
+- **`chore(connector)`: [fiuu] log unparsed response body** — upstream
+  `91e730c83` (#14607). Logs the full body when no `key=value` lines parse, so
+  connector failures are diagnosable. `crates/hyperswitch_connectors/src/connectors/fiuu.rs`
+  (`876e15ecb` → `003a14595`).
+- **`fix(connector)`: [GOCARDLESS] parse webhooks by resource_type** — upstream
+  `5993ffeda` (#14239). Matches on `WebhookEvent::{Payments,Refunds,Mandates}`
+  instead of payload shape, so refund/mandate events resolve correctly; also
+  recognises `ResubmissionRequested`. `crates/hyperswitch_connectors/src/connectors/gocardless.rs`
+  and its `transformers.rs`.
+- **`refactor(storage_impl)`: move merchant_account `Conversion` impl** —
+  upstream `aa58b428f` (#11808). Pure code move into `storage_impl`, aligning
+  with upstream's layout ahead of Task 73/a. This is the **only** commit of
+  upstream's `storage_impl` "Conversion" series that is byte-exact here; the
+  MCA/payment_attempt/customer moves diverge across files we have modified and
+  were deliberately **not** ported.
+  `crates/hyperswitch_domain_models/src/merchant_account.rs` (`d3e6559a8` →
+  `56d0c6e5c`) and `crates/storage_impl/src/merchant_account.rs` (`296c2a8a2`
+  → `602ca0086`).
+
+### Remaining byte-exact ports (for a future session)
+
+Still unported from the 13-commit byte-exact set, all connector/CI/version
+work the fork does not need as-is: `5993ffeda` is now taken; `da2ff3752`,
+`2b1fa36f9` (CODEOWNERS), `e397be3be` (Postman sandbox keys), `ac4083cb2`
+(Cypress config), `215423c2a` (version bump), `d483971dc` (analytics intent
+fields, 21 files — large, review before taking). Non-byte-exact but
+context-clean candidates worth a human read: `9689f477b` (router URL
+validation), `3388ba6e6` (return saved connector mandate ID), `3f4a0c7ba`
+(UCS dispute lookup), `8435a33d2` (skip vault delete when never stored).
+
 
 
 ### Recommended next actions (ordered)

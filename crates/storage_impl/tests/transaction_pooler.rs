@@ -24,7 +24,12 @@
 //! assert that the *control* run (flag off) really does hit the error - useful
 //! to prove the pooler is configured so the test can fail at all.
 
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::print_stdout)]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::print_stdout
+)]
 
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
@@ -54,7 +59,7 @@ fn database(disable_prepared_statement_cache: bool) -> Database {
         host: env("BPAY_TEST_PG_HOST"),
         port: env("BPAY_TEST_PG_PORT").parse().expect("numeric port"),
         dbname: env("BPAY_TEST_PG_DBNAME"),
-        max_pool_size: CLIENTS as u32,
+        max_pool_size: u32::try_from(CLIENTS).expect("CLIENTS fits in u32"),
         min_idle_pool_size: 1,
         disable_prepared_statement_cache,
         ..Database::default()

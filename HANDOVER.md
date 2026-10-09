@@ -1053,10 +1053,26 @@ capability is impossible.
 - Bulk-importing upstream's UCS-only connector registry.
 - The `chore(version)` release-numbering commits and `prism` version bumps.
 
+### Ported from upstream so far (2026-10-09, part 4)
+
+- **`fix(encryption)`: AES-GCM/remote-format misclassification** — upstream
+  `1592793d5` (#14561), ported verbatim. Our
+  `crates/hyperswitch_domain_models/src/type_encryption.rs` was
+  byte-identical to upstream's pre-fix blob (`5e49dd865`), and the port
+  reproduces upstream's post-fix blob (`995985cd9`) exactly — so this is a
+  clean, verifiable adoption, not a re-implementation. Adds
+  `decrypt_resolving_format_ambiguity` (tries the `v<N>:` remote-tagged
+  format, falls back to bare local ciphertext on failure) plus a
+  `LOCAL_DECRYPT_PREFIX_COLLISION_RECOVERED` metric and unit tests. The
+  method for future ports: `git rev-parse HEAD:<path>` against the upstream
+  diff's `index <pre>..<post>` line — a pre-blob match means `git apply`
+  the upstream diff directly.
+
+
 ### Recommended next actions (ordered)
 
-1. **Read `fix(encryption)` and the `superposition` header-validation fixes
-   first** — they are small, security-relevant, and mostly self-contained.
+1. **`fix(encryption)` — done** (ported in part 4). Next security read: the
+   `superposition` header-validation fixes, which are small and self-contained.
 2. **Read the `storage_impl` `Conversion` moves** before the next Task 73/a
    session, so that work is planned against the upstream shape rather than
    diverging further.

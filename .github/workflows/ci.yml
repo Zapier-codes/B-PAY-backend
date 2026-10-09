@@ -78,6 +78,23 @@ env:
   CARGO_TERM_COLOR: always
   RUSTC_WRAPPER: sccache
   SCCACHE_GHA_ENABLED: "true"
+  # Memory-lean build profile, mirroring the sandbox workaround for the
+  # diesel `128-column-tables` frontend spike: a single rustc invocation on
+  # `diesel` peaks near ~10 GiB in the default debug profile (debuginfo is
+  # the bulk of it). Dropping debuginfo and the debug-only runtime checks
+  # keeps the peak comfortably under a 16 GiB GitHub runner. This does not
+  # change what clippy/check verify -- CI runs no `cargo test`, so turning
+  # debug-assertions/overflow-checks off is inert here.
+  CARGO_PROFILE_DEV_DEBUG: "false"
+  CARGO_PROFILE_DEV_DEBUG_ASSERTIONS: "false"
+  CARGO_PROFILE_DEV_OVERFLOW_CHECKS: "false"
+  # Serialise rustc. The heavy crates (diesel, diesel_models,
+  # migrations_internals, num_cpus) each spike ~10 GiB; letting several run
+  # concurrently is what tips a 16 GiB runner into the OOM killer. The
+  # rust-cache + sccache layers above make this a one-time cost per
+  # lockfile, not a per-run one. (This used to be `3` on the clippy steps --
+  # exactly the "give it all our RAM" setting this replaces.)
+  CARGO_BUILD_JOBS: 1
   # Whether this run is the one allowed to persist caches for everything
   # below -- only a push to `main` is the canonical build; PRs and
   # merge-queue runs restore from it but never overwrite it.
@@ -347,14 +364,10 @@ jobs:
 
       - name: Run clippy (redis-rs backend)
         shell: bash
-        env:
-          CARGO_BUILD_JOBS: 3
         run: just clippy
 
       - name: Run clippy (fred backend)
         shell: bash
-        env:
-          CARGO_BUILD_JOBS: 3
         run: just clippy fred
 
       - name: Check Cargo.lock changed
@@ -466,15 +479,11 @@ jobs:
       - name: Run cargo clippy with v2 features enabled (redis-rs backend)
         if: github.event_name == 'pull_request'
         shell: bash
-        env:
-          CARGO_BUILD_JOBS: 3
         run: just clippy_v2
 
       - name: Run cargo clippy with v2 features enabled (fred backend)
         if: github.event_name == 'pull_request'
         shell: bash
-        env:
-          CARGO_BUILD_JOBS: 3
         run: just clippy_v2 fred
 
       - name: Run cargo check enabling only the release and v2 features (redis-rs backend)

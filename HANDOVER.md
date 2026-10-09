@@ -1055,27 +1055,55 @@ capability is impossible.
 
 ### Ported from upstream so far (2026-10-09, part 4)
 
+Three byte-exact ports from this list, plus the encryption one — each
+verified by matching the upstream `index <pre>..<post>` line: our pre-blob
+equalled upstream's pre-blob (so `git apply` the upstream diff directly) and
+our post-blob equalled upstream's post-blob afterwards.
+
 - **`fix(encryption)`: AES-GCM/remote-format misclassification** — upstream
-  `1592793d5` (#14561), ported verbatim. Our
-  `crates/hyperswitch_domain_models/src/type_encryption.rs` was
-  byte-identical to upstream's pre-fix blob (`5e49dd865`), and the port
-  reproduces upstream's post-fix blob (`995985cd9`) exactly — so this is a
-  clean, verifiable adoption, not a re-implementation. Adds
-  `decrypt_resolving_format_ambiguity` (tries the `v<N>:` remote-tagged
-  format, falls back to bare local ciphertext on failure) plus a
-  `LOCAL_DECRYPT_PREFIX_COLLISION_RECOVERED` metric and unit tests. The
-  method for future ports: `git rev-parse HEAD:<path>` against the upstream
-  diff's `index <pre>..<post>` line — a pre-blob match means `git apply`
-  the upstream diff directly.
+  `1592793d5` (#14561). Adds `decrypt_resolving_format_ambiguity` (tries the
+  `v<N>:` remote-tagged format, falls back to bare local ciphertext on
+  failure) plus a `LOCAL_DECRYPT_PREFIX_COLLISION_RECOVERED` metric and unit
+  tests. `crates/hyperswitch_domain_models/src/type_encryption.rs`
+  (`5e49dd865` → `995985cd9`).
+- **`fix(analytics)`: keep spaces in filter values** — upstream `effe2dfb8`
+  (#14522). `sanitize_sql_string_literal` was stripping spaces, so multi-word
+  filter values never matched. `crates/analytics/src/query.rs`
+  (`c0646ab7b` → `f1da80b6e`).
+- **`fix(events)`: attribute payment_id for SDK-auth `/client`
+  payment-methods-list events** — upstream `502bfe8dd` (#13845). The route
+  now falls back to the Authorization header's `SdkAuthorization.client_secret`
+  when the payload omits one. `crates/router/src/routes/payment_methods.rs`
+  (`53e106ebd` → `6c9858809`).
+- **`fix(authentication)`: highest common supported 3ds version** — upstream
+  `00fe93615` (#14305). Prefer the eligibility response's
+  `highest_common_supported_version` over the card-range maximum.
+  `crates/hyperswitch_connectors/.../unified_authentication_service/transformers.rs`
+  (`9952cdd25` → `8a998d93d`).
+
+The port method: `git rev-parse HEAD:<path>` against the upstream diff's
+`index <pre>..<post>` line — a pre-blob match means `git apply` the upstream
+diff directly. `git rev-list` over `HEAD..upstream/main` plus that check finds
+the whole apply-able set in one pass (13 of 226 commits are currently
+byte-exact; far more apply cleanly by context but may still depend on
+upstream-only infra, so blob-exactness is the bar for an unattended port).
+
 
 
 ### Recommended next actions (ordered)
 
-1. **`fix(encryption)` — done** (ported in part 4). Next security read: the
-   `superposition` header-validation fixes, which are small and self-contained.
-2. **Read the `storage_impl` `Conversion` moves** before the next Task 73/a
-   session, so that work is planned against the upstream shape rather than
-   diverging further.
+1. **Security/correctness reads — partially done.** `fix(encryption)`,
+   `fix(analytics)` filter spaces, `fix(events)` SDK-auth attribution, and the
+   3DS `highest_common_supported_version` fix are ported (part 4). Next
+   byte-exact candidates worth taking: `607b15fcc` (restrict client payout
+   confirm fields), `3f4a0c7ba` (UCS dispute lookup prefers parent payment
+   ref — needs the `connector_transaction_id` field confirmed on our
+   `Dispute`), `9689f477b` (router URL validation), `3388ba6e6` (return saved
+   connector mandate ID), `8435a33d2` (skip vault delete when never stored).
+2. **`storage_impl` `Conversion` moves — not a clean port.** Only
+   `aa58b428f` (merchant_account) is byte-exact; the MCA/payment_attempt/
+   customer moves diverge across many files we have modified. Read
+   upstream's shape before Task 73/a, but do **not** auto-apply these.
 3. **Adopt upstream's two CI caching commits** as reference for our own CI
    (we currently have a hand-rolled equivalent; reconcile, don't double up).
 4. **Pick the routing set** (Decision Engine, fallback eligibility,

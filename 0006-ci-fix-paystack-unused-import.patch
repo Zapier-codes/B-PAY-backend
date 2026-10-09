@@ -1,0 +1,61 @@
+From 9f03e97b20502312d7c9bc1350323f4ceb36731c Mon Sep 17 00:00:00 2001
+From: openhands <openhands@all-hands.dev>
+Date: Fri, 9 Oct 2026 16:05:54 +0000
+Subject: [PATCH] fix(ci): gate paystack's RouterData trait import on the
+ payouts feature
+
+`cargo check --all-targets -p hyperswitch_connectors --no-default-features
+--features dummy_connector,v1` (the canonical-push `just ci_hack` step, run
+in both the `test` and `check-msrv` jobs) fails with:
+
+    error: unused import: `RouterData as OtherRouterData`
+      --> crates/hyperswitch_connectors/src/connectors/paystack/transformers.rs:31
+
+The alias is the crate's own `utils::RouterData` extension trait, whose
+`get_payout_method_data()` is the only method paystack calls from it -- and
+that call sits inside `#[cfg(feature = "payouts")]`. `payouts` is not a
+default feature, so without it the import is dead code.
+
+Korapay keeps the same-looking import because it also calls an ungated
+trait method (`get_optional_billing_full_name`); truelayer already gates
+its import the way this commit does. A scan of every connector that imports
+the trait found no other instance of the pattern.
+
+Behaviour is unchanged: payouts builds still import and use the trait,
+non-payouts builds no longer import a trait they never call.
+
+This file was changed by an AI agent (OpenHands) on behalf of the user.
+
+Co-authored-by: openhands <openhands@all-hands.dev>
+---
+ .../src/connectors/paystack/transformers.rs         | 13 ++++++++-----
+ 1 file changed, 8 insertions(+), 5 deletions(-)
+
+diff --git a/crates/hyperswitch_connectors/src/connectors/paystack/transformers.rs b/crates/hyperswitch_connectors/src/connectors/paystack/transformers.rs
+index 05294d6b4..e9930b73b 100644
+--- a/crates/hyperswitch_connectors/src/connectors/paystack/transformers.rs
++++ b/crates/hyperswitch_connectors/src/connectors/paystack/transformers.rs
+@@ -24,12 +24,15 @@ use url::Url;
+ use crate::types::PayoutsResponseRouterData;
+ use crate::{
+     types::{RefundsResponseRouterData, ResponseRouterData},
+-    // `RouterData` here (aliased `OtherRouterData`) is the crate's own
+-    // `utils::RouterData` extension trait, where `get_payout_method_data()`
+-    // lives -- same import Korapay's a-1-iii transformers already needed
+-    // for the same reason.
+-    utils::{PaymentsAuthorizeRequestData, RouterData as OtherRouterData},
++    utils::PaymentsAuthorizeRequestData,
+ };
++// `RouterData` (the crate's own `utils::RouterData` extension trait) is where
++// `get_payout_method_data()` lives. Every use of it below sits inside a
++// `#[cfg(feature = "payouts")]` section, so gate the import the same way --
++// without this it is dead code in every non-payouts build, which is exactly
++// what CI's `dummy_connector,v1` check compiles.
++#[cfg(feature = "payouts")]
++use crate::utils::RouterData as OtherRouterData;
+ 
+ pub struct PaystackRouterData<T> {
+     pub amount: MinorUnit,
+-- 
+2.47.3
+

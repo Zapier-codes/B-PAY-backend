@@ -1,0 +1,183 @@
+From 4ddf16bba8da92a7b34aa49dd8e97656cc42b5df Mon Sep 17 00:00:00 2001
+From: openhands <openhands@all-hands.dev>
+Date: Fri, 9 Oct 2026 15:57:25 +0000
+Subject: [PATCH] docs(handover): audit fork vs upstream hyperswitch and list
+ the port backlog
+
+Add `juspay/hyperswitch` as a fetch-only `upstream` remote and record the
+first measured divergence: 226 upstream commits we lack, 353 of ours not
+upstream (merge-base 15c4865d91, upstream tip 39c040c83015).
+
+Lists the confirmed symbol-level gaps (Wero, preferred-connector routing,
+UCS shadow_rollout_percent, merchant alert permission, OCI Vault KMS,
+payments context s2s, rapid_dispute_resolution), then triages the rest by
+area (routing, storage/cache, CI, payments/webhooks, security) with the
+caveats that the connector set is bespoke and should not be bulk-ported,
+and that the Cypress/Postman/version commits are out of scope. Ends with an
+ordered set of next actions.
+
+Also records the still-red `just ci_hack` step found on the memory-lean
+run: an unused `RouterData as OtherRouterData` import in
+hyperswitch_connectors paystack transformers under `dummy_connector,v1`.
+
+This file was changed by an AI agent (OpenHands) on behalf of the user.
+
+Co-authored-by: openhands <openhands@all-hands.dev>
+---
+ HANDOVER.md | 143 ++++++++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 143 insertions(+)
+
+diff --git a/HANDOVER.md b/HANDOVER.md
+index 856a3f1a6..9a8d1fd70 100644
+--- a/HANDOVER.md
++++ b/HANDOVER.md
+@@ -925,3 +925,146 @@ or reworded so the repo no longer points at it. The only thing retained
+ from the port is the endpoint facts each connector needs, now recorded in
+ its own comments against the live provider documentation rather than
+ against a file that no longer exists.
++
++---
++
++## Session update (2026-10-09, part 3): fork-vs-upstream audit — what `juspay/hyperswitch` has that ours does not
++
++This session added `juspay/hyperswitch` as a second remote (`upstream`, fetch
++only — we never push to it) and measured the divergence for the first time.
++
++**Where the two trees stand (2026-10-09):**
++
++- `upstream/main` tip fetched: `39c040c83015` (a plain feature/fix tip, not a
++  release tag — the latest `chore(version)` commit nearby is `2026.10.09.0`).
++- merge-base with our `main`: `15c4865d91` ("fix(router): correct field mapping
++  in browse offers response (#14141)").
++- **226 upstream commits we do not have; 353 of our commits are not upstream.**
++  We are not tracking upstream in any automated way, so this gap only ever
++  grows. Nothing below is a merge plan — it is the raw list of upstream work
++  worth pulling in, triaged.
++
++**Method (so a future session can redo it):**
++
++```bash
++git remote add upstream https://github.com/juspay/hyperswitch.git   # fetch only
++git fetch --filter=blob:none upstream main
++git rev-list --count HEAD..upstream/main          # 226 behind
++git --no-pager log --oneline $(git merge-base HEAD upstream/main)..upstream/main
++```
++
++Caveat on the "have/miss" checks below: upstream UCs are functionally
++de-duplicated, so a feature can exist upstream in a file we never added. A
++`MISS` means the *named* symbol/feature is absent from our tree, not that the
++capability is impossible.
++
++### Confirmed gaps (grepped for the symbol, absent from our tree)
++
++1. **Wero wallet payment method** — no `Wero` anywhere in `crates/`. A new
++   payment method + connector support we simply don't have.
++2. **Preferred-connector routing for Interac** — "pin the customer's last
++   successful connector"; no `preferred_connector` in our tree. Sits close to
++   the routing work below.
++3. **UCS `shadow_rollout_percent`** — split shadow traffic from primary
++   independently; no `shadow_rollout_percent` in our tree.
++4. **Merchant alert read permission** — new permission; no `merchant_alert`.
++5. **OCI Vault KMS backend** — a third secrets/encryption backend (alongside
++   AWS KMS and GCP KMS); no `oci_vault`/`OciVault` in our tree. Only relevant
++   if we ever run on Oracle Cloud; low priority otherwise.
++6. **Payments "create context s2s"** — a server-to-server context creation
++   path; no `context_s2s`/`ContextS2S` in our tree.
++7. **`rapid_dispute_resolution`** — Stripe webhook → dispute
++   `additional_details`; absent.
++
++### Categories to port (present upstream, need a real diff before we call them gaps)
++
++**Routing / orchestration**
++- Move dynamic routing decisions to the Decision Engine.
++- Eligibility filtering for fallback connectors in hybrid routing.
++- Preferred-connector routing (Interac) — see gap 1 above.
++- Generic capture-method handling upgraded to auto-fallback.
++- External-vault-proxy: core orchestration, execution contract, and
++  (payouts) execution via UCS — three separate upstream commits. Touches the
++  same vault/payouts path this fork already carries fixes in.
++- `deja` pin: upstream moved it "past the addressing fix" and named the
++  concurrent address forks — direct overlap with our own deja pin, worth
++  reading before any future diesel/deja bump.
++
++**Storage / cache / perf**
++- `perf(cache)`: hold redis entries past in-memory lifetime with jitter;
++  coordinate in-memory cache population per key.
++- `perf(merchant_connector_account)`: cache MCA list queries via scope supersets.
++- `perf(payment-methods)`: pay-then-vault using redis.
++- `refactor(cache)`: make in-memory caches runtime-configurable and store-owned.
++- `refactor(payments)`: optimize `get_trackers` in the create flow.
++- `fix(storage)`: avoid unnecessary DB connection leases in write operations.
++- `refactor(storage_impl)`: move `Conversion` impls for payment_attempt, MCA,
++  and merchant_account into `storage_impl` — three commits, same crate we are
++  actively working in for Task 73/a, so these will conflict and should be
++  read, not cherry-picked blind.
++
++**CI (mirror-safety check, since this fork's CI diverged hard)**
++- `perf(ci)`: bulk-restore sccache cache to speed builds — upstream solved the
++  same caching problem we re-solved locally this session.
++- `ci`: trim redundant compile steps and rework the S3 sccache backend.
++- If we ever re-sync the `crates/` baseline, re-read these before trusting the
++  current `.github/workflows/ci.yml`.
++
++**Payments / refunds / disputes / webhooks (non-connector fixes)**
++- Update the connector mandate id on the payment method irrespective of
++  active/inactive; return the saved connector mandate id in responses.
++- Align refund connector error mapping with payments.
++- Defer bank-redirect payment-method creation until terminal status.
++- Schedule a Payment Sync workflow after PaymentsCapture; update the existing
++  PAYMENTS_SYNC process tracker instead of creating a duplicate.
++- Sum connector latency across retry attempts.
++- Skip vault delete for PMs never stored in the vault.
++- Handle concurrent duplicate dispute-webhook inserts.
++- Prefer parent payment reference / merchant txn id for UCS dispute and
++  webhook-bridge lookups.
++- Return saved connector mandate ID and propagate card_network for wallet
++  payment attempts.
++
++**Security / correctness**
++- `fix(encryption)`: stop misclassifying AES-GCM ciphertext as remote
++  key-manager format — security-adjacent, take seriously.
++- `fix: install rustls CryptoProvider` before GCP KMS client construction.
++- `fix(router)`: validate URLs.
++- `fix(superposition)`: validate proxy org and workspace headers against the
++  configured scope; require all scoping dimensions in proxy requests.
++- `fix(scheduler)`: reuse the redis consumer across polls.
++- `fix(email)`: route SMTP sends through the configured proxy.
++- `fix(analytics)`: keep spaces in filter values.
++
++**Connectors (large, and our connector set is bespoke — do NOT bulk-port)**
++- ~70 upstream connector commits (fixes and features) the fork does not have.
++  Upstream also registers many new UCS-only connectors we don't carry
++  (Shift4, Elavon PG, PayNearMe, JP Morgan Orbital, Saferpay, D24 WebPay,
++  Global Payments Heartland, Pay.com, GlobalPay, Etisalat, Merchante, Datatrans,
++  Fiserv Commerce Hub, Revolv3, Santander Pix webhooks, Trustly returning-user
++  flow, etc.). **Out of scope as a bulk port** — our fork keeps ten specific
++  providers and a custom connector layer; this list is for lookup only when one
++  overlaps a provider we actually use.
++
++### Explicitly out of scope for this fork
++
++- The ~14 upstream Cypress-test commits and the ~7 Postman/Docs commits — our
++  test surface is different and these would be noise.
++- Bulk-importing upstream's UCS-only connector registry.
++- The `chore(version)` release-numbering commits and `prism` version bumps.
++
++### Recommended next actions (ordered)
++
++1. **Read `fix(encryption)` and the `superposition` header-validation fixes
++   first** — they are small, security-relevant, and mostly self-contained.
++2. **Read the `storage_impl` `Conversion` moves** before the next Task 73/a
++   session, so that work is planned against the upstream shape rather than
++   diverging further.
++3. **Adopt upstream's two CI caching commits** as reference for our own CI
++   (we currently have a hand-rolled equivalent; reconcile, don't double up).
++4. **Pick the routing set** (Decision Engine, fallback eligibility,
++   preferred-connector, shadow rollout) as the next feature-sized chunk — it
++   is the largest coherent block and overlaps Task 77's connector work.
++5. Leave the connector bulk-port and the Wero payment method as
++   **deliberately deferred** until a product decision says we need them.
++
+-- 
+2.47.3
+

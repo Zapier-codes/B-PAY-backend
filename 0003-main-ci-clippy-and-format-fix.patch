@@ -1,0 +1,953 @@
+From 48bfcadeb3fcbf535f3246e93daf0eed1f54c630 Mon Sep 17 00:00:00 2001
+From: openhands <openhands@all-hands.dev>
+Date: Fri, 9 Oct 2026 07:01:35 +0000
+Subject: [PATCH 1/4] =?UTF-8?q?fix(ci):=20unbreak=20main=20=E2=80=94=20dej?=
+ =?UTF-8?q?a=20replay=20arg,=20clippy=20lint,=20macro,=20fmt,=20migrations?=
+ =?UTF-8?q?,=20KYC=20core?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Thread the new 7th argument through `deja::replay` and clear the lints that
+were blocking the stable/MSRV/V2 CI jobs, plus land the pending migration-URL
+wiring and the KYC/KYB verification core.
+
+CI fixes
+- external_services: pass the new `MissPolicy` argument to `deja::replay`
+  (`FailStop` at the absent-transport boundary, `Absorb` at the Superposition
+  boundary) — fixes E0061 in both call paths.
+- storage_impl: `ConnectionSetup::is_needed` takes `self` by value
+  (`clippy::trivially_copy_pass_by_ref`).
+- common_utils: drop the trailing semicolon from the `type_name!` macro
+  (`semicolon_in_expressions_from_non_local_macros`); the E0061 abort had been
+  masking this lint.
+- hyperswitch_connectors: `cargo +nightly fmt` over `korapay.rs` and
+  `korapay/transformers.rs` (formatting job).
+
+Migrations
+- Add `MIGRATION_DATABASE_URL` (session-mode/direct, unsafe through a
+  transaction-mode pooler) with fallback to `DATABASE_URL`: new
+  `migration_database_url` in the justfile used by run_migration/migrate/
+  migrate_v2/migrate_v2_compatible; forwarded by both compose files; preferred
+  by the migration-runner entrypoint.
+
+KYC/KYB (greenfield core, not yet wired to suspension/Novu)
+- common_types: new `merchant_verification` module — verification tiers, the
+  general amount threshold, and the one-year unregistered-business grace
+  period, as a pure decision core with unit tests.
+
+HANDOVER.md: record the 2026-10-09 session (real five-job failure set and fixes).
+
+Co-authored-by: openhands <openhands@all-hands.dev>
+---
+ HANDOVER.md                                   |  62 ++++-
+ crates/common_types/src/lib.rs                |   3 +
+ .../common_types/src/merchant_verification.rs | 254 ++++++++++++++++++
+ crates/common_utils/src/macros.rs             |   2 +-
+ .../src/grpc_client/deja_transport.rs         |   3 +
+ crates/external_services/src/superposition.rs |   3 +
+ .../src/connectors/korapay.rs                 |   8 +-
+ .../src/connectors/korapay/transformers.rs    |   4 +-
+ crates/storage_impl/src/database/store.rs     |   2 +-
+ docker-compose-development.yml                |   4 +
+ docker-compose.yml                            |   4 +
+ justfile                                      |  14 +-
+ scripts/migration_runner_entrypoint.sh        |   5 +
+ 13 files changed, 343 insertions(+), 25 deletions(-)
+ create mode 100644 crates/common_types/src/merchant_verification.rs
+
+diff --git a/HANDOVER.md b/HANDOVER.md
+index cfae48856..a4a698611 100644
+--- a/HANDOVER.md
++++ b/HANDOVER.md
+@@ -281,15 +281,17 @@ mode tears the backend connection down between transactions, which breaks
+ the statement cache would not fix this one; it needs an actual pinned
+ session, so it's not a candidate for the transaction pooler at all.
+ 
+-**Also needs session mode or a direct connection (not yet wired, flag for
+-next session):** schema migrations. Diesel migrations typically take
+-advisory locks and run DDL, both of which are session-scoped and will not
+-work reliably through a transaction-mode pooler. Whatever runs migrations
+-against this database (`diesel migration run`, or an embedded harness at
+-startup) should point at a session-mode/direct URL even though the app's
+-steady-state pools are on 6543 — this repo doesn't yet have that wired up
+-as a distinct migration-only connection string; don't assume the
+-`MASTER_DATABASE` env vars are safe to reuse for migrations as-is.
++**Wired (2026-10-09):** schema migrations need session mode or a direct
++connection. Diesel migrations take advisory locks and run DDL, both of which
++are session-scoped and will not work reliably through a transaction-mode
++pooler. A distinct migration-only connection string now exists:
++`MIGRATION_DATABASE_URL` (falls back to `DATABASE_URL` when unset, so
++single-URL setups are unaffected). `just migrate` / `migrate_v2` /
++`migrate_v2_compatible` use it, `scripts/migration_runner_entrypoint.sh`
++prefers it over `DATABASE_URL`, and both compose files forward it to the
++`migration_runner` service. Point it at a session-mode/direct URL (port
++5432, `?sslmode=require`) while the app's steady-state pools stay on 6543;
++don't reuse the `MASTER_DATABASE` env vars for migrations as-is.
+ 
+ If a future session needs to raise the session-mode connection ceiling
+ directly instead of splitting by pooler mode (e.g. a paid Supabase tier
+@@ -605,7 +607,47 @@ Picked as the next task (landing page lives in another repo): the only remaining
+ **Consequences for deployment**
+ - `ROUTER__*_DATABASE__DISABLE_PREPARED_STATEMENT_CACHE=true` now has an effect, so the four Diesel pools can go on the 6543 transaction pooler safely; `ROUTER__REDIS__POSTGRES_URL` must stay on 5432 (LISTEN/NOTIFY).
+ - Open: `get_database_url` sends `options=-c search_path=<schema>`. PgBouncer rejects it unless `ignore_startup_parameters = options`; not checked against Supabase's pooler (`public` is the default schema, so possibly harmless — test it).
+-- Still open: a distinct session-mode/direct URL for migrations.
++- Resolved (2026-10-09): a distinct session-mode/direct URL for migrations is
++  now wired as `MIGRATION_DATABASE_URL` (falls back to `DATABASE_URL`). See the
++  2026-10-09 session update below.
++
++---
++
++## Session update (2026-10-09): `main` CI actually failed on five jobs, not one
++
++The previous section's "already understood/fixed pre-session" note only covered
++`build-and-push` / the Render deploy hook. The real `main` run
++(`37849716352`) failed **five** jobs, all but the first caused by a single
++`juspay/deja` API change not yet threaded through:
++
++1. `Run tests on stable toolchain` (`just clippy`) — the gating job.
++2. `Check compilation on MSRV toolchain` (`ci_hack`).
++3. `Check compilation for V2 features`.
++4. `Check formatting`.
++5. `build-and-push` — unchanged cause (missing `RENDER_DEPLOY_HOOK_URL`).
++
++**Fixes applied**
++- **E0061 (7 args vs 6)** — `deja`'s `replay` gained a 7th argument; added it at
++  the two (three call paths) sites: `external_services/src/grpc_client/
++  deja_transport.rs` and `external_services/src/superposition.rs`. Clears jobs
++  1–3.
++- **`clippy::trivially_copy_pass_by_ref`** — `storage_impl/src/database/store.rs`.
++- **`semicolon_in_expressions_from_non_local_macros`** — the `type_name!` macro
++  in `common_utils/src/macros.rs` ended in `;`, which is a future-compat hard
++  error in expression position. E0061 had previously aborted the build before
++  this lint was reached, so it surfaced only once the above were fixed. Removed
++  the stray semicolon (semantically neutral at all 178 call sites).
++- **Formatting** — `cargo +nightly fmt --all` over `korapay.rs` and
++  `korapay/transformers.rs`.
++- **Migration URL** — new `migration_database_url` in `justfile` (default
++  `env_var_or_default('MIGRATION_DATABASE_URL', database_url)`) used by
++  `migrate` / `migrate_v2` / `migrate_v2_compatible`; `MIGRATION_DATABASE_URL`
++  forwarded by both compose files' `migration_runner`; and
++  `scripts/migration_runner_entrypoint.sh` prefers it over `DATABASE_URL`.
++
++**Still open:** `build-and-push` still needs `RENDER_DEPLOY_HOOK_URL` set as a
++repo secret. Also `get_database_url` sends `options=-c search_path`, which some
++poolers reject (unchanged).
+ 
+ ---
+ 
+diff --git a/crates/common_types/src/lib.rs b/crates/common_types/src/lib.rs
+index 5de755ac5..c69a3c623 100644
+--- a/crates/common_types/src/lib.rs
++++ b/crates/common_types/src/lib.rs
+@@ -17,5 +17,8 @@ pub mod three_ds_decision_rule_engine;
+ ///types for callback mapper
+ pub mod callback_mapper;
+ 
++/// platform-wide merchant verification tiers and thresholds
++pub mod merchant_verification;
++
+ ///types for connector webhook configuration
+ pub mod connector_webhook_configuration;
+diff --git a/crates/common_types/src/merchant_verification.rs b/crates/common_types/src/merchant_verification.rs
+new file mode 100644
+index 000000000..751733037
+--- /dev/null
++++ b/crates/common_types/src/merchant_verification.rs
+@@ -0,0 +1,254 @@
++//! Platform-wide merchant verification (KYC/KYB) tiers, thresholds and the
++//! one-year unregistered-business grace period.
++//!
++//! This is the pure decision core only. It models *when* a merchant should be
++//! restricted and *why*; it deliberately does not mutate state, send email, or
++//! touch the payment path. Callers map their stored merchant record onto
++//! [`MerchantVerification`] and feed in the volume collected over the relevant
++//! window; they are responsible for acting on the returned decision.
++//!
++//! Two rules from the product spec are modelled here:
++//!
++//! * The general amount threshold: a merchant on baseline individual KYC may
++//!   transact freely until the volume collected within a rolling window reaches
++//!   [`VerificationPolicy::general_threshold_minor`], at which point full KYB is
++//!   required.
++//! * The unregistered-business grace period: a merchant with no business
++//!   registration on file at all gets the complete, uncapped experience for
++//!   exactly one year from account creation, regardless of volume. The deadline
++//!   is intentionally invisible to the merchant — only the resulting
++//!   [`VerificationDecision`] is meant to cross this boundary.
++
++use time::OffsetDateTime;
++
++/// Length of the unregistered-business grace period, in days.
++///
++/// Exactly one year is modelled as 365 days; this ignores leap-day drift, which
++/// is immaterial for a deadline that must stay invisible rather than calendar
++/// exact.
++pub const GRACE_PERIOD_DAYS: i64 = 365;
++
++/// How verified a merchant is, which decides which restriction rule applies.
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub enum VerificationTier {
++    /// No business registration on file at all. Gets the one-year grace period.
++    Unregistered,
++    /// An individual who has completed baseline (personal) KYC, but no business
++    /// registration. Subject to the general amount threshold.
++    IndividualKyc,
++    /// Full business verification (registration, beneficial ownership). Never
++    /// restricted by this model.
++    BusinessKyb,
++}
++
++/// Tunable thresholds for the general (non-grace-period) rule.
++///
++/// These are placeholders: the spec leaves the amount and period to product
++/// input. They are configuration, not derived, and the default is a deliberately
++/// conservative example rather than a launch value.
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub struct VerificationPolicy {
++    /// Cumulative collected volume, in minor units of the account currency, that
++    /// a baseline-KYC merchant may reach within the window before unrestricted
++    /// business verification is required.
++    pub general_threshold_minor: i128,
++    /// Length of the rolling window, in days, over which volume is measured.
++    pub general_threshold_window_days: i64,
++}
++
++impl Default for VerificationPolicy {
++    fn default() -> Self {
++        Self {
++            general_threshold_minor: 5_000_000,
++            general_threshold_window_days: 90,
++        }
++    }
++}
++
++/// Why a merchant is restricted.
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub enum RestrictionReason {
++    /// The unregistered-business grace period has ended; KYB is now required.
++    GracePeriodExpired,
++    /// The general amount threshold was reached within the window.
++    ThresholdExceeded,
++}
++
++/// The outcome of evaluating a merchant against the verification model.
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub enum VerificationDecision {
++    /// The merchant may transact normally.
++    Allowed,
++    /// The merchant must complete the required verification to continue.
++    Restricted {
++        /// Why the restriction applies.
++        reason: RestrictionReason,
++    },
++}
++
++/// A merchant's verification state, reduced to what the decision needs.
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub struct MerchantVerification {
++    /// The merchant's verification tier.
++    pub tier: VerificationTier,
++    /// When the merchant account was created; the grace-period clock start.
++    pub account_created_at: OffsetDateTime,
++}
++
++impl MerchantVerification {
++    /// Builds the verification state for a merchant.
++    pub fn new(tier: VerificationTier, account_created_at: OffsetDateTime) -> Self {
++        Self {
++            tier,
++            account_created_at,
++        }
++    }
++
++    /// The instant at which an unregistered merchant's grace period ends, or
++    /// `None` if the deadline is beyond the representable range (treated as
++    /// never expiring rather than panicking).
++    pub fn grace_period_end(&self) -> Option<OffsetDateTime> {
++        self.account_created_at
++            .checked_add(time::Duration::days(GRACE_PERIOD_DAYS))
++    }
++
++    /// Evaluates the merchant at `now`, given the payments collected for the
++    /// account.
++    ///
++    /// `collected` is every `(timestamp, amount_minor)` the caller holds; the
++    /// window filtering happens here so the boundary is defined in one place.
++    /// Amounts are expected in minor units and non-negative.
++    pub fn evaluate(
++        &self,
++        policy: &VerificationPolicy,
++        now: OffsetDateTime,
++        collected: &[(OffsetDateTime, i128)],
++    ) -> VerificationDecision {
++        match self.tier {
++            VerificationTier::BusinessKyb => VerificationDecision::Allowed,
++            VerificationTier::Unregistered => match self.grace_period_end() {
++                // A deadline we cannot represent never arrives.
++                Some(end) if now >= end => VerificationDecision::Restricted {
++                    reason: RestrictionReason::GracePeriodExpired,
++                },
++                _ => VerificationDecision::Allowed,
++            },
++            VerificationTier::IndividualKyc => {
++                let collected_in_window = self.collected_in_window(policy, now, collected);
++                if collected_in_window >= policy.general_threshold_minor {
++                    VerificationDecision::Restricted {
++                        reason: RestrictionReason::ThresholdExceeded,
++                    }
++                } else {
++                    VerificationDecision::Allowed
++                }
++            }
++        }
++    }
++
++    fn collected_in_window(
++        &self,
++        policy: &VerificationPolicy,
++        now: OffsetDateTime,
++        collected: &[(OffsetDateTime, i128)],
++    ) -> i128 {
++        // A window that cannot be represented reaches back forever, so nothing
++        // is excluded on the low end.
++        let window_start = now.checked_sub(time::Duration::days(
++            policy.general_threshold_window_days,
++        ));
++        collected
++            .iter()
++            .filter(|(timestamp, _)| {
++                *timestamp <= now && window_start.is_none_or(|start| *timestamp > start)
++            })
++            .map(|(_, amount_minor)| *amount_minor)
++            .sum()
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    fn t(y: i32, m: u8, d: u8) -> OffsetDateTime {
++        OffsetDateTime::from_unix_timestamp(
++            time::Date::from_calendar_date(y, time::Month::try_from(m).unwrap(), d)
++                .unwrap()
++                .midnight()
++                .assume_utc()
++                .unix_timestamp(),
++        )
++        .unwrap()
++    }
++
++    #[test]
++    fn business_kyb_is_never_restricted() {
++        let merchant = MerchantVerification::new(VerificationTier::BusinessKyb, t(2020, 1, 1));
++        let decision = merchant.evaluate(
++            &VerificationPolicy::default(),
++            t(2030, 1, 1),
++            &[(t(2029, 12, 1), i128::MAX)],
++        );
++        assert_eq!(decision, VerificationDecision::Allowed);
++    }
++
++    #[test]
++    fn unregistered_is_allowed_within_grace_period_even_when_uncapped() {
++        let merchant = MerchantVerification::new(VerificationTier::Unregistered, t(2026, 1, 1));
++        let decision = merchant.evaluate(
++            &VerificationPolicy::default(),
++            t(2026, 12, 31),
++            &[(t(2026, 12, 15), i128::MAX)],
++        );
++        assert_eq!(decision, VerificationDecision::Allowed);
++    }
++
++    #[test]
++    fn unregistered_is_restricted_at_the_exact_deadline() {
++        let merchant = MerchantVerification::new(VerificationTier::Unregistered, t(2026, 1, 1));
++        let end = merchant.grace_period_end().unwrap();
++        assert_eq!(
++            merchant.evaluate(&VerificationPolicy::default(), end, &[]),
++            VerificationDecision::Restricted {
++                reason: RestrictionReason::GracePeriodExpired
++            }
++        );
++        // One second before the deadline is still allowed.
++        let just_before = end - time::Duration::seconds(1);
++        assert_eq!(
++            merchant.evaluate(&VerificationPolicy::default(), just_before, &[]),
++            VerificationDecision::Allowed
++        );
++    }
++
++    #[test]
++    fn individual_kyc_crosses_the_threshold_only_within_the_window() {
++        let merchant = MerchantVerification::new(VerificationTier::IndividualKyc, t(2026, 1, 1));
++        let policy = VerificationPolicy {
++            general_threshold_minor: 1_000,
++            general_threshold_window_days: 30,
++        };
++        let now = t(2026, 6, 1);
++
++        // Old volume outside the window does not count.
++        assert_eq!(
++            merchant.evaluate(&policy, now, &[(t(2026, 1, 15), 10_000)]),
++            VerificationDecision::Allowed
++        );
++
++        // In-window volume exactly at the threshold triggers it.
++        assert_eq!(
++            merchant.evaluate(&policy, now, &[(t(2026, 5, 20), 1_000)]),
++            VerificationDecision::Restricted {
++                reason: RestrictionReason::ThresholdExceeded
++            }
++        );
++
++        // Just below the threshold stays allowed.
++        assert_eq!(
++            merchant.evaluate(&policy, now, &[(t(2026, 5, 20), 999)]),
++            VerificationDecision::Allowed
++        );
++    }
++}
+diff --git a/crates/common_utils/src/macros.rs b/crates/common_utils/src/macros.rs
+index 9dee920af..0bdb53cdd 100644
+--- a/crates/common_utils/src/macros.rs
++++ b/crates/common_utils/src/macros.rs
+@@ -440,7 +440,7 @@ macro_rules! type_name {
+         std::any::type_name::<$type>()
+             .rsplit("::")
+             .nth(1)
+-            .unwrap_or_default();
++            .unwrap_or_default()
+     };
+ }
+ 
+diff --git a/crates/external_services/src/grpc_client/deja_transport.rs b/crates/external_services/src/grpc_client/deja_transport.rs
+index da7ca964f..fcecd7f48 100644
+--- a/crates/external_services/src/grpc_client/deja_transport.rs
++++ b/crates/external_services/src/grpc_client/deja_transport.rs
+@@ -310,6 +310,9 @@ where
+                 move || async { Err(BoxError::from(AbsentTransportError)) },
+                 reconstruct_from_recorded,
+                 extract_envelope,
++                // No honest substitute exists and there is no transport to
++                // re-run, so a miss stops the request.
++                deja::MissPolicy::FailStop,
+                 // The absent-EXECUTOR fail-stop, not `fail_stop_substitute_miss`:
+                 // that one offers `replay_strategy = Execute` as the remedy, and
+                 // with nothing beneath the boundary there is nothing to run. The
+diff --git a/crates/external_services/src/superposition.rs b/crates/external_services/src/superposition.rs
+index 1130dfd6b..b6f7b2af7 100644
+--- a/crates/external_services/src/superposition.rs
++++ b/crates/external_services/src/superposition.rs
+@@ -211,6 +211,9 @@ mod deja_boundary {
+             run,
+             reconstruct::<T>,
+             capture::<T>,
++            // A miss here is absorbed by design: the caller falls back to the
++            // DB/default, so the request continues rather than fail-stopping.
++            deja::MissPolicy::Absorb,
+             move || {
+                 Err(report!(SuperpositionError::NotFound(format!(
+                     "deja replay: no recorded Superposition value for `{operation}` (novel \
+diff --git a/crates/hyperswitch_connectors/src/connectors/korapay.rs b/crates/hyperswitch_connectors/src/connectors/korapay.rs
+index 4a0199f15..9f017ed4c 100644
+--- a/crates/hyperswitch_connectors/src/connectors/korapay.rs
++++ b/crates/hyperswitch_connectors/src/connectors/korapay.rs
+@@ -47,17 +47,13 @@ use hyperswitch_interfaces::{
+     configs::Connectors,
+     consts, errors,
+     events::connector_api_logs::ConnectorEvent,
+-    types::{
+-        PaymentsAuthorizeType, PaymentsSyncType, RefundExecuteType, RefundSyncType, Response,
+-    },
++    types::{PaymentsAuthorizeType, PaymentsSyncType, RefundExecuteType, RefundSyncType, Response},
+     webhooks,
+ };
+ use hyperswitch_masking::{ExposeInterface, Mask, Maskable};
+ use transformers as korapay;
+ 
+-use crate::{
+-    constants::headers, types::ResponseRouterData, utils, utils::convert_amount,
+-};
++use crate::{constants::headers, types::ResponseRouterData, utils, utils::convert_amount};
+ 
+ #[derive(Clone)]
+ pub struct Korapay {
+diff --git a/crates/hyperswitch_connectors/src/connectors/korapay/transformers.rs b/crates/hyperswitch_connectors/src/connectors/korapay/transformers.rs
+index 37eb55bfb..ea2f8970e 100644
+--- a/crates/hyperswitch_connectors/src/connectors/korapay/transformers.rs
++++ b/crates/hyperswitch_connectors/src/connectors/korapay/transformers.rs
+@@ -736,9 +736,7 @@ impl<F> TryFrom<RefundsResponseRouterData<F, KorapayRefundResponse>> for Refunds
+     }
+ }
+ 
+-impl<F> TryFrom<RefundsResponseRouterData<F, KorapayRefundSyncResponse>>
+-    for RefundsRouterData<F>
+-{
++impl<F> TryFrom<RefundsResponseRouterData<F, KorapayRefundSyncResponse>> for RefundsRouterData<F> {
+     type Error = error_stack::Report<errors::ConnectorError>;
+     fn try_from(
+         item: RefundsResponseRouterData<F, KorapayRefundSyncResponse>,
+diff --git a/crates/storage_impl/src/database/store.rs b/crates/storage_impl/src/database/store.rs
+index 59a63ba57..f99928396 100644
+--- a/crates/storage_impl/src/database/store.rs
++++ b/crates/storage_impl/src/database/store.rs
+@@ -289,7 +289,7 @@ struct ConnectionSetup {
+ }
+ 
+ impl ConnectionSetup {
+-    const fn is_needed(&self) -> bool {
++    const fn is_needed(self) -> bool {
+         self.test_transaction || self.disable_prepared_statement_cache
+     }
+ }
+diff --git a/docker-compose-development.yml b/docker-compose-development.yml
+index 06e5fe250..41ee6b17e 100644
+--- a/docker-compose-development.yml
++++ b/docker-compose-development.yml
+@@ -63,6 +63,10 @@ services:
+     environment:
+       # format -> postgresql://DB_USER:DB_PASSWORD@HOST:PORT/DATABASE_NAME
+       - DATABASE_URL=postgresql://db_user:db_pass@pg:5432/hyperswitch_db
++      # Optional: a session-mode/direct connection string for migrations, which
++      # take session-scoped advisory locks and run DDL and so are unsafe through
++      # a transaction-mode pooler. Falls back to DATABASE_URL when unset.
++      - MIGRATION_DATABASE_URL=${MIGRATION_DATABASE_URL:-postgresql://db_user:db_pass@pg:5432/hyperswitch_db}
+ 
+   superposition:
+     image: ghcr.io/juspay/superposition-demo:0.115.5
+diff --git a/docker-compose.yml b/docker-compose.yml
+index 5ce17716e..505c80630 100644
+--- a/docker-compose.yml
++++ b/docker-compose.yml
+@@ -76,6 +76,10 @@ services:
+     environment:
+       # format -> postgresql://DB_USER:DB_PASSWORD@HOST:PORT/DATABASE_NAME
+       - DATABASE_URL=postgresql://db_user:db_pass@pg:5432/hyperswitch_db
++      # Optional: a session-mode/direct connection string for migrations, which
++      # take session-scoped advisory locks and run DDL and so are unsafe through
++      # a transaction-mode pooler. Falls back to DATABASE_URL when unset.
++      - MIGRATION_DATABASE_URL=${MIGRATION_DATABASE_URL:-postgresql://db_user:db_pass@pg:5432/hyperswitch_db}
+ 
+   superposition:
+     image: ghcr.io/juspay/superposition-demo:0.113.0
+diff --git a/justfile b/justfile
+index cb7a81f3f..11895a334 100644
+--- a/justfile
++++ b/justfile
+@@ -191,6 +191,12 @@ db_port := env_var_or_default('DB_PORT', '5432')
+ db_name := env_var_or_default('DB_NAME', 'hyperswitch_db')
+ default_db_url := 'postgresql://' + db_user + ':' + db_password + '@' + db_host + ':' + db_port / db_name
+ database_url := env_var_or_default('DATABASE_URL', default_db_url)
++# Migrations take session-scoped advisory locks and run DDL, neither of which is
++# safe through a transaction-mode pooler (Supabase Supavisor on 6543, PgBouncer
++# in transaction mode). Point MIGRATION_DATABASE_URL at a session-mode/direct
++# connection string; it falls back to DATABASE_URL so single-URL setups keep
++# working. See HANDOVER.md PRIORITY 2.
++migration_database_url := env_var_or_default('MIGRATION_DATABASE_URL', database_url)
+ default_migration_params := ''
+ v2_migration_dir := source_directory() / 'v2_migrations'
+ v2_compatible_migrations := source_directory() / 'v2_compatible_migrations'
+@@ -225,7 +231,7 @@ v1_config_file_dir := source_directory() / 'diesel.toml'
+ default_operation := 'run'
+ 
+ [private]
+-run_migration operation=default_operation migration_dir=v1_migration_dir config_file_dir=v1_config_file_dir url=database_url *other_params=default_migration_params:
++run_migration operation=default_operation migration_dir=v1_migration_dir config_file_dir=v1_config_file_dir url=migration_database_url *other_params=default_migration_params:
+     diesel migration \
+         --database-url '{{ url }}' \
+         {{ operation }} \
+@@ -234,7 +240,7 @@ run_migration operation=default_operation migration_dir=v1_migration_dir config_
+         {{ other_params }}
+ 
+ # Run database migrations for v1
+-migrate operation=default_operation *args='': (run_migration operation v1_migration_dir v1_config_file_dir database_url args)
++migrate operation=default_operation *args='': (run_migration operation v1_migration_dir v1_config_file_dir migration_database_url args)
+ 
+ v2_config_file_dir := source_directory() / 'diesel_v2.toml'
+ 
+@@ -246,7 +252,7 @@ migrate_v2 operation=default_operation *args='':
+     EXIT_CODE=0
+     just prefix_and_copy_migrations {{ v1_migration_dir }} {{ v2_compatible_migrations }} 8 {{ resultant_dir }}
+     just prefix_and_copy_migrations {{ resultant_dir }} {{ v2_migration_dir }} 9 {{ resultant_dir }}
+-    just run_migration {{ operation }} {{ resultant_dir }} {{ v2_config_file_dir }} {{ database_url }} {{ args }} || EXIT_CODE=$?
++    just run_migration {{ operation }} {{ resultant_dir }} {{ v2_config_file_dir }} {{ migration_database_url }} {{ args }} || EXIT_CODE=$?
+     just delete_dir_if_exists
+     exit $EXIT_CODE
+ 
+@@ -259,7 +265,7 @@ migrate_v2_compatible:
+     just prefix_and_copy_migrations {{ v1_migration_dir }} {{ v2_compatible_migrations }} 8 {{ resultant_dir }}
+ 
+     # Run the compatible migrations
+-    just run_migration run {{ resultant_dir }} {{ database_url }} || EXIT_CODE=$?
++    just run_migration run {{ resultant_dir }} {{ migration_database_url }} || EXIT_CODE=$?
+ 
+     just delete_dir_if_exists
+     exit $EXIT_CODE
+diff --git a/scripts/migration_runner_entrypoint.sh b/scripts/migration_runner_entrypoint.sh
+index a1bde9fa6..ec0100077 100755
+--- a/scripts/migration_runner_entrypoint.sh
++++ b/scripts/migration_runner_entrypoint.sh
+@@ -11,5 +11,10 @@ if [[ -z "${DATABASE_URL:-}" ]]; then
+     export DATABASE_URL="postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:${POSTGRES_PORT:-5432}/${POSTGRES_DB}"
+ fi
+ 
++# Migrations take session-scoped advisory locks and run DDL, neither of which is
++# safe through a transaction-mode pooler. Prefer a session-mode/direct URL from
++# MIGRATION_DATABASE_URL and fall back to DATABASE_URL when it is unset.
++export DATABASE_URL="${MIGRATION_DATABASE_URL:-$DATABASE_URL}"
++
+ # Run diesel migrations
+ diesel migration run
+-- 
+2.47.3
+
+
+From 3a1dba12b5320b7863bfccaf73605dae5a03b81c Mon Sep 17 00:00:00 2001
+From: openhands <openhands@all-hands.dev>
+Date: Fri, 9 Oct 2026 07:51:44 +0000
+Subject: [PATCH 2/4] fix(ci): clear clippy lints unmasked after the E0061 fix
+
+The earlier compile error aborted `cargo clippy` before later crates were
+reached, so these lints only surface now that the build gets past it. All are
+denied by the workspace lint level under CI's `-D warnings`.
+
+- common_utils: `fallback_reverse_lookup_not_found!` had a trailing semicolon
+  in its transcriber, so `let x = macro!(..)` expanded to a statement
+  (`semicolon_in_expressions_from_non_local_macros`); drop it. This was hit
+  across storage_impl (10 sites).
+- external_services: derive `Default` for `NovuClient` instead of a manual
+  `impl` (`derivable_impls`).
+- hyperswitch_connectors: remove the unused `PaymentsSyncRouterData` (opik) and
+  `ConnectorAuthType` (prestmit) imports.
+- router: allow `clippy::todo` on the external-vault-proxy `postprocessing_steps`
+  stub (mirrors the repo's existing `#[allow(clippy::todo)]` precedent and the
+  comment on the method); drop a redundant `.into_iter()` in psync_flow
+  (`useless_conversion`); hoist the block-wrapped scrutinee in payments.rs to a
+  local binding (`block_scrutinee`); `Box::pin` the large authenticate future
+  (`large_futures`).
+
+Also re-apply nightly rustfmt to the KYC module.
+
+Co-authored-by: openhands <openhands@all-hands.dev>
+---
+ .../common_types/src/merchant_verification.rs |  5 ++-
+ crates/common_utils/src/macros.rs             |  2 +-
+ crates/external_services/src/email/novu.rs    | 11 +------
+ .../src/connectors/opik/transformers.rs       |  2 +-
+ .../src/connectors/prestmit.rs                |  2 +-
+ crates/router/src/core/payments.rs            | 31 ++++++++++---------
+ .../payments/flows/external_proxy_flow.rs     |  3 ++
+ .../src/core/payments/flows/psync_flow.rs     |  2 +-
+ 8 files changed, 26 insertions(+), 32 deletions(-)
+
+diff --git a/crates/common_types/src/merchant_verification.rs b/crates/common_types/src/merchant_verification.rs
+index 751733037..4899da404 100644
+--- a/crates/common_types/src/merchant_verification.rs
++++ b/crates/common_types/src/merchant_verification.rs
+@@ -154,9 +154,8 @@ impl MerchantVerification {
+     ) -> i128 {
+         // A window that cannot be represented reaches back forever, so nothing
+         // is excluded on the low end.
+-        let window_start = now.checked_sub(time::Duration::days(
+-            policy.general_threshold_window_days,
+-        ));
++        let window_start =
++            now.checked_sub(time::Duration::days(policy.general_threshold_window_days));
+         collected
+             .iter()
+             .filter(|(timestamp, _)| {
+diff --git a/crates/common_utils/src/macros.rs b/crates/common_utils/src/macros.rs
+index 0bdb53cdd..c42d77c32 100644
+--- a/crates/common_utils/src/macros.rs
++++ b/crates/common_utils/src/macros.rs
+@@ -80,7 +80,7 @@ macro_rules! fallback_reverse_lookup_not_found {
+                     _=> return Err(err)
+                 }
+             }
+-        };
++        }
+     };
+ }
+ 
+diff --git a/crates/external_services/src/email/novu.rs b/crates/external_services/src/email/novu.rs
+index 0789ccec0..12391d64e 100644
+--- a/crates/external_services/src/email/novu.rs
++++ b/crates/external_services/src/email/novu.rs
+@@ -25,7 +25,7 @@ use serde::Serialize;
+ use crate::email::{EmailClient, EmailError, EmailResult, EmailSettings, IntermediateString};
+ 
+ /// Client for sending email through a Novu workflow trigger.
+-#[derive(Debug, Clone, serde::Deserialize)]
++#[derive(Debug, Clone, Default, serde::Deserialize)]
+ pub struct NovuClient {
+     /// Sender email id, surfaced to the Novu workflow as the trigger `from`.
+     pub sender: pii::Email,
+@@ -33,15 +33,6 @@ pub struct NovuClient {
+     pub novu_config: NovuConfig,
+ }
+ 
+-impl Default for NovuClient {
+-    fn default() -> Self {
+-        Self {
+-            sender: pii::Email::default(),
+-            novu_config: NovuConfig::default(),
+-        }
+-    }
+-}
+-
+ /// Configuration for the Novu email client.
+ #[derive(Debug, Clone, serde::Deserialize)]
+ pub struct NovuConfig {
+diff --git a/crates/hyperswitch_connectors/src/connectors/opik/transformers.rs b/crates/hyperswitch_connectors/src/connectors/opik/transformers.rs
+index 4e409b581..2a6786fc5 100644
+--- a/crates/hyperswitch_connectors/src/connectors/opik/transformers.rs
++++ b/crates/hyperswitch_connectors/src/connectors/opik/transformers.rs
+@@ -29,7 +29,7 @@ use hyperswitch_domain_models::{
+     router_flow_types::payments::PSync,
+     router_request_types::{PaymentsSyncData, ResponseId},
+     router_response_types::PaymentsResponseData,
+-    types::{PaymentsAuthorizeRouterData, PaymentsSyncRouterData},
++    types::PaymentsAuthorizeRouterData,
+ };
+ use hyperswitch_interfaces::errors;
+ use hyperswitch_masking::Secret;
+diff --git a/crates/hyperswitch_connectors/src/connectors/prestmit.rs b/crates/hyperswitch_connectors/src/connectors/prestmit.rs
+index d9c58dd29..3bd178294 100644
+--- a/crates/hyperswitch_connectors/src/connectors/prestmit.rs
++++ b/crates/hyperswitch_connectors/src/connectors/prestmit.rs
+@@ -25,7 +25,7 @@ use common_utils::{
+ };
+ use error_stack::ResultExt;
+ use hyperswitch_domain_models::{
+-    router_data::{AccessToken, ConnectorAuthType, ErrorResponse, RouterData},
++    router_data::{AccessToken, ErrorResponse, RouterData},
+     router_flow_types::{
+         access_token_auth::AccessTokenAuth,
+         payments::{Authorize, Capture, PSync, PaymentMethodToken, Session, SetupMandate, Void},
+diff --git a/crates/router/src/core/payments.rs b/crates/router/src/core/payments.rs
+index 5f44772d1..de0f1eca8 100644
+--- a/crates/router/src/core/payments.rs
++++ b/crates/router/src/core/payments.rs
+@@ -5902,16 +5902,15 @@ where
+     )
+     .await?;
+ 
+-    if let Some(connector_customer_id) = {
+-        core_utils::get_connector_customer_id(
+-            &state.conf,
+-            &connector.connector_name.to_string(),
+-            payment_data.get_connector_customer_id(),
+-            &payment_data.get_payment_intent().customer_id,
+-            &payment_data.get_payment_method_info().cloned(),
+-            payment_data.get_payment_attempt(),
+-        )?
+-    } {
++    let connector_customer_id = core_utils::get_connector_customer_id(
++        &state.conf,
++        &connector.connector_name.to_string(),
++        payment_data.get_connector_customer_id(),
++        &payment_data.get_payment_intent().customer_id,
++        &payment_data.get_payment_method_info().cloned(),
++        payment_data.get_payment_attempt(),
++    )?;
++    if let Some(connector_customer_id) = connector_customer_id {
+         router_data.connector_customer = Some(connector_customer_id);
+     }
+ 
+@@ -13514,11 +13513,13 @@ pub async fn payment_external_authentication<F: Clone + Sync>(
+             .change_context(errors::ApiErrorResponse::InternalServerError)
+             .attach_printable("Failed to call authentication authenticate flow")?
+         } else {
+-            crate::core::unified_authentication_service::authentication_authenticate_core(
+-                state.clone(),
+-                platform.clone(),
+-                authenticate_req,
+-                services::api::AuthFlow::Client,
++            Box::pin(
++                crate::core::unified_authentication_service::authentication_authenticate_core(
++                    state.clone(),
++                    platform.clone(),
++                    authenticate_req,
++                    services::api::AuthFlow::Client,
++                ),
+             )
+             .await?
+             .get_json_body()
+diff --git a/crates/router/src/core/payments/flows/external_proxy_flow.rs b/crates/router/src/core/payments/flows/external_proxy_flow.rs
+index 5ae13a9bc..621829f7c 100644
+--- a/crates/router/src/core/payments/flows/external_proxy_flow.rs
++++ b/crates/router/src/core/payments/flows/external_proxy_flow.rs
+@@ -212,6 +212,9 @@ impl Feature<api::ExternalVaultProxy, types::ExternalVaultProxyPaymentsData>
+         .await
+     }
+ 
++    // The only caller of `postprocessing_steps` is the OpenBanking/Plaid
++    // post-processing path, which the external-vault-proxy flow never takes.
++    #[allow(clippy::todo)]
+     async fn postprocessing_steps<'a>(
+         self,
+         _state: &SessionState,
+diff --git a/crates/router/src/core/payments/flows/psync_flow.rs b/crates/router/src/core/payments/flows/psync_flow.rs
+index ad78ca9a8..f9374d1aa 100644
+--- a/crates/router/src/core/payments/flows/psync_flow.rs
++++ b/crates/router/src/core/payments/flows/psync_flow.rs
+@@ -306,7 +306,7 @@ impl RouterDataPSync
+                         });
+                     },
+                     Ok(types::PaymentsResponseData::MultipleCaptureResponse { capture_sync_response_list })=> {
+-                        capture_sync_response_map.extend(capture_sync_response_list.into_iter());
++                        capture_sync_response_map.extend(capture_sync_response_list);
+                     }
+                     _ => Err(ApiErrorResponse::PreconditionFailed { message: "Response type must be PaymentsResponseData::MultipleCaptureResponse for payment sync".into() })?,
+                 };
+-- 
+2.47.3
+
+
+From 741a1fce70053388fe6a6b4bda63e64606b33489 Mon Sep 17 00:00:00 2001
+From: openhands <openhands@all-hands.dev>
+Date: Fri, 9 Oct 2026 09:00:42 +0000
+Subject: [PATCH 3/4] fix(ci): clear clippy lints in the transaction_pooler
+ regression test
+
+`cargo clippy --all-targets` also lints the test target, where two workspace
+lints fire under `-D warnings`:
+
+- `clippy::panic` on the `panic!` in the `env` helper (the file already opts
+  out of the sibling `unwrap_used`/`expect_used` lints); add it to the allow.
+- `clippy::as_conversions` on `CLIENTS as u32`; use `u32::try_from`.
+
+Co-authored-by: openhands <openhands@all-hands.dev>
+---
+ crates/storage_impl/tests/transaction_pooler.rs | 9 +++++++--
+ 1 file changed, 7 insertions(+), 2 deletions(-)
+
+diff --git a/crates/storage_impl/tests/transaction_pooler.rs b/crates/storage_impl/tests/transaction_pooler.rs
+index dcf3d28e5..1b6a98606 100644
+--- a/crates/storage_impl/tests/transaction_pooler.rs
++++ b/crates/storage_impl/tests/transaction_pooler.rs
+@@ -24,7 +24,12 @@
+ //! assert that the *control* run (flag off) really does hit the error - useful
+ //! to prove the pooler is configured so the test can fail at all.
+ 
+-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::print_stdout)]
++#![allow(
++    clippy::unwrap_used,
++    clippy::expect_used,
++    clippy::panic,
++    clippy::print_stdout
++)]
+ 
+ use std::sync::{
+     atomic::{AtomicUsize, Ordering},
+@@ -54,7 +59,7 @@ fn database(disable_prepared_statement_cache: bool) -> Database {
+         host: env("BPAY_TEST_PG_HOST"),
+         port: env("BPAY_TEST_PG_PORT").parse().expect("numeric port"),
+         dbname: env("BPAY_TEST_PG_DBNAME"),
+-        max_pool_size: CLIENTS as u32,
++        max_pool_size: u32::try_from(CLIENTS).expect("CLIENTS fits in u32"),
+         min_idle_pool_size: 1,
+         disable_prepared_statement_cache,
+         ..Database::default()
+-- 
+2.47.3
+
+
+From 81898ab1a9cee9b1a31ca004da4bcb9bdaa88ef7 Mon Sep 17 00:00:00 2001
+From: openhands <openhands@all-hands.dev>
+Date: Fri, 9 Oct 2026 09:24:27 +0000
+Subject: [PATCH 4/4] docs(handover): record green clippy sweep, the diesel OOM
+ fix, and the read-only push blocker
+
+This handover file was created by an AI agent (OpenHands) on behalf of the user.
+
+Co-authored-by: openhands <openhands@all-hands.dev>
+---
+ HANDOVER.md | 69 +++++++++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 69 insertions(+)
+
+diff --git a/HANDOVER.md b/HANDOVER.md
+index a4a698611..856a3f1a6 100644
+--- a/HANDOVER.md
++++ b/HANDOVER.md
+@@ -651,6 +651,75 @@ poolers reject (unchanged).
+ 
+ ---
+ 
++## Session update (2026-10-09, part 2): clippy sweep finishes green; the memory wall has a sustainable fix
++
++Continues the session above. The E0061 fix unblocked compilation, which then
++exposed a tail of lints that the earlier abort had masked. All are now fixed and
++`just clippy` (default and `fred`) pass **exit 0** in the sandbox — the first
++green clippy on this tree.
++
++**Lints cleared** (all denied by the workspace lint set under CI's `-D warnings`)
++- `semicolon_in_expressions_from_non_local_macros` — the `fallback_reverse_lookup_not_found!`
++  transcriber ended in `;` (hit at 10 `storage_impl` sites); removed.
++- `derivable_impls` — `NovuClient` gets `#[derive(Default)]` instead of a manual `impl`.
++- unused imports — `PaymentsSyncRouterData` (opik), `ConnectorAuthType` (prestmit).
++- `clippy::todo` — `#[allow]` on the external-vault-proxy `postprocessing_steps`
++  stub (the only caller is the OpenBanking/Plaid path this flow never takes;
++  mirrors the repo's existing precedent).
++- `useless_conversion` — redundant `.into_iter()` in `psync_flow.rs`.
++- `block_scrutinee` — hoisted the `if let Some(x) = { .. }?` scrutinee to a local.
++- `large_futures` — `Box::pin` the `authentication_authenticate_core` future.
++- `clippy::panic` + `clippy::as_conversions` — in the `transaction_pooler`
++  regression test (`--all-targets` lints tests too).
++
++**The OOM wall — sustainable fix, not "all the RAM"**
++
++The recurring failure is one rustc invocation: `diesel` with `128-column-tables`
++(required by `diesel_models`/`common_enums`/`euclid`) peaks at **~9.8 GiB** in a
++debug/no-debuginfo profile. It is a **frontend** spike (metadata emission), so
++`codegen-units`, `opt-level`, and even `strip=debuginfo` don't shrink it — only
++`-j1` and fewer debug knobs help. Two things make it affordable instead of a
++per-build crisis:
++
++1. **Tune the dev profile down.** `CARGO_PROFILE_DEV_DEBUG=0` plus
++   `CARGO_PROFILE_DEV_DEBUG_ASSERTIONS=false`/`OVERFLOW_CHECKS=false` keeps the
++   peak under ~10 GiB (was >13 GiB with debuginfo). One-time cost.
++2. **Persist the caches.** Run with the target dir, `~/.cargo/registry`, and
++   `~/.cargo/git` all bind-mounted **under `/workspace`** (a Docker volume is
++   wiped when the daemon/sandbox restarts — that happened mid-session and cost
++   the whole cache). Once diesel is compiled it is reused, so every later run is
++   ~1 GiB and fast: the second `just clippy` finished in seconds.
++
++CI does not need any of this — it has a multi-GB runner and its own cache; this
++is only for reproducing the lint locally in the ~15 GiB sandbox.
++
++**Sandbox note:** the sandbox restarted once during a 13 GiB container run
++(host has 15 GiB, no swap) — which is exactly the argument against sizing the
++build to "all our RAM". Also, `sudo` is required for `docker` after a restart.
++
++**Blocker — cannot push.** Both the repo-embedded token and `$GITHUB_TOKEN`
++authenticate as `Zapier-codes` but are **read-only** (empty OAuth scopes; API
++ref creation and PR creation both return 403). The commits are on local `main`
++and are handed off as a patch (same convention as Priority 1/2 above).
++
++**Handoff patch:** `0003-main-ci-clippy-and-format-fix.patch` (repo root). It is
++a `git format-patch` mailbox of **four** commits — the three CI fixes
++(`48bfcadeb`, `3a1dba12b`, `741a1fce7`) plus this handover update. Apply and
++push with:
++
++```bash
++git am 0003-main-ci-clippy-and-format-fix.patch
++# or, if that fails due to line-ending/context drift:
++git am --3way 0003-main-ci-clippy-and-format-fix.patch
++git push origin main
++```
++
++(`git am` keeps the original commit messages/authors; use `git apply` only if
++you want the changes uncommitted. `git am *.patch` also works if the four
++`000N-*.patch` series files are used instead of the combined mailbox.)
++
++---
++
+ ## NEW TASK — Industry landing page (Stripe-style), first pass built (2026-09-22)
+ 
+ Requested 2026-09-22. Goal: a polished, animated marketing/landing page for
+-- 
+2.47.3
+
